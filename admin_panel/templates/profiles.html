@@ -63,6 +63,8 @@
             <th class="table-header">PIN</th>
             <th class="table-header">Tipo</th>
             <th class="table-header">Estado</th>
+            <th class="table-header">Cliente</th>
+            <th class="table-header">Fecha de corte</th>
             <th class="table-header">Acciones</th>
           </tr>
         </thead>
@@ -88,6 +90,24 @@
               {% elif s == 'maintenance' %}<span class="badge-maintenance">🔧 Mantenimiento</span>
               {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
             </td>
+            <td class="table-cell text-sm">
+              {% set sub = p.get('_active_sub') %}
+              {% if sub %}
+                {% set u = sub.get('users') or {} %}
+                <span class="text-slate-200">{{ u.get('name') or u.get('username') or '—' }}</span>
+              {% else %}
+                <span class="text-slate-600">—</span>
+              {% endif %}
+            </td>
+            <td class="table-cell text-sm">
+              {% set sub = p.get('_active_sub') %}
+              {% if sub and sub.get('end_date') %}
+                {% set ed = sub['end_date'][:10] %}
+                <span class="font-mono text-amber-300">{{ ed }}</span>
+              {% else %}
+                <span class="text-slate-600">—</span>
+              {% endif %}
+            </td>
             <td class="table-cell">
               <div class="flex items-center gap-2">
                 <a href="/panel/profiles/{{ p['id'] }}/edit" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">✏️ Editar</a>
@@ -97,7 +117,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="table-cell text-center text-slate-500 py-16">
+            <td colspan="8" class="table-cell text-center text-slate-500 py-16">
               <div class="flex flex-col items-center gap-3">
                 <span class="text-4xl opacity-30">👤</span>
                 <p>No hay perfiles con los filtros seleccionados.</p>

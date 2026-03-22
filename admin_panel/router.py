@@ -340,6 +340,18 @@ async def profiles_list(request: Request):
         result = query.order("created_at", desc=True).execute()
         profiles = result.data or []
         platforms = await get_active_platforms()
+
+        # Attach active subscription (end_date + user) to each occupied profile
+        occupied_ids = [p["id"] for p in profiles if p.get("status") == "occupied"]
+        subs_map: dict = {}
+        if occupied_ids:
+            subs_res = sb.table("subscriptions").select(
+                "profile_id, end_date, plan_type, users(name, username)"
+            ).in_("profile_id", occupied_ids).eq("status", "active").execute()
+            for s in (subs_res.data or []):
+                subs_map[s["profile_id"]] = s
+        for p in profiles:
+            p["_active_sub"] = subs_map.get(p["id"])
     except Exception as e:
         logger.error(f"Profiles list error: {e}")
         profiles = []
