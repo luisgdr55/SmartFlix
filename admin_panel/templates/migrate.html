@@ -19,7 +19,7 @@
     <div class="w-10 h-10 rounded-xl bg-indigo-600/30 flex items-center justify-center text-xl">📥</div>
     <div>
       <h2 class="text-xl font-bold text-white">Registrar cliente existente</h2>
-      <p class="text-sm text-slate-400">Ingresa los datos del cliente y su suscripción activa</p>
+      <p class="text-sm text-slate-400">Puedes agregar todas las plataformas del cliente en un solo envío</p>
     </div>
   </div>
 
@@ -29,110 +29,127 @@
     <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
       <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">👤 Datos del cliente</h3>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
         <div>
           <label class="form-label">Telegram ID *</label>
-          <input type="number" name="telegram_id" required placeholder="Ej: 1097484319"
-            class="form-input" />
-          <p class="text-xs text-slate-500 mt-1">El cliente puede obtenerlo hablando con @userinfobot</p>
+          <input type="number" name="telegram_id" required placeholder="Ej: 1097484319" class="form-input" />
+          <p class="text-xs text-slate-500 mt-1">Pídele que escriba a @userinfobot</p>
         </div>
-
         <div>
           <label class="form-label">Nombre del cliente *</label>
-          <input type="text" name="client_name" required placeholder="Nombre completo"
-            class="form-input" />
+          <input type="text" name="client_name" required placeholder="Nombre completo" class="form-input" />
         </div>
-
         <div>
-          <label class="form-label">Username de Telegram</label>
+          <label class="form-label">Username Telegram</label>
           <div class="relative">
-            <span style="position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:#64748b;font-size:0.875rem">@</span>
-            <input type="text" name="username" placeholder="sin_arroba"
-              style="padding-left:1.75rem" class="form-input" />
+            <span style="position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:#64748b">@</span>
+            <input type="text" name="username" placeholder="sin_arroba" style="padding-left:1.75rem" class="form-input" />
           </div>
         </div>
-
         <div>
           <label class="form-label">Notas internas</label>
-          <input type="text" name="notes" placeholder="Opcional"
-            class="form-input" />
+          <input type="text" name="notes" placeholder="Opcional" class="form-input" />
         </div>
-
       </div>
     </div>
 
-    <!-- Datos de la suscripción -->
-    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
-      <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">📺 Suscripción activa</h3>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <!-- Filas de suscripciones -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">📺 Suscripciones activas</h3>
+        <button type="button" @click="addRow()"
+          class="flex items-center gap-1.5 text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Agregar plataforma
+        </button>
+      </div>
 
-        <div>
-          <label class="form-label">Plataforma *</label>
-          <select name="platform_id" required class="form-input" @change="loadProfiles($event.target.value)">
-            <option value="">Selecciona plataforma</option>
-            {% for p in platforms %}
-            <option value="{{ p['id'] }}">{{ p.get('icon_emoji','') }} {{ p['name'] }}</option>
-            {% endfor %}
-          </select>
-        </div>
+      <template x-for="(row, idx) in rows" :key="row.id">
+        <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-4">
+            <span class="text-sm font-medium text-slate-300" x-text="'Plataforma ' + (idx + 1)"></span>
+            <button type="button" x-show="rows.length > 1" @click="removeRow(idx)"
+              class="text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded-lg transition-colors">
+              ✕ Quitar
+            </button>
+          </div>
 
-        <div>
-          <label class="form-label">Tipo de plan *</label>
-          <select name="plan_type" required class="form-input">
-            <option value="monthly">📅 Mensual</option>
-            <option value="week">📆 Semanal</option>
-            <option value="express">⚡ Express</option>
-          </select>
-        </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
-        <div class="sm:col-span-2">
-          <label class="form-label">Perfil asignado *</label>
-          <select name="profile_id" required class="form-input" x-model="selectedProfile">
-            <option value="">Primero selecciona la plataforma</option>
-            <template x-for="pr in profiles" :key="pr.id">
-              <option :value="pr.id" x-text="pr.profile_name + ' (' + (pr.profile_type === 'monthly' ? 'Mensual' : pr.profile_type === 'week' ? 'Semanal' : 'Express') + ')'"></option>
-            </template>
-          </select>
-          <p x-show="loadingProfiles" class="text-xs text-slate-400 mt-1">Cargando perfiles...</p>
-          <p x-show="!loadingProfiles && profiles.length === 0 && platformSelected" class="text-xs text-amber-400 mt-1">⚠️ No hay perfiles disponibles para esta plataforma</p>
-        </div>
+            <!-- Plataforma -->
+            <div>
+              <label class="form-label">Plataforma *</label>
+              <select name="platform_id" required class="form-input"
+                @change="loadProfiles(idx, $event.target.value)">
+                <option value="">Selecciona...</option>
+                {% for p in platforms %}
+                <option value="{{ p['id'] }}">{{ p.get('icon_emoji','') }} {{ p['name'] }}</option>
+                {% endfor %}
+              </select>
+            </div>
 
-        <div>
-          <label class="form-label">Fecha de corte *</label>
-          <input type="date" name="end_date" required class="form-input" />
-          <p class="text-xs text-slate-500 mt-1">Fecha en que vence la suscripción</p>
-        </div>
+            <!-- Plan -->
+            <div>
+              <label class="form-label">Tipo de plan *</label>
+              <select name="plan_type" required class="form-input">
+                <option value="monthly">📅 Mensual</option>
+                <option value="week">📆 Semanal</option>
+                <option value="express">⚡ Express</option>
+              </select>
+            </div>
 
-        <div>
-          <label class="form-label">Precio cobrado (USD)</label>
-          <div class="relative">
-            <span style="position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:#64748b;font-size:0.875rem">$</span>
-            <input type="number" name="price_usd" step="0.01" min="0" placeholder="0.00"
-              style="padding-left:1.75rem" class="form-input" />
+            <!-- Perfil -->
+            <div class="sm:col-span-2">
+              <label class="form-label">Perfil asignado *</label>
+              <select name="profile_id" required class="form-input">
+                <option value="">Selecciona la plataforma primero</option>
+                <template x-for="pr in (row.profiles || [])" :key="pr.id">
+                  <option :value="pr.id"
+                    x-text="pr.profile_name + ' (' + (pr.profile_type==='monthly'?'Mensual':pr.profile_type==='week'?'Semanal':'Express') + ')'">
+                  </option>
+                </template>
+              </select>
+              <p x-show="row.loading" class="text-xs text-slate-400 mt-1">Cargando perfiles...</p>
+              <p x-show="!row.loading && row.profiles && row.profiles.length === 0 && row.platformSelected"
+                class="text-xs text-amber-400 mt-1">⚠️ Sin perfiles disponibles</p>
+            </div>
+
+            <!-- Fecha de corte -->
+            <div>
+              <label class="form-label">Fecha de corte *</label>
+              <input type="date" name="end_date" required class="form-input" />
+            </div>
+
+            <!-- Precio -->
+            <div>
+              <label class="form-label">Precio cobrado (USD)</label>
+              <div class="relative">
+                <span style="position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:#64748b">$</span>
+                <input type="number" name="price_usd" step="0.01" min="0" placeholder="0.00"
+                  style="padding-left:1.75rem" class="form-input" />
+              </div>
+            </div>
+
+            <!-- Referencia -->
+            <div class="sm:col-span-2">
+              <label class="form-label">Referencia de pago</label>
+              <input type="text" name="payment_reference" value="MIGRADO" class="form-input" />
+            </div>
+
           </div>
         </div>
-
-        <div class="sm:col-span-2">
-          <label class="form-label">Referencia de pago</label>
-          <input type="text" name="payment_reference" placeholder="Referencia o 'MIGRADO' si no aplica"
-            value="MIGRADO" class="form-input" />
-        </div>
-
-      </div>
+      </template>
     </div>
 
-    <!-- Resumen visual -->
-    <div x-show="selectedProfile" x-cloak
-      class="bg-indigo-600/10 border border-indigo-500/30 rounded-xl px-5 py-4 text-sm text-indigo-300">
-      ℹ️ Al guardar se creará el usuario, la suscripción activa y el perfil quedará marcado como <b>Ocupado</b>.
-      El sistema enviará avisos de renovación automáticamente cuando se acerque la fecha de corte.
+    <!-- Info -->
+    <div class="bg-indigo-600/10 border border-indigo-500/30 rounded-xl px-5 py-3 text-sm text-indigo-300">
+      ℹ️ Se crearán <strong x-text="rows.length"></strong> suscripción(es) activa(s). Los perfiles quedarán ocupados y el sistema enviará avisos de renovación automáticamente.
     </div>
 
     <div class="flex gap-3 pt-2">
       <a href="/panel/profiles" class="btn-secondary flex-1 justify-center">Cancelar</a>
-      <button type="submit" class="btn-primary flex-1 justify-center">
-        📥 Migrar cliente
-      </button>
+      <button type="submit" class="btn-primary flex-1 justify-center">📥 Migrar cliente</button>
     </div>
 
   </form>
@@ -142,25 +159,31 @@
 <script>
 function migrateForm() {
   return {
-    profiles: [],
-    selectedProfile: '',
-    loadingProfiles: false,
-    platformSelected: false,
+    rows: [{ id: 1, profiles: [], loading: false, platformSelected: false }],
+    nextId: 2,
 
-    async loadProfiles(platformId) {
-      this.profiles = [];
-      this.selectedProfile = '';
-      this.platformSelected = !!platformId;
+    addRow() {
+      this.rows.push({ id: this.nextId++, profiles: [], loading: false, platformSelected: false });
+    },
+
+    removeRow(idx) {
+      this.rows.splice(idx, 1);
+    },
+
+    async loadProfiles(idx, platformId) {
+      const row = this.rows[idx];
+      row.profiles = [];
+      row.platformSelected = !!platformId;
       if (!platformId) return;
-      this.loadingProfiles = true;
+      row.loading = true;
       try {
         const res = await fetch(`/panel/api/profiles/available/${platformId}`);
         const data = await res.json();
-        this.profiles = data.profiles || [];
+        row.profiles = data.profiles || [];
       } catch(e) {
-        this.profiles = [];
+        row.profiles = [];
       } finally {
-        this.loadingProfiles = false;
+        row.loading = false;
       }
     }
   }

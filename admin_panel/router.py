@@ -1003,84 +1003,93 @@ async def migrate_get(request: Request):
 
 
 @panel_router.post("/migrate")
-async def migrate_post(
-    request: Request,
-    telegram_id: int = Form(...),
-    client_name: str = Form(...),
-    username: str = Form(default=""),
-    platform_id: str = Form(...),
-    profile_id: str = Form(...),
-    plan_type: str = Form(default="monthly"),
-    end_date: str = Form(...),
-    price_usd: float = Form(default=0.0),
-    payment_reference: str = Form(default="MIGRADO"),
-    notes: str = Form(default=""),
-):
+async def migrate_post(request: Request):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
         from database import get_supabase
         from utils.helpers import venezuela_now
+        from datetime import datetime
+        import pytz
+        from typing import List
+
+        form = await request.form()
         sb = get_supabase()
+        tz_ve = pytz.timezone("America/Caracas")
+
+        telegram_id   = int(form.get("telegram_id", 0))
+        client_name   = form.get("client_name", "").strip()
+        username      = form.get("username", "").strip()
+        notes         = form.get("notes", "").strip()
+
+        # Multi-value fields (one per subscription row)
+        platform_ids  = form.getlist("platform_id")
+        profile_ids   = form.getlist("profile_id")
+        plan_types    = form.getlist("plan_type")
+        end_dates     = form.getlist("end_date")
+        prices        = form.getlist("price_usd")
+        references    = form.getlist("payment_reference")
+
+        if not telegram_id or not client_name or not platform_ids:
+            return RedirectResponse(url="/panel/migrate?error=Faltan+campos+obligatorios", status_code=302)
 
         # 1. Upsert user
-        existing_user = sb.table("users").select("id").eq("telegram_id", telegram_id).limit(1).execute()
+        existing_user = sb.table("users").select("id, total_purchases").eq("telegram_id", telegram_id).limit(1).execute()
         if existing_user.data:
             user_id = existing_user.data[0]["id"]
-            update_data = {"name": client_name, "last_seen": venezuela_now().isoformat()}
-            if username:
-                update_data["username"] = username
-            if notes:
-                update_data["notes"] = notes
-            sb.table("users").update(update_data).eq("id", user_id).execute()
+            current_purchases = existing_user.data[0].get("total_purchases", 0) or 0
+            upd = {"name": client_name, "last_seen": venezuela_now().isoformat()}
+            if username: upd["username"] = username
+            if notes: upd["notes"] = notes
+            sb.table("users").update(upd).eq("id", user_id).execute()
         else:
-            insert_data = {
-                "telegram_id": telegram_id,
-                "name": client_name,
-                "status": "active",
-                "created_at": venezuela_now().isoformat(),
-            }
-            if username:
-                insert_data["username"] = username
-            if notes:
-                insert_data["notes"] = notes
-            new_user = sb.table("users").insert(insert_data).execute()
+            ins = {"telegram_id": telegram_id, "name": client_name, "status": "active"}
+            if username: ins["username"] = username
+            if notes: ins["notes"] = notes
+            new_user = sb.table("users").insert(ins).execute()
             user_id = new_user.data[0]["id"]
+            current_purchases = 0
 
-        # 2. Parse end_date
-        from datetime import datetime
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        end_dt = end_dt.replace(hour=23, minute=59, second=59)
-        import pytz
-        end_dt = pytz.timezone("America/Caracas").localize(end_dt)
+        # 2. Create one subscription per row
+        created = 0
+        for i, pid in enumerate(platform_ids):
+            prof_id  = profile_ids[i] if i < len(profile_ids) else ""
+            plan     = plan_types[i]  if i < len(plan_types)  else "monthly"
+            ed_str   = end_dates[i]   if i < len(end_dates)   else ""
+            price    = float(prices[i]) if i < len(prices) and prices[i] else 0.0
+            ref      = references[i]  if i < len(references)  else "MIGRADO"
 
-        # 3. Create active subscription
-        sub_data = {
-            "user_id": user_id,
-            "profile_id": profile_id,
-            "platform_id": platform_id,
-            "plan_type": plan_type,
-            "start_date": venezuela_now().isoformat(),
-            "end_date": end_dt.isoformat(),
-            "price_usd": price_usd,
-            "status": "active",
-            "payment_reference": payment_reference,
-            "payment_confirmed_at": venezuela_now().isoformat(),
-            "reminder_sent": False,
-            "expiry_notified": False,
-        }
-        sb.table("subscriptions").insert(sub_data).execute()
+            if not pid or not prof_id or not ed_str:
+                continue
 
-        # 4. Mark profile as occupied
-        sb.table("profiles").update({"status": "occupied"}).eq("id", profile_id).execute()
+            end_dt = datetime.strptime(ed_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            end_dt = tz_ve.localize(end_dt)
 
-        # 5. Increment total_purchases
-        sb.table("users").update({"total_purchases": sb.table("users").select("total_purchases").eq("id", user_id).execute().data[0].get("total_purchases", 0) + 1}).eq("id", user_id).execute()
+            sb.table("subscriptions").insert({
+                "user_id": user_id,
+                "profile_id": prof_id,
+                "platform_id": pid,
+                "plan_type": plan,
+                "start_date": venezuela_now().isoformat(),
+                "end_date": end_dt.isoformat(),
+                "price_usd": price,
+                "status": "active",
+                "payment_reference": ref or "MIGRADO",
+                "payment_confirmed_at": venezuela_now().isoformat(),
+                "reminder_sent": False,
+                "expiry_notified": False,
+            }).execute()
 
-        logger.info(f"Migrated client {client_name} (TG:{telegram_id}) → profile {profile_id}")
+            sb.table("profiles").update({"status": "occupied"}).eq("id", prof_id).execute()
+            created += 1
+
+        # 3. Update total_purchases
+        sb.table("users").update({"total_purchases": current_purchases + created}).eq("id", user_id).execute()
+
+        logger.info(f"Migrated {client_name} (TG:{telegram_id}) — {created} subscription(s)")
         return RedirectResponse(
-            url=f"/panel/migrate?success=Cliente+{client_name}+migrado+exitosamente",
+            url=f"/panel/migrate?success={client_name}+migrado+con+{created}+suscripcion(es)",
             status_code=302,
         )
     except Exception as e:
