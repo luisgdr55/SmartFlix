@@ -55,8 +55,24 @@ async def handle_support_credentials(update: Update, context: ContextTypes.DEFAU
             await query.edit_message_text("Error al obtener tu perfil. Usa /start.")
             return
 
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
         subs = await get_user_active_subscriptions(str(user["id"]))
-        active_subs = [s for s in subs if s.get("status") == "active" and s.get("profile_id")]
+        active_subs = []
+        for s in subs:
+            if s.get("status") != "active" or not s.get("profile_id"):
+                continue
+            # Double-check end_date regardless of status field
+            end_raw = s.get("end_date")
+            if end_raw:
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt < now:
+                        continue  # expired but scheduler hasn't updated yet
+                except Exception:
+                    pass
+            active_subs.append(s)
 
         if not active_subs:
             await query.edit_message_text(
@@ -145,8 +161,23 @@ async def handle_support_verification_code(update: Update, context: ContextTypes
             await query.edit_message_text("Error de usuario. Usa /start.")
             return
 
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
         subs = await get_user_active_subscriptions(str(user["id"]))
-        active_subs = [s for s in subs if s.get("status") == "active" and s.get("profile_id")]
+        active_subs = []
+        for s in subs:
+            if s.get("status") != "active" or not s.get("profile_id"):
+                continue
+            end_raw = s.get("end_date")
+            if end_raw:
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt < now:
+                        continue
+                except Exception:
+                    pass
+            active_subs.append(s)
 
         if not active_subs:
             await query.edit_message_text(
