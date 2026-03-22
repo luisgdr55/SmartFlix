@@ -971,6 +971,140 @@ async def settings_update_payment(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MIGRACIÓN DE CLIENTES
+# ─────────────────────────────────────────────────────────────────────────────
+
+@panel_router.get("/migrate", response_class=HTMLResponse)
+async def migrate_get(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.platforms import get_active_platforms
+        from database import get_supabase
+        sb = get_supabase()
+        platforms = await get_active_platforms()
+        profiles_res = sb.table("profiles").select(
+            "id, profile_name, profile_type, platform_id, platforms(name, icon_emoji)"
+        ).eq("status", "available").order("profile_type").execute()
+        available_profiles = profiles_res.data or []
+    except Exception as e:
+        logger.error(f"Migrate page error: {e}")
+        platforms = []
+        available_profiles = []
+    return templates.TemplateResponse("migrate.html", {
+        "request": request,
+        "page": "migrate",
+        "platforms": platforms,
+        "available_profiles": available_profiles,
+        "success": request.query_params.get("success"),
+        "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.post("/migrate")
+async def migrate_post(
+    request: Request,
+    telegram_id: int = Form(...),
+    client_name: str = Form(...),
+    username: str = Form(default=""),
+    platform_id: str = Form(...),
+    profile_id: str = Form(...),
+    plan_type: str = Form(default="monthly"),
+    end_date: str = Form(...),
+    price_usd: float = Form(default=0.0),
+    payment_reference: str = Form(default="MIGRADO"),
+    notes: str = Form(default=""),
+):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from utils.helpers import venezuela_now
+        sb = get_supabase()
+
+        # 1. Upsert user
+        existing_user = sb.table("users").select("id").eq("telegram_id", telegram_id).limit(1).execute()
+        if existing_user.data:
+            user_id = existing_user.data[0]["id"]
+            update_data = {"name": client_name, "last_seen": venezuela_now().isoformat()}
+            if username:
+                update_data["username"] = username
+            if notes:
+                update_data["notes"] = notes
+            sb.table("users").update(update_data).eq("id", user_id).execute()
+        else:
+            insert_data = {
+                "telegram_id": telegram_id,
+                "name": client_name,
+                "status": "active",
+                "created_at": venezuela_now().isoformat(),
+            }
+            if username:
+                insert_data["username"] = username
+            if notes:
+                insert_data["notes"] = notes
+            new_user = sb.table("users").insert(insert_data).execute()
+            user_id = new_user.data[0]["id"]
+
+        # 2. Parse end_date
+        from datetime import datetime
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        end_dt = end_dt.replace(hour=23, minute=59, second=59)
+        import pytz
+        end_dt = pytz.timezone("America/Caracas").localize(end_dt)
+
+        # 3. Create active subscription
+        sub_data = {
+            "user_id": user_id,
+            "profile_id": profile_id,
+            "platform_id": platform_id,
+            "plan_type": plan_type,
+            "start_date": venezuela_now().isoformat(),
+            "end_date": end_dt.isoformat(),
+            "price_usd": price_usd,
+            "status": "active",
+            "payment_reference": payment_reference,
+            "payment_confirmed_at": venezuela_now().isoformat(),
+            "reminder_sent": False,
+            "expiry_notified": False,
+        }
+        sb.table("subscriptions").insert(sub_data).execute()
+
+        # 4. Mark profile as occupied
+        sb.table("profiles").update({"status": "occupied"}).eq("id", profile_id).execute()
+
+        # 5. Increment total_purchases
+        sb.table("users").update({"total_purchases": sb.table("users").select("total_purchases").eq("id", user_id).execute().data[0].get("total_purchases", 0) + 1}).eq("id", user_id).execute()
+
+        logger.info(f"Migrated client {client_name} (TG:{telegram_id}) → profile {profile_id}")
+        return RedirectResponse(
+            url=f"/panel/migrate?success=Cliente+{client_name}+migrado+exitosamente",
+            status_code=302,
+        )
+    except Exception as e:
+        logger.error(f"Migrate error: {e}")
+        return RedirectResponse(url=f"/panel/migrate?error={str(e)[:120]}", status_code=302)
+
+
+@panel_router.get("/api/profiles/available/{platform_id}")
+async def api_profiles_by_platform(request: Request, platform_id: str):
+    """Return available profiles for a given platform (used by migrate form JS)."""
+    if not verify_session(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+        res = sb.table("profiles").select("id, profile_name, profile_type").eq(
+            "platform_id", platform_id
+        ).eq("status", "available").order("profile_type").execute()
+        return JSONResponse({"profiles": res.data or []})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # API / JSON ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
