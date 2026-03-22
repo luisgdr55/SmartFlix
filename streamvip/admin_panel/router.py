@@ -1132,7 +1132,7 @@ async def migrate_post(request: Request):
             end_dt = datetime.strptime(ed_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
             end_dt = tz_ve.localize(end_dt)
 
-            sb.table("subscriptions").insert({
+            new_sub = sb.table("subscriptions").insert({
                 "user_id": user_id,
                 "profile_id": prof_id,
                 "platform_id": pid,
@@ -1150,6 +1150,16 @@ async def migrate_post(request: Request):
             if mode == "existing":
                 sb.table("profiles").update({"status": "occupied"}).eq("id", prof_id).execute()
             created += 1
+
+            # Send immediate reminder if expiring within 3 days
+            days_left = (end_dt.astimezone(tz_ve) - venezuela_now()).days
+            sub_id = new_sub.data[0]["id"] if new_sub.data else None
+            if sub_id and days_left <= 3:
+                try:
+                    from services.notification_service import send_expiry_reminder
+                    await send_expiry_reminder(str(sub_id))
+                except Exception as notify_err:
+                    logger.warning(f"Could not send immediate reminder: {notify_err}")
 
         # 3. Update total_purchases
         sb.table("users").update({"total_purchases": current_purchases + created}).eq("id", user_id).execute()
