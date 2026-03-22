@@ -1134,9 +1134,9 @@ async def api_profiles_by_platform(request: Request, platform_id: str):
     try:
         from database import get_supabase
         sb = get_supabase()
-        res = sb.table("profiles").select("id, profile_name, profile_type").eq(
-            "platform_id", platform_id
-        ).eq("status", "available").order("profile_type").execute()
+        res = sb.table("profiles").select(
+            "id, profile_name, profile_type, is_extra_member, extra_email"
+        ).eq("platform_id", platform_id).eq("status", "available").order("profile_type").execute()
         return JSONResponse({"profiles": res.data or []})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

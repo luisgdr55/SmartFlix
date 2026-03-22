@@ -113,17 +113,21 @@
             <!-- Perfil -->
             <div class="sm:col-span-2">
               <label class="form-label">Perfil asignado *</label>
-              <select name="profile_id" required class="form-input">
+              <select name="profile_id" required class="form-input"
+                @change="row.selectedIsExtra = $event.target.options[$event.target.selectedIndex]?.dataset?.extra === 'true'">
                 <option value="">Selecciona la plataforma primero</option>
                 <template x-for="pr in (row.profiles || [])" :key="pr.id">
                   <option :value="pr.id"
-                    x-text="pr.profile_name + ' (' + (pr.profile_type==='monthly'?'Mensual':pr.profile_type==='week'?'Semanal':'Express') + ')'">
+                    :data-extra="pr.is_extra_member ? 'true' : 'false'"
+                    x-text="(pr.is_extra_member ? '🏠 [CUPO EXTRA] ' : '') + pr.profile_name + ' (' + (pr.profile_type==='monthly'?'Mensual':pr.profile_type==='week'?'Semanal':'Express') + ')' + (pr.is_extra_member && pr.extra_email ? ' — ' + pr.extra_email : '')">
                   </option>
                 </template>
               </select>
               <p x-show="row.loading" class="text-xs text-slate-400 mt-1">Cargando perfiles...</p>
               <p x-show="!row.loading && row.profiles && row.profiles.length === 0 && row.platformSelected"
                 class="text-xs text-amber-400 mt-1">⚠️ Sin perfiles disponibles</p>
+              <p x-show="row.selectedIsExtra"
+                class="text-xs text-amber-400 mt-1">🏠 Este es un cupo adicional de hogar — el cliente recibirá sus propias credenciales</p>
             </div>
 
             <!-- Fecha de corte -->
@@ -170,11 +174,11 @@
 <script>
 function migrateForm() {
   return {
-    rows: [{ id: 1, profiles: [], loading: false, platformSelected: false }],
+    rows: [{ id: 1, profiles: [], loading: false, platformSelected: false, selectedIsExtra: false }],
     nextId: 2,
 
     addRow() {
-      this.rows.push({ id: this.nextId++, profiles: [], loading: false, platformSelected: false });
+      this.rows.push({ id: this.nextId++, profiles: [], loading: false, platformSelected: false, selectedIsExtra: false });
     },
 
     removeRow(idx) {
