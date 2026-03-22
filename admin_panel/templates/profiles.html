@@ -74,8 +74,19 @@
             <td class="table-cell text-sm text-slate-400 font-mono">
               {{ (p.get('accounts') or {}).get('email', '—') }}
             </td>
-            <td class="table-cell font-medium text-slate-200">{{ p.get('profile_name', '—') }}</td>
-            <td class="table-cell font-mono text-slate-300 text-sm">{{ p.get('pin') or '—' }}</td>
+            <td class="table-cell font-medium text-slate-200">
+              {{ p.get('profile_name', '—') }}
+              {% if p.get('is_extra_member') %}
+              <span class="ml-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full">🏠 Extra</span>
+              {% endif %}
+            </td>
+            <td class="table-cell font-mono text-slate-300 text-sm">
+              {% if p.get('is_extra_member') %}
+                <span class="text-xs text-amber-400">{{ p.get('extra_email') or '—' }}</span>
+              {% else %}
+                {{ p.get('pin') or '—' }}
+              {% endif %}
+            </td>
             <td class="table-cell">
               {% set t = p.get('profile_type', '') %}
               {% if t == 'monthly' %}<span class="text-xs bg-indigo-600/20 text-indigo-300 px-2 py-0.5 rounded-full">Mensual</span>

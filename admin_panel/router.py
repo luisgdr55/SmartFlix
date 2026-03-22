@@ -399,6 +399,9 @@ async def profile_new_save(
     pin: str = Form(default=""),
     profile_type: str = Form(default="monthly"),
     status: str = Form(default="available"),
+    is_extra_member: str = Form(default="off"),
+    extra_email: str = Form(default=""),
+    extra_password: str = Form(default=""),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -406,6 +409,7 @@ async def profile_new_save(
     try:
         from database import get_supabase
         sb = get_supabase()
+        extra = is_extra_member == "on"
         sb.table("profiles").insert({
             "account_id": account_id,
             "platform_id": platform_id,
@@ -413,6 +417,9 @@ async def profile_new_save(
             "pin": pin or None,
             "profile_type": profile_type,
             "status": status,
+            "is_extra_member": extra,
+            "extra_email": extra_email or None,
+            "extra_password": extra_password or None,
         }).execute()
         return RedirectResponse(url="/panel/profiles?success=Perfil+creado+exitosamente", status_code=302)
     except Exception as e:
@@ -458,6 +465,9 @@ async def profile_edit_save(
     pin: str = Form(default=""),
     profile_type: str = Form(default="monthly"),
     status: str = Form(default="available"),
+    is_extra_member: str = Form(default="off"),
+    extra_email: str = Form(default=""),
+    extra_password: str = Form(default=""),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -465,6 +475,7 @@ async def profile_edit_save(
     try:
         from database import get_supabase
         sb = get_supabase()
+        extra = is_extra_member == "on"
         sb.table("profiles").update({
             "account_id": account_id,
             "platform_id": platform_id,
@@ -472,6 +483,9 @@ async def profile_edit_save(
             "pin": pin or None,
             "profile_type": profile_type,
             "status": status,
+            "is_extra_member": extra,
+            "extra_email": extra_email or None,
+            "extra_password": extra_password or None,
         }).eq("id", profile_id).execute()
         return RedirectResponse(url="/panel/profiles?success=Perfil+actualizado", status_code=302)
     except Exception as e:

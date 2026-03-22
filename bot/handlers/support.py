@@ -99,15 +99,26 @@ async def _send_credentials(query, sub: dict) -> None:
             await query.edit_message_text("No se encontró la cuenta.")
             return
 
-        pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
+        platform_str = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
 
-        credentials_text = SUPPORT_NO_CREDENTIALS.format(
-            platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}",
-            profile_name=profile.get("profile_name", "N/A"),
-            email=account.get("email", ""),
-            password=account.get("password", ""),
-            pin_line=pin_line,
-        )
+        if profile.get("is_extra_member") and profile.get("extra_email"):
+            # Cupo adicional de hogar — tiene sus propias credenciales
+            credentials_text = (
+                f"🏠 <b>Cupo Adicional de Hogar</b>\n"
+                f"📺 Plataforma: {platform_str}\n\n"
+                f"📧 <b>Email:</b> <code>{profile.get('extra_email','')}</code>\n"
+                f"🔑 <b>Contraseña:</b> <code>{profile.get('extra_password','')}</code>\n\n"
+                f"<i>Inicia sesión con estas credenciales en la app de {platform.get('name','')}.</i>"
+            )
+        else:
+            pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
+            credentials_text = SUPPORT_NO_CREDENTIALS.format(
+                platform=platform_str,
+                profile_name=profile.get("profile_name", "N/A"),
+                email=account.get("email", ""),
+                password=account.get("password", ""),
+                pin_line=pin_line,
+            )
 
         await query.edit_message_text(
             credentials_text,
