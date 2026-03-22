@@ -106,8 +106,8 @@ async def get_profile_by_id(profile_id: str) -> Optional[dict]:
     """Get profile by UUID."""
     try:
         sb = get_supabase()
-        result = sb.table("profiles").select("*").eq("id", profile_id).maybe_single().execute()
-        return result.data
+        result = sb.table("profiles").select("*").eq("id", profile_id).limit(1).execute()
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error in get_profile_by_id: {e}")
         return None

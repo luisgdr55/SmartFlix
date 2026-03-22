@@ -42,8 +42,8 @@ async def get_account_by_id(account_id: str) -> Optional[dict]:
     """Get account by UUID."""
     try:
         sb = get_supabase()
-        result = sb.table("accounts").select("*").eq("id", account_id).maybe_single().execute()
-        return result.data
+        result = sb.table("accounts").select("*").eq("id", account_id).limit(1).execute()
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error in get_account_by_id: {e}")
         return None

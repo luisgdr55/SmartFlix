@@ -23,8 +23,8 @@ async def get_platform_by_slug(slug: str) -> Optional[dict]:
     """Get platform by slug."""
     try:
         sb = get_supabase()
-        result = sb.table("platforms").select("*").eq("slug", slug).maybe_single().execute()
-        return result.data
+        result = sb.table("platforms").select("*").eq("slug", slug).limit(1).execute()
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error in get_platform_by_slug: {e}")
         return None
@@ -34,8 +34,8 @@ async def get_platform_by_id(platform_id: str) -> Optional[dict]:
     """Get platform by UUID."""
     try:
         sb = get_supabase()
-        result = sb.table("platforms").select("*").eq("id", platform_id).maybe_single().execute()
-        return result.data
+        result = sb.table("platforms").select("*").eq("id", platform_id).limit(1).execute()
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error in get_platform_by_id: {e}")
         return None
