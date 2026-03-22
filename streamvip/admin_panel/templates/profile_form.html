@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ form_title }} — StreamVip Admin{% endblock %}
+{% block header_title %}{{ form_title }}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto" x-data="{
+  isExtraMember: {{ 'true' if profile and profile.get('is_extra_member') else 'false' }}
+}">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/panel/profiles" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+      </svg>
+    </a>
+    <h2 class="text-xl font-bold text-white">{{ form_title }}</h2>
+  </div>
+
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
+    <form action="{{ form_action }}" method="POST" class="space-y-5">
+
+      <div>
+        <label class="form-label">Plataforma *</label>
+        <select name="platform_id" required class="form-input" id="platform-select">
+          <option value="">Selecciona plataforma...</option>
+          {% for p in platforms %}
+          <option value="{{ p['id'] }}" {% if profile and profile.get('platform_id') == p['id'] %}selected{% endif %}>
+            {{ p.get('icon_emoji','') }} {{ p['name'] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label class="form-label">Cuenta *</label>
+        <select name="account_id" required class="form-input">
+          <option value="">Selecciona cuenta...</option>
+          {% for acc in accounts %}
+          <option value="{{ acc['id'] }}"
+            data-platform="{{ acc.get('platform_id','') }}"
+            {% if profile and profile.get('account_id') == acc['id'] %}selected{% endif %}>
+            {{ (acc.get('platforms') or {}).get('name', '') }} — {{ acc.get('email','') }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label class="form-label">Nombre del Perfil *</label>
+        <input type="text" name="profile_name" required
+          value="{{ profile.get('profile_name','') if profile else '' }}"
+          placeholder="Ej: Perfil 1, Cupo Extra 1..."
+          class="form-input" />
+      </div>
+
+      <!-- Toggle cupo adicional -->
+      <div class="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-xl px-4 py-3">
+        <input type="checkbox" name="is_extra_member" id="is_extra_member"
+          value="on" x-model="isExtraMember"
+          {% if profile and profile.get('is_extra_member') %}checked{% endif %}
+          class="w-5 h-5 rounded cursor-pointer" style="accent-color:#6366f1" />
+        <div>
+          <label for="is_extra_member" class="text-slate-200 font-medium cursor-pointer">🏠 Cupo adicional de hogar</label>
+          <p class="text-xs text-slate-500">Marcar si este perfil es un cupo extra con sus propias credenciales (ej. Netflix Extra)</p>
+        </div>
+      </div>
+
+      <!-- Campos de cupo adicional -->
+      <div x-show="isExtraMember" x-cloak
+        class="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 space-y-4">
+        <p class="text-xs text-amber-400 font-medium uppercase tracking-wider">
+          🏠 Credenciales del cupo adicional
+        </p>
+        <p class="text-xs text-slate-400">
+          El cupo adicional de Netflix tiene su propio email y contraseña. Ingrésalos aquí — el cliente los recibirá al activar su suscripción.
+        </p>
+        <div>
+          <label class="form-label">Email del cupo adicional</label>
+          <input type="email" name="extra_email"
+            value="{{ profile.get('extra_email','') if profile else '' }}"
+            placeholder="cupo@ejemplo.com"
+            class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">Contraseña del cupo adicional</label>
+          <input type="text" name="extra_password"
+            value="{{ profile.get('extra_password','') if profile else '' }}"
+            placeholder="Contraseña asignada al cupo"
+            class="form-input font-mono" />
+        </div>
+      </div>
+
+      <!-- PIN (solo si NO es cupo adicional) -->
+      <div x-show="!isExtraMember">
+        <label class="form-label">PIN</label>
+        <input type="text" name="pin"
+          value="{{ profile.get('pin','') if profile else '' }}"
+          placeholder="Ej: 1234 (dejar vacío si no tiene)"
+          class="form-input font-mono" maxlength="6" />
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="form-label">Tipo de Perfil *</label>
+          <select name="profile_type" required class="form-input">
+            <option value="monthly" {% if not profile or profile.get('profile_type') == 'monthly' %}selected{% endif %}>Mensual</option>
+            <option value="express" {% if profile and profile.get('profile_type') == 'express' %}selected{% endif %}>⚡ Express</option>
+            <option value="week" {% if profile and profile.get('profile_type') == 'week' %}selected{% endif %}>Semanal</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Estado</label>
+          <select name="status" class="form-input">
+            <option value="available" {% if not profile or profile.get('status') == 'available' %}selected{% endif %}>🟢 Disponible</option>
+            <option value="occupied" {% if profile and profile.get('status') == 'occupied' %}selected{% endif %}>🔴 Ocupado</option>
+            <option value="maintenance" {% if profile and profile.get('status') == 'maintenance' %}selected{% endif %}>🔧 Mantenimiento</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <a href="/panel/profiles" class="btn-secondary flex-1 justify-center">Cancelar</a>
+        <button type="submit" class="btn-primary flex-1 justify-center">
+          {% if profile %}💾 Guardar cambios{% else %}✅ Crear perfil{% endif %}
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}

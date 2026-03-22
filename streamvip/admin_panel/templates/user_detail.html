@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}{{ user.get('name','Usuario') }} — StreamVip Admin{% endblock %}
+{% block header_title %}Detalle del Cliente{% endblock %}
+
+{% block content %}
+<div>
+
+  {% if success %}
+  <div class="mb-4 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>
+  {% endif %}
+
+  <!-- Back -->
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/panel/users" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+      </svg>
+    </a>
+    <h2 class="text-xl font-bold text-white">{{ user.get('name') or 'Sin nombre' }}</h2>
+    {% if user.get('status') == 'blocked' %}<span class="badge-blocked ml-2">Bloqueado</span>{% endif %}
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- User card -->
+    <div class="lg:col-span-1 space-y-4">
+      <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="w-14 h-14 rounded-full bg-indigo-600/30 border-2 border-indigo-500/50 flex items-center justify-center text-2xl">
+            {{ (user.get('name') or 'U')[0].upper() }}
+          </div>
+          <div>
+            <p class="font-semibold text-white text-lg">{{ user.get('name') or 'Sin nombre' }}</p>
+            <p class="text-slate-400 text-sm">{% if user.get('username') %}@{{ user['username'] }}{% else %}Sin @usuario{% endif %}</p>
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <div class="flex items-center justify-between py-2 border-b border-slate-700/40">
+            <span class="text-xs text-slate-500 uppercase tracking-wider">Telegram ID</span>
+            <span class="font-mono text-sm text-slate-300">{{ user.get('telegram_id', '—') }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2 border-b border-slate-700/40">
+            <span class="text-xs text-slate-500 uppercase tracking-wider">Registrado</span>
+            <span class="text-sm text-slate-300">{{ user.get('created_at', '—')[:10] if user.get('created_at') else '—' }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2 border-b border-slate-700/40">
+            <span class="text-xs text-slate-500 uppercase tracking-wider">Última actividad</span>
+            <span class="text-sm text-slate-300">{{ user.get('last_seen', '—')[:16] if user.get('last_seen') else '—' }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2 border-b border-slate-700/40">
+            <span class="text-xs text-slate-500 uppercase tracking-wider">Compras totales</span>
+            <span class="text-sm font-bold text-indigo-400">{{ user.get('total_purchases') or 0 }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2">
+            <span class="text-xs text-slate-500 uppercase tracking-wider">Promociones</span>
+            <span class="text-sm text-slate-300">{% if user.get('receives_promos') %}✅ Sí{% else %}❌ No{% endif %}</span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="mt-6 space-y-2">
+          {% if user.get('status') == 'blocked' %}
+          <form action="/panel/users/{{ user['id'] }}/unblock" method="POST">
+            <button type="submit" class="btn-success w-full justify-center">✅ Desbloquear usuario</button>
+          </form>
+          {% else %}
+          <form action="/panel/users/{{ user['id'] }}/block" method="POST">
+            <button type="submit" class="btn-danger w-full justify-center">🚫 Bloquear usuario</button>
+          </form>
+          {% endif %}
+          {% if user.get('telegram_id') %}
+          <a href="https://t.me/{{ user.get('username', '') }}" target="_blank" class="btn-secondary w-full justify-center text-sm">
+            📱 Ver en Telegram
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Subscriptions -->
+    <div class="lg:col-span-2">
+      <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700/50">
+          <h3 class="text-sm font-semibold text-slate-300">📋 Historial de Suscripciones ({{ subscriptions|length }})</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-slate-700/50 bg-slate-900/20">
+                <th class="table-header">Plataforma</th>
+                <th class="table-header">Plan</th>
+                <th class="table-header">Inicio</th>
+                <th class="table-header">Vence</th>
+                <th class="table-header">Precio</th>
+                <th class="table-header">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for sub in subscriptions %}
+              <tr class="table-row">
+                <td class="table-cell">
+                  <span class="font-medium">
+                    {{ (sub.get('platforms') or {}).get('icon_emoji','') }}
+                    {{ (sub.get('platforms') or {}).get('name','—') }}
+                  </span>
+                </td>
+                <td class="table-cell">
+                  {% set t = sub.get('plan_type','') %}
+                  {% if t == 'express' %}<span class="text-xs text-yellow-400">⚡ Express</span>
+                  {% elif t == 'week' %}<span class="text-xs text-blue-400">Semanal</span>
+                  {% else %}<span class="text-xs text-slate-300 capitalize">{{ t }}</span>{% endif %}
+                </td>
+                <td class="table-cell text-sm text-slate-400">{{ sub.get('start_date','—')[:10] if sub.get('start_date') else '—' }}</td>
+                <td class="table-cell text-sm text-slate-400">{{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}</td>
+                <td class="table-cell text-sm text-emerald-400 font-medium">
+                  ${{ "%.2f"|format(sub.get('price_usd') or 0) }}
+                </td>
+                <td class="table-cell">
+                  {% set s = sub.get('status','') %}
+                  {% if s == 'active' %}<span class="badge-active">Activa</span>
+                  {% elif s == 'pending_payment' %}<span class="badge-pending">Pendiente</span>
+                  {% elif s == 'expired' %}<span class="badge-expired">Expirada</span>
+                  {% elif s == 'cancelled' %}<span class="badge-cancelled">Cancelada</span>
+                  {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="6" class="table-cell text-center text-slate-500 py-12">
+                  <span class="text-3xl opacity-30">📋</span>
+                  <p class="mt-2">Sin suscripciones registradas</p>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

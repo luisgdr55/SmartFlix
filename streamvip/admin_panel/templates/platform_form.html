@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Editar {{ platform.get('name','Plataforma') }} — StreamVip Admin{% endblock %}
+{% block header_title %}Editar Plataforma{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/panel/platforms" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+      </svg>
+    </a>
+    <div class="flex items-center gap-3">
+      <span class="text-3xl">{{ platform.get('icon_emoji','📺') }}</span>
+      <h2 class="text-xl font-bold text-white">Editar: {{ platform.get('name','Plataforma') }}</h2>
+    </div>
+  </div>
+
+  <form action="/panel/platforms/{{ platform['id'] }}/edit" method="POST" class="space-y-6">
+
+    <!-- Basic info -->
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
+      <h3 class="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">Información básica</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="form-label">Nombre *</label>
+          <input type="text" name="name" required value="{{ platform.get('name','') }}" class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">Slug *</label>
+          <input type="text" name="slug" required value="{{ platform.get('slug','') }}" class="form-input font-mono" placeholder="ej: netflix" />
+        </div>
+        <div>
+          <label class="form-label">Emoji / Icono</label>
+          <input type="text" name="icon_emoji" value="{{ platform.get('icon_emoji','') }}" class="form-input text-2xl" placeholder="📺" maxlength="4" />
+        </div>
+        <div class="flex items-center">
+          <div class="flex items-center gap-3 mt-6">
+            <input type="checkbox" name="is_active" id="is_active" value="on"
+              {% if platform.get('is_active') %}checked{% endif %}
+              class="w-5 h-5 rounded bg-slate-700 border-slate-600 text-indigo-500 focus:ring-indigo-500 cursor-pointer" />
+            <label for="is_active" class="text-slate-300 font-medium cursor-pointer">Plataforma activa</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prices -->
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
+      <h3 class="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">Precios (USD)</h3>
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="form-label">Mensual $</label>
+          <div class="relative">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+            <input type="number" name="monthly_price_usd" step="0.01" min="0"
+              value="{{ "%.2f"|format(platform.get('monthly_price_usd') or 0) }}"
+              class="form-input pl-7" />
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Express $</label>
+          <div class="relative">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+            <input type="number" name="express_price_usd" step="0.01" min="0"
+              value="{{ "%.2f"|format(platform.get('express_price_usd') or 0) }}"
+              class="form-input pl-7" />
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Semanal $</label>
+          <div class="relative">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+            <input type="number" name="week_price_usd" step="0.01" min="0"
+              value="{{ "%.2f"|format(platform.get('week_price_usd') or 0) }}"
+              class="form-input pl-7" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
+      <h3 class="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">Instrucciones de uso</h3>
+      <div class="space-y-4">
+        <div>
+          <label class="form-label">Instrucciones para plan Mensual</label>
+          <textarea name="instructions_monthly" rows="4" class="form-input resize-none text-sm"
+            placeholder="Instrucciones que se enviarán al cliente al activar plan mensual...">{{ platform.get('instructions_monthly','') or '' }}</textarea>
+        </div>
+        <div>
+          <label class="form-label">Instrucciones para plan Express</label>
+          <textarea name="instructions_express" rows="4" class="form-input resize-none text-sm"
+            placeholder="Instrucciones para plan express...">{{ platform.get('instructions_express','') or '' }}</textarea>
+        </div>
+        <div>
+          <label class="form-label">Instrucciones para plan Semanal</label>
+          <textarea name="instructions_week" rows="4" class="form-input resize-none text-sm"
+            placeholder="Instrucciones para plan semanal...">{{ platform.get('instructions_week','') or '' }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <a href="/panel/platforms" class="btn-secondary flex-1 justify-center">Cancelar</a>
+      <button type="submit" class="btn-primary flex-1 justify-center">💾 Guardar cambios</button>
+    </div>
+
+  </form>
+</div>
+{% endblock %}
