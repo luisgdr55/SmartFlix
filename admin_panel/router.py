@@ -1018,9 +1018,10 @@ async def migrate_post(request: Request):
         sb = get_supabase()
         tz_ve = pytz.timezone("America/Caracas")
 
-        telegram_id   = int(form.get("telegram_id", 0))
+        telegram_id_raw = form.get("telegram_id", "").strip()
+        telegram_id   = int(telegram_id_raw) if telegram_id_raw else None
         client_name   = form.get("client_name", "").strip()
-        username      = form.get("username", "").strip()
+        username      = form.get("username", "").strip().lstrip("@")
         notes         = form.get("notes", "").strip()
 
         # Multi-value fields (one per subscription row)
@@ -1031,20 +1032,31 @@ async def migrate_post(request: Request):
         prices        = form.getlist("price_usd")
         references    = form.getlist("payment_reference")
 
-        if not telegram_id or not client_name or not platform_ids:
+        if not client_name or not platform_ids:
             return RedirectResponse(url="/panel/migrate?error=Faltan+campos+obligatorios", status_code=302)
+        if not telegram_id and not username:
+            return RedirectResponse(url="/panel/migrate?error=Debes+proporcionar+Telegram+ID+o+username", status_code=302)
 
-        # 1. Upsert user
-        existing_user = sb.table("users").select("id, total_purchases").eq("telegram_id", telegram_id).limit(1).execute()
-        if existing_user.data:
-            user_id = existing_user.data[0]["id"]
-            current_purchases = existing_user.data[0].get("total_purchases", 0) or 0
-            upd = {"name": client_name, "last_seen": venezuela_now().isoformat()}
+        # 1. Upsert user — search by telegram_id or username
+        existing_user = None
+        if telegram_id:
+            res = sb.table("users").select("id, total_purchases").eq("telegram_id", telegram_id).limit(1).execute()
+            existing_user = res.data[0] if res.data else None
+        if not existing_user and username:
+            res = sb.table("users").select("id, total_purchases").eq("username", username).limit(1).execute()
+            existing_user = res.data[0] if res.data else None
+
+        if existing_user:
+            user_id = existing_user["id"]
+            current_purchases = existing_user.get("total_purchases", 0) or 0
+            upd: dict = {"name": client_name, "last_seen": venezuela_now().isoformat()}
+            if telegram_id: upd["telegram_id"] = telegram_id
             if username: upd["username"] = username
             if notes: upd["notes"] = notes
             sb.table("users").update(upd).eq("id", user_id).execute()
         else:
-            ins = {"telegram_id": telegram_id, "name": client_name, "status": "active"}
+            ins: dict = {"name": client_name, "status": "active"}
+            if telegram_id: ins["telegram_id"] = telegram_id
             if username: ins["username"] = username
             if notes: ins["notes"] = notes
             new_user = sb.table("users").insert(ins).execute()

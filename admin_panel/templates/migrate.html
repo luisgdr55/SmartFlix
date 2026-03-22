@@ -28,22 +28,28 @@
     <!-- Datos del cliente -->
     <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
       <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">👤 Datos del cliente</h3>
+      <!-- Aviso de auto-link -->
+      <div class="mb-4 bg-indigo-600/10 border border-indigo-500/30 rounded-xl px-4 py-3 text-xs text-indigo-300">
+        💡 <strong>Telegram ID es opcional.</strong> Si solo tienes el username, el sistema lo enlazará automáticamente la primera vez que el cliente escriba al bot.
+      </div>
+
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="form-label">Telegram ID *</label>
-          <input type="number" name="telegram_id" required placeholder="Ej: 1097484319" class="form-input" />
-          <p class="text-xs text-slate-500 mt-1">Pídele que escriba a @userinfobot</p>
-        </div>
         <div>
           <label class="form-label">Nombre del cliente *</label>
           <input type="text" name="client_name" required placeholder="Nombre completo" class="form-input" />
         </div>
         <div>
-          <label class="form-label">Username Telegram</label>
+          <label class="form-label">Username Telegram *</label>
           <div class="relative">
             <span style="position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:#64748b">@</span>
-            <input type="text" name="username" placeholder="sin_arroba" style="padding-left:1.75rem" class="form-input" />
+            <input type="text" name="username" placeholder="nombre_usuario" style="padding-left:1.75rem" class="form-input" />
           </div>
+          <p class="text-xs text-slate-500 mt-1">Sin @. Es el nombre que aparece en el perfil de Telegram.</p>
+        </div>
+        <div>
+          <label class="form-label">Telegram ID <span class="text-slate-500 font-normal">(opcional)</span></label>
+          <input type="number" name="telegram_id" placeholder="Ej: 1097484319" class="form-input" />
+          <p class="text-xs text-slate-500 mt-1">Si lo tienes, mejor. Si no, con el username alcanza.</p>
         </div>
         <div>
           <label class="form-label">Notas internas</label>

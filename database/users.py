@@ -11,25 +11,38 @@ logger = logging.getLogger(__name__)
 
 
 async def get_or_create_user(telegram_id: int, username: Optional[str], name: Optional[str]) -> dict:
-    """Upsert user by telegram_id. Returns user dict."""
+    """Upsert user by telegram_id. If not found, checks by username (pre-registered clients).
+    Returns user dict."""
     try:
         sb = get_supabase()
-        # Try to get existing user
+        now = venezuela_now().isoformat()
+
+        # 1. Try by telegram_id
         result = sb.table("users").select("*").eq("telegram_id", telegram_id).limit(1).execute()
         existing = result.data[0] if result.data else None
         if existing:
-            # Update last_seen and username if changed
-            update_data: dict = {"last_seen": venezuela_now().isoformat()}
+            update_data: dict = {"last_seen": now}
             if username and existing.get("username") != username:
                 update_data["username"] = username
             sb.table("users").update(update_data).eq("telegram_id", telegram_id).execute()
             return {**existing, **update_data}
-        # Create new user
+
+        # 2. Try by username — links pre-registered clients automatically
+        if username:
+            by_user = sb.table("users").select("*").eq("username", username).is_("telegram_id", "null").limit(1).execute()
+            if by_user.data:
+                pre = by_user.data[0]
+                link_data = {"telegram_id": telegram_id, "last_seen": now}
+                sb.table("users").update(link_data).eq("id", pre["id"]).execute()
+                logger.info(f"Linked pre-registered client @{username} → telegram_id {telegram_id}")
+                return {**pre, **link_data}
+
+        # 3. Create new user
         new_user = {
             "telegram_id": telegram_id,
             "username": username,
             "name": name,
-            "last_seen": venezuela_now().isoformat(),
+            "last_seen": now,
             "status": "active",
             "total_purchases": 0,
             "receives_promos": True,
