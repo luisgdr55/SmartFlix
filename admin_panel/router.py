@@ -1022,6 +1022,7 @@ async def migrate_post(request: Request):
         telegram_id   = int(telegram_id_raw) if telegram_id_raw else None
         client_name   = form.get("client_name", "").strip()
         username      = form.get("username", "").strip().lstrip("@")
+        phone         = form.get("phone", "").strip()
         notes         = form.get("notes", "").strip()
 
         # Multi-value fields (one per subscription row)
@@ -1034,8 +1035,8 @@ async def migrate_post(request: Request):
 
         if not client_name or not platform_ids:
             return RedirectResponse(url="/panel/migrate?error=Faltan+campos+obligatorios", status_code=302)
-        if not telegram_id and not username:
-            return RedirectResponse(url="/panel/migrate?error=Debes+proporcionar+Telegram+ID+o+username", status_code=302)
+        if not telegram_id and not username and not phone:
+            return RedirectResponse(url="/panel/migrate?error=Debes+proporcionar+ID+username+o+telefono", status_code=302)
 
         # 1. Upsert user — search by telegram_id or username
         existing_user = None
@@ -1052,12 +1053,14 @@ async def migrate_post(request: Request):
             upd: dict = {"name": client_name, "last_seen": venezuela_now().isoformat()}
             if telegram_id: upd["telegram_id"] = telegram_id
             if username: upd["username"] = username
+            if phone: upd["phone"] = phone
             if notes: upd["notes"] = notes
             sb.table("users").update(upd).eq("id", user_id).execute()
         else:
             ins: dict = {"name": client_name, "status": "active"}
             if telegram_id: ins["telegram_id"] = telegram_id
             if username: ins["username"] = username
+            if phone: ins["phone"] = phone
             if notes: ins["notes"] = notes
             new_user = sb.table("users").insert(ins).execute()
             user_id = new_user.data[0]["id"]

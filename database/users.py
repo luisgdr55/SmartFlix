@@ -32,7 +32,7 @@ async def get_or_create_user(telegram_id: int, username: Optional[str], name: Op
             by_user = sb.table("users").select("*").eq("username", username).is_("telegram_id", "null").limit(1).execute()
             if by_user.data:
                 pre = by_user.data[0]
-                link_data = {"telegram_id": telegram_id, "last_seen": now}
+                link_data = {"telegram_id": telegram_id, "last_seen": now, "username": username}
                 sb.table("users").update(link_data).eq("id", pre["id"]).execute()
                 logger.info(f"Linked pre-registered client @{username} → telegram_id {telegram_id}")
                 return {**pre, **link_data}
@@ -53,6 +53,46 @@ async def get_or_create_user(telegram_id: int, username: Optional[str], name: Op
     except Exception as e:
         logger.error(f"Error in get_or_create_user: {e}")
         raise
+
+
+async def find_user_by_phone(phone: str) -> Optional[dict]:
+    """Find a pre-registered user by phone number (normalizes VE formats)."""
+    try:
+        sb = get_supabase()
+        # Normalize: strip +58 prefix → 0XXX, keep only digits
+        digits = "".join(c for c in phone if c.isdigit())
+        variants = {phone}
+        if digits.startswith("58") and len(digits) > 10:
+            local = "0" + digits[2:]
+            variants.add(local)
+            variants.add("+" + digits)
+        elif digits.startswith("0"):
+            variants.add(digits)
+            variants.add("+58" + digits[1:])
+            variants.add("58" + digits[1:])
+
+        for variant in variants:
+            res = sb.table("users").select("*").eq("phone", variant).is_("telegram_id", "null").limit(1).execute()
+            if res.data:
+                return res.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error in find_user_by_phone: {e}")
+        return None
+
+
+async def link_user_telegram_id(user_id: str, telegram_id: int, username: Optional[str] = None) -> bool:
+    """Link a pre-registered user to their telegram_id."""
+    try:
+        sb = get_supabase()
+        upd: dict = {"telegram_id": telegram_id, "last_seen": venezuela_now().isoformat()}
+        if username:
+            upd["username"] = username
+        sb.table("users").update(upd).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in link_user_telegram_id: {e}")
+        return False
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[dict]:

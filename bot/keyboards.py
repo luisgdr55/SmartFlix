@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -255,3 +255,16 @@ def confirm_price_keyboard(platform_id: str, price_type: str, new_price: float) 
             InlineKeyboardButton("❌ Cancelar", callback_data=f"prices:platform:{platform_id}"),
         ],
     ])
+
+
+def share_contact_keyboard() -> ReplyKeyboardMarkup:
+    """Keyboard asking user to share their phone number."""
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("📱 Compartir mi número", request_contact=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def remove_keyboard() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()

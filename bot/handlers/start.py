@@ -6,13 +6,16 @@ import random
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.keyboards import main_menu_keyboard
+from bot.keyboards import main_menu_keyboard, share_contact_keyboard, remove_keyboard
 from bot.messages import WELCOME_NEW_USER, NAME_REQUEST, NAME_CONFIRMED, MAIN_MENU
 from bot.middleware import (
     check_user_blocked, get_user_state, set_user_state,
     clear_user_state, rate_limit_check
 )
-from database.users import get_or_create_user, get_user_by_telegram_id, update_user_name
+from database.users import (
+    get_or_create_user, get_user_by_telegram_id, update_user_name,
+    find_user_by_phone, link_user_telegram_id,
+)
 from database.analytics import get_platform_availability
 from services.gemini_service import extract_user_name
 from utils.helpers import venezuela_now
@@ -66,6 +69,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         user = await get_or_create_user(telegram_id, username, full_name)
 
+        # New user with no username — check if they're pre-registered by phone
+        if not user.get("name") and not username:
+            set_user_state(telegram_id, "awaiting_phone_verify")
+            await update.message.reply_text(
+                "👋 ¡Hola! Para verificar si ya tienes una cuenta con nosotros, "
+                "por favor comparte tu número de teléfono:",
+                reply_markup=share_contact_keyboard(),
+            )
+            return
+
         # Check if user needs to provide their name
         if not user.get("name"):
             set_user_state(telegram_id, "awaiting_name")
@@ -88,6 +101,56 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(
             "¡Hola! 👋 Hubo un error al cargar tu perfil. Intenta de nuevo.",
             reply_markup=main_menu_keyboard(),
+        )
+
+
+async def handle_contact_shared(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle when user shares their phone number for pre-registration linking."""
+    if not update.message or not update.message.contact or not update.effective_user:
+        return
+
+    telegram_id = update.effective_user.id
+    username = update.effective_user.username
+    contact = update.message.contact
+    phone = contact.phone_number  # e.g. "+584121234567"
+
+    try:
+        pre_user = await find_user_by_phone(phone)
+
+        if pre_user:
+            await link_user_telegram_id(pre_user["id"], telegram_id, username)
+            name = pre_user.get("name", "")
+            availability = await _build_availability_text()
+            greeting = f"✅ ¡Te encontré, <b>{name}</b>! Tu cuenta ha sido vinculada.\n\n"
+            menu_text = greeting + MAIN_MENU.format(name=name, availability=availability)
+            await update.message.reply_text(
+                menu_text,
+                parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
+            )
+        else:
+            # Not pre-registered — create new user and ask for name
+            from database.users import update_user_phone
+            user = await get_or_create_user(telegram_id, username, update.effective_user.full_name)
+            await update_user_phone(telegram_id, phone)
+            await update.message.reply_text(
+                remove_keyboard(),
+            )
+            if not user.get("name"):
+                set_user_state(telegram_id, "awaiting_name")
+                await update.message.reply_text(WELCOME_NEW_USER, parse_mode="HTML",
+                                                reply_markup=remove_keyboard())
+            else:
+                name = user.get("name", "")
+                availability = await _build_availability_text()
+                menu_text = MAIN_MENU.format(name=name, availability=availability)
+                await update.message.reply_text(menu_text, parse_mode="HTML",
+                                                reply_markup=main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Error in handle_contact_shared: {e}")
+        await update.message.reply_text(
+            "Hubo un error. Intenta de nuevo con /start",
+            reply_markup=remove_keyboard(),
         )
 
 

@@ -33,7 +33,7 @@ _telegram_app: Application | None = None
 
 def build_telegram_app() -> Application:
     """Build and configure the Telegram bot application with all handlers."""
-    from bot.handlers.start import start_handler, handle_name_response
+    from bot.handlers.start import start_handler, handle_name_response, handle_contact_shared
     from bot.handlers.menu import show_main_menu
     from bot.handlers.subscription import show_subscription_platforms, handle_platform_selected, handle_order_confirmed
     from bot.handlers.express import show_express_platforms, handle_express_platform_selected, handle_express_confirmed, handle_queue_join
@@ -123,6 +123,9 @@ def build_telegram_app() -> Application:
     # =====================================================
     # MESSAGE HANDLERS
     # =====================================================
+    # Contact sharing - for pre-registered client linking by phone
+    app.add_handler(MessageHandler(filters.CONTACT, handle_contact_shared))
+
     # Photos - for payment comprobantes
     app.add_handler(MessageHandler(filters.PHOTO, handle_payment_image))
 
