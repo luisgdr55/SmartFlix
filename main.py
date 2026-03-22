@@ -17,6 +17,9 @@ from telegram.ext import (
 
 from config import settings
 
+# Admin panel router
+from admin_panel.router import panel_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -299,6 +302,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Mount admin panel
+app.include_router(panel_router)
 
 
 @app.post("/webhook")

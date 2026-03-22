@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     APP_URL: str
     WEBHOOK_SECRET: str = "streamvip_secret"
     DEBUG: bool = False
+    SECRET_KEY: str = "streamvip_admin_secret_key_2025"
+    ADMIN_PANEL_PASSWORD: str = "streamvip2025"
 
     class Config:
         env_file = ".env"

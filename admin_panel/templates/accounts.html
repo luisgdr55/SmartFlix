@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Cuentas — StreamVip Admin{% endblock %}
+{% block header_title %}Gestión de Cuentas{% endblock %}
+
+{% block content %}
+<div x-data="{ deleteId: null, showDeleteModal: false }">
+
+  <!-- Alerts -->
+  {% if success %}
+  <div class="mb-4 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">
+    ✅ {{ success }}
+  </div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">
+    ❌ {{ error }}
+  </div>
+  {% endif %}
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-xl font-bold text-white">🏦 Cuentas de Streaming</h2>
+      <p class="text-sm text-slate-400 mt-0.5">{{ accounts|length }} cuenta(s) registrada(s)</p>
+    </div>
+    <a href="/panel/accounts/new" class="btn-primary">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nueva Cuenta
+    </a>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/30">
+            <th class="table-header">Plataforma</th>
+            <th class="table-header">Email</th>
+            <th class="table-header">Estado</th>
+            <th class="table-header">Fecha Corte</th>
+            <th class="table-header text-center">Perfiles</th>
+            <th class="table-header">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for acc in accounts %}
+          <tr class="table-row">
+            <td class="table-cell">
+              <div class="flex items-center gap-2">
+                <span class="text-lg">{{ (acc.get('platforms') or {}).get('icon_emoji', '📺') }}</span>
+                <span class="font-medium text-slate-200">{{ (acc.get('platforms') or {}).get('name', '—') }}</span>
+              </div>
+            </td>
+            <td class="table-cell font-mono text-sm text-slate-300">{{ acc.get('email', '—') }}</td>
+            <td class="table-cell">
+              {% if acc.get('status') == 'active' %}<span class="badge-active">Activa</span>
+              {% elif acc.get('status') == 'suspended' %}<span class="badge-expired">Suspendida</span>
+              {% else %}<span class="badge-expired">{{ acc.get('status', '—') }}</span>{% endif %}
+            </td>
+            <td class="table-cell text-slate-400 text-sm">{{ acc.get('billing_date', '—') or '—' }}</td>
+            <td class="table-cell text-center">
+              <span class="inline-flex items-center justify-center w-7 h-7 rounded-full {% if acc.get('profile_count', 0) > 0 %}bg-indigo-600/30 text-indigo-300{% else %}bg-slate-700 text-slate-500{% endif %} text-xs font-bold">
+                {{ acc.get('profile_count', 0) }}
+              </span>
+            </td>
+            <td class="table-cell">
+              <div class="flex items-center gap-2">
+                <a href="/panel/accounts/{{ acc['id'] }}/edit" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">✏️ Editar</a>
+                <a href="/panel/profiles?platform={{ acc.get('platform_id','') }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">👤 Perfiles</a>
+                <button @click="deleteId = '{{ acc['id'] }}'; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="table-cell text-center text-slate-500 py-16">
+              <div class="flex flex-col items-center gap-3">
+                <span class="text-4xl opacity-30">🏦</span>
+                <p>No hay cuentas registradas.</p>
+                <a href="/panel/accounts/new" class="btn-primary text-xs">Crear primera cuenta</a>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Delete confirmation modal -->
+  <div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+      <h3 class="text-lg font-semibold text-white mb-2">¿Eliminar cuenta?</h3>
+      <p class="text-slate-400 text-sm mb-6">Esta acción no se puede deshacer. Los perfiles asociados también serán eliminados.</p>
+      <div class="flex gap-3">
+        <button @click="showDeleteModal = false" class="btn-secondary flex-1 justify-center">Cancelar</button>
+        <form :action="'/panel/accounts/' + deleteId + '/delete'" method="POST" class="flex-1">
+          <button type="submit" class="btn-danger w-full justify-center">Eliminar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
