@@ -542,8 +542,8 @@ async def user_detail(request: Request, user_id: str):
     try:
         from database import get_supabase
         sb = get_supabase()
-        user_res = sb.table("users").select("*").eq("id", user_id).maybe_single().execute()
-        user = user_res.data
+        user_res = sb.table("users").select("*").eq("id", user_id).execute()
+        user = user_res.data[0] if user_res.data else None
         if not user:
             return RedirectResponse(url="/panel/users?error=Usuario+no+encontrado", status_code=302)
         subs_res = sb.table("subscriptions").select(
@@ -726,8 +726,8 @@ async def payment_approve(
                 if telegram_id:
                     from database import get_supabase
                     sb = get_supabase()
-                    profile_res = sb.table("profiles").select("profile_name, pin").eq("id", profile_id).maybe_single().execute()
-                    profile_data = profile_res.data or {}
+                    profile_res = sb.table("profiles").select("profile_name, pin").eq("id", profile_id).execute()
+                    profile_data = profile_res.data[0] if profile_res.data else {}
                     from services.notification_service import send_to_user
                     msg = (
                         f"✅ <b>¡Pago aprobado!</b>\n\n"
@@ -882,8 +882,8 @@ async def settings_page(request: Request):
         from database import get_supabase
         rate_data = await get_current_rate()
         sb = get_supabase()
-        config_res = sb.table("payment_config").select("*").limit(1).maybe_single().execute()
-        payment_config = config_res.data or {}
+        config_res = sb.table("payment_config").select("*").limit(1).execute()
+        payment_config = config_res.data[0] if config_res.data else {}
     except Exception as e:
         logger.error(f"Settings page error: {e}")
         rate_data = None

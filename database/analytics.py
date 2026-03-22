@@ -159,7 +159,7 @@ async def get_client_detail(telegram_id: int) -> Optional[dict]:
     """Get full client info including subscription history."""
     try:
         sb = get_supabase()
-        user_result = sb.table("users").select("*").eq("telegram_id", telegram_id).maybe_single().execute()
+        user_result = sb.table("users").select("*").eq("telegram_id", telegram_id).limit(1).execute()
         if not user_result.data:
             return None
 

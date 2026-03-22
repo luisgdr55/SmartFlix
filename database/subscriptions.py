@@ -225,7 +225,7 @@ async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
             sb.table("subscriptions")
             .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(profile_name, pin)")
             .eq("id", sub_id)
-            .maybe_single()
+            
             .execute()
         )
         return result.data

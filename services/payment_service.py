@@ -197,7 +197,7 @@ async def get_payment_config() -> Optional[dict]:
             sb.table("payment_config")
             .select("*")
             .eq("is_active", True)
-            .maybe_single()
+            
             .execute()
         )
         return result.data

@@ -118,16 +118,16 @@ async def get_current_rate() -> Optional[dict]:
             .select("*")
             .order("updated_at", desc=True)
             .limit(1)
-            .maybe_single()
             .execute()
         )
-        if result.data:
+        row = result.data[0] if result.data else None
+        if row:
             try:
                 r = _get_redis()
-                r.setex(RATE_CACHE_KEY, RATE_TTL_SECONDS, json.dumps(result.data, default=str))
+                r.setex(RATE_CACHE_KEY, RATE_TTL_SECONDS, json.dumps(row, default=str))
             except Exception:
                 pass
-            return result.data
+            return row
     except Exception as e:
         logger.error(f"Error fetching exchange rate from DB: {e}")
 

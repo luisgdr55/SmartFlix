@@ -27,7 +27,7 @@ async def check_user_blocked(telegram_id: int) -> bool:
             sb.table("users")
             .select("status")
             .eq("telegram_id", telegram_id)
-            .maybe_single()
+            
             .execute()
         )
         if result.data:

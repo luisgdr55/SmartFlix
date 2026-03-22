@@ -804,7 +804,7 @@ async def handle_campaign_send(update: Update, context: ContextTypes.DEFAULT_TYP
         from services.notification_service import broadcast_campaign
 
         sb = get_supabase()
-        campaign_result = sb.table("campaigns").select("*").eq("id", campaign_id).maybe_single().execute()
+        campaign_result = sb.table("campaigns").select("*").eq("id", campaign_id).limit(1).execute()
         campaign = campaign_result.data if campaign_result else None
 
         if not campaign:
