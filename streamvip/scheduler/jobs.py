@@ -62,15 +62,17 @@ async def job_expiry_notifications() -> None:
 
 
 # ============================================================
-# JOB 3: Express release - every 15 minutes
+# JOB 3: Express release - every 5 minutes
 # ============================================================
 async def job_express_release() -> None:
-    """Release expired express subscriptions and notify queue."""
+    """Release expired express subscriptions, rotate PIN, notify admin and queue."""
     logger.info("Running job: express_release")
     try:
+        import random
+        import string
         from database.subscriptions import get_expired_express_subscriptions, expire_subscription
         from database.profiles import release_profile
-        from services.notification_service import send_express_expired, notify_express_queue
+        from services.notification_service import send_express_expired, notify_express_queue, send_to_admin
 
         expired_express = await get_expired_express_subscriptions()
 
@@ -79,17 +81,43 @@ async def job_express_release() -> None:
                 sub_id = str(sub["id"])
                 profile = sub.get("profiles") or {}
                 profile_id = profile.get("id")
+                profile_name = profile.get("profile_name", "—")
                 platform_id = str(sub.get("platform_id", ""))
+                platform = sub.get("platforms") or {}
+                platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
+                user = sub.get("users") or {}
+                client_name = user.get("name") or user.get("username") or "Sin nombre"
 
                 # Expire subscription
                 await expire_subscription(sub_id)
 
-                # Release profile
+                # Change PIN + release profile
                 if profile_id:
-                    await release_profile(str(profile_id))
+                    new_pin = "".join(random.choices(string.digits, k=4))
+                    from database import get_supabase
+                    from utils.helpers import venezuela_now
+                    sb = get_supabase()
+                    sb.table("profiles").update({
+                        "pin": new_pin,
+                        "status": "available",
+                        "last_released": venezuela_now().isoformat(),
+                    }).eq("id", profile_id).execute()
+                else:
+                    new_pin = "—"
 
-                # Notify user of expiry + upsell
+                # Notify client of expiry + upsell
                 await send_express_expired(sub_id)
+
+                # Notify admin
+                admin_msg = (
+                    f"⚡ <b>Express liberado</b>\n\n"
+                    f"🎬 Plataforma: <b>{platform_name}</b>\n"
+                    f"👤 Perfil: <b>{profile_name}</b>\n"
+                    f"👥 Cliente: <b>{client_name}</b>\n"
+                    f"🔢 PIN nuevo: <code>{new_pin}</code>\n\n"
+                    f"El perfil ya está disponible para el próximo cliente."
+                )
+                await send_to_admin(admin_msg)
 
                 # Notify queue if there are waiting users
                 if platform_id:
@@ -248,10 +276,10 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Job 3: Express release - every 15 minutes
+    # Job 3: Express release - every 5 minutes
     scheduler.add_job(
         job_express_release,
-        IntervalTrigger(minutes=15),
+        IntervalTrigger(minutes=5),
         id="express_release",
         name="Express Release",
         replace_existing=True,
