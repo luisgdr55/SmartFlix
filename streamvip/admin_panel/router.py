@@ -122,16 +122,25 @@ async def dashboard(request: Request):
         ).eq("plan_type", "express").execute()
         express_active = express_result.count or 0
 
-        # Expiring today or within 3 days
+        # Expiring subscriptions (clients) within 3 days
         import pytz
         tz_ve = pytz.timezone("America/Caracas")
         now_ve = venezuela_now()
+        today_str = now_ve.strftime("%Y-%m-%d")
+        in_3_days_str = (now_ve + timedelta(days=3)).strftime("%Y-%m-%d")
         in_3_days = now_ve + timedelta(days=3)
         expiring_alert = sb.table("subscriptions").select(
             "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
         ).eq("status", "active").gte("end_date", now_ve.isoformat()).lte(
             "end_date", in_3_days.isoformat()
         ).order("end_date").execute()
+
+        # Accounts with billing_date today or overdue (past due or within 3 days)
+        accounts_due = sb.table("accounts").select(
+            "id, email, billing_date, platforms(name, icon_emoji)"
+        ).eq("status", "active").not_.is_("billing_date", "null").lte(
+            "billing_date", in_3_days_str
+        ).order("billing_date").execute()
 
         context = {
             "request": request,
@@ -145,6 +154,8 @@ async def dashboard(request: Request):
             "daily_values": daily_values,
             "platform_availability": stats.get("platform_availability", []),
             "expiring_alert": expiring_alert.data or [],
+            "accounts_due": accounts_due.data or [],
+            "today_str": today_str,
             "now_ve": now_ve,
         }
     except Exception as e:
@@ -162,6 +173,8 @@ async def dashboard(request: Request):
             "daily_values": [],
             "platform_availability": [],
             "expiring_alert": [],
+            "accounts_due": [],
+            "today_str": _ve_now().strftime("%Y-%m-%d"),
             "now_ve": _ve_now(),
             "error": str(e),
         }
