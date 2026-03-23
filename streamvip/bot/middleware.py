@@ -45,7 +45,7 @@ async def check_user_blocked(telegram_id: int) -> bool:
             .execute()
         )
         if result.data:
-            return result.data.get("status") == "blocked"
+            return result.data[0].get("status") == "blocked"
         return False
     except Exception as e:
         logger.error(f"Error checking user blocked status: {e}")

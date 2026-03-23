@@ -200,7 +200,7 @@ async def get_payment_config() -> Optional[dict]:
             
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error getting payment config: {e}")
         return None
