@@ -337,6 +337,11 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"Webhook set to: {webhook_url}")
 
+    # Register initialized bot for outbound notifications
+    from services.notification_service import init_notification_bot
+    init_notification_bot(_telegram_app.bot)
+    logger.info("Notification bot initialized")
+
     # Start scheduler
     from scheduler.jobs import setup_scheduler
     sched = setup_scheduler()

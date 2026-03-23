@@ -854,28 +854,32 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
         await cancel_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
-        # Notify user with clear instructions
+        # Notify user — invite to restart
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")
+        platform = sub.get("platforms") or {}
+        platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
         if user_tid:
             from services.notification_service import send_to_user
-            from bot.keyboards import main_menu_keyboard
+            from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+            restart_keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Iniciar nuevo pedido", callback_data="menu:subscribe")
+            ]])
             await send_to_user(
                 user_tid,
-                "❌ <b>Comprobante no aprobado</b>\n\n"
-                "Tu comprobante de pago no pudo ser verificado.\n\n"
-                "<b>Posibles motivos:</b>\n"
-                "• El monto no coincide con el precio indicado\n"
-                "• El comprobante no es legible o está editado\n"
-                "• La referencia ya fue usada anteriormente\n"
-                "• El pago es de más de 60 minutos\n\n"
-                "¿Qué puedes hacer?\n"
-                "🔄 Inicia un nuevo pedido desde el menú\n"
-                "📞 Contacta a soporte si crees que es un error",
-                keyboard=main_menu_keyboard(),
+                f"❌ <b>Comprobante no aprobado</b>\n\n"
+                f"Hola, tu comprobante de pago para <b>{platform_name}</b> "
+                f"no pudo ser verificado por nuestro equipo.\n\n"
+                f"<b>Posibles motivos:</b>\n"
+                f"• El monto no coincide con el precio exacto\n"
+                f"• La imagen no es legible o está recortada\n"
+                f"• La referencia ya fue registrada anteriormente\n\n"
+                f"Por favor inicia un nuevo pedido y envía el comprobante correcto. "
+                f"Si crees que es un error, contáctanos. 📞",
+                keyboard=restart_keyboard,
             )
 
-        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado y cliente notificado.")
+        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado — cliente notificado con opción de reiniciar.")
     except Exception as e:
         logger.error(f"Error in handle_admin_reject_payment: {e}")
         await query.edit_message_text(f"Error al rechazar: {e}")

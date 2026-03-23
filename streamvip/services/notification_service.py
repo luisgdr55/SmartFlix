@@ -15,9 +15,16 @@ logger = logging.getLogger(__name__)
 _bot: Optional[Bot] = None
 
 
+def init_notification_bot(bot: Bot) -> None:
+    """Register the application's already-initialized bot instance."""
+    global _bot
+    _bot = bot
+
+
 def get_bot() -> Bot:
     global _bot
     if _bot is None:
+        # Fallback: create bare instance (may not work in all ptb versions)
         _bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     return _bot
 

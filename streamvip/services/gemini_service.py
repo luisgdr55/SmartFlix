@@ -106,19 +106,22 @@ async def validate_payment_image(image_bytes: bytes) -> dict:
                     "text": (
                         "Analiza esta imagen de comprobante de pago venezolano "
                         "(Pago Móvil o transferencia bancaria). "
-                        "Extrae la información y responde SOLO con JSON válido:\n"
+                        "Extrae TODOS los datos visibles y responde SOLO con JSON válido:\n"
                         "{\n"
                         '  "is_comprobante_valido": true/false,\n'
-                        '  "monto": "número como string, ej: 1250.50",\n'
-                        '  "referencia": "número de referencia",\n'
+                        '  "referencia": "número de referencia o confirmación",\n'
                         '  "fecha": "fecha en formato DD/MM/YYYY",\n'
                         '  "hora": "hora HH:MM si está visible",\n'
-                        '  "banco_origen": "nombre del banco",\n'
-                        '  "banco_destino": "banco destino si aparece",\n'
+                        '  "celular_destino": "número de teléfono destino si aparece",\n'
+                        '  "cedula_receptor": "cédula o RIF del receptor si aparece",\n'
+                        '  "banco_emisor": "banco que realiza el pago",\n'
+                        '  "banco_receptor": "banco que recibe el pago",\n'
+                        '  "monto": "monto en Bs como número, ej: 1250.50",\n'
+                        '  "concepto": "concepto o descripción si aparece",\n'
                         '  "tipo": "pago_movil o transferencia",\n'
                         '  "confianza": "alta/media/baja"\n'
                         "}\n"
-                        "Si no es comprobante válido: is_comprobante_valido=false, demás campos vacíos."
+                        "Si no es comprobante válido: is_comprobante_valido=false, demás campos vacíos o null."
                     ),
                 },
                 {

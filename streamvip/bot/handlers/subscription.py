@@ -299,30 +299,28 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         from bot.keyboards import pending_payment_keyboard
 
         if ocr_available:
-            tipo = (ocr.get("tipo") or "pago_movil").replace("_", " ").title()
-            monto_ocr = ocr.get("monto", "?")
-            fecha_ocr = ocr.get("fecha", "?")
-            hora_ocr = ocr.get("hora", "")
-            banco_origen = ocr.get("banco_origen", "?")
-            banco_destino = ocr.get("banco_destino", "")
-            confianza = ocr.get("confianza", "?")
-            hora_str = f" {hora_ocr}" if hora_ocr else ""
-            banco_destino_line = f"\n• 🏦 Banco destino: {banco_destino}" if banco_destino else ""
+            def _v(key: str, default: str = "—") -> str:
+                val = ocr.get(key)
+                return str(val).strip() if val else default
+
+            hora_str = f" {_v('hora', '')}" if ocr.get("hora") else ""
             ocr_section = (
                 f"📋 <b>DATOS DEL COMPROBANTE (OCR)</b>\n\n"
-                f"• 📝 Tipo: {tipo}\n"
-                f"• 💰 Monto: Bs {monto_ocr}\n"
-                f"• 🔖 Referencia: <code>{reference}</code>\n"
-                f"• 📅 Fecha: {fecha_ocr}{hora_str}\n"
-                f"• 🏦 Banco origen: {banco_origen}"
-                f"{banco_destino_line}\n"
-                f"• 🔍 Confianza OCR: {confianza}"
+                f"🔖 <b>Referencia:</b> <code>{_v('referencia')}</code>\n"
+                f"📅 <b>Fecha:</b> {_v('fecha')}{hora_str}\n"
+                f"💰 <b>Monto:</b> Bs {_v('monto')}\n"
+                f"📱 <b>Celular destino:</b> {_v('celular_destino')}\n"
+                f"🪪 <b>Cédula receptor:</b> {_v('cedula_receptor')}\n"
+                f"🏦 <b>Banco emisor:</b> {_v('banco_emisor')}\n"
+                f"🏦 <b>Banco receptor:</b> {_v('banco_receptor')}\n"
+                f"📝 <b>Concepto:</b> {_v('concepto')}\n"
+                f"🔍 <b>Confianza OCR:</b> {_v('confianza')}"
             )
+            reference = ocr.get("referencia") or reference
         else:
             ocr_section = (
-                f"📋 <b>COMPROBANTE</b>\n\n"
-                f"⚠️ OCR no disponible — revisa manualmente.\n"
-                f"• 🔖 Referencia declarada: <code>{reference}</code>"
+                f"📋 <b>COMPROBANTE RECIBIDO</b>\n\n"
+                f"⚠️ OCR no disponible — revisar imagen manualmente."
             )
 
         admin_ticket = (
