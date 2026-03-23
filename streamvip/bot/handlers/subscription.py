@@ -11,10 +11,10 @@ from bot.keyboards import (
 )
 from bot.messages import (
     SUBSCRIPTION_PLATFORM_SELECT, SUBSCRIPTION_CONFIRM, PAYMENT_INSTRUCTIONS,
-    PAYMENT_CONFIRMED, ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE, PAYMENT_INVALID
+    PAYMENT_CONFIRMED, ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE
 )
 from bot.middleware import (
-    get_user_state, set_user_state, clear_user_state,
+    set_user_state, clear_user_state,
     get_user_data, set_user_data, clear_user_data
 )
 from database.users import get_user_by_telegram_id
@@ -24,7 +24,7 @@ from database.profiles import get_available_profiles, assign_profile
 from database.subscriptions import create_subscription, confirm_subscription
 from database.analytics import get_platform_availability
 from services.exchange_service import calculate_price_bs, get_current_rate
-from services.payment_service import validate_payment, get_payment_config
+from services.payment_service import get_payment_config
 from utils.helpers import venezuela_now, short_id, format_datetime_vzla
 
 logger = logging.getLogger(__name__)
@@ -219,10 +219,6 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     telegram_id = update.effective_user.id
-    state = get_user_state(telegram_id)
-
-    if state != "awaiting_payment":
-        return
 
     try:
         sub_id = get_user_data(telegram_id, "current_sub_id")
@@ -236,87 +232,106 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         price_bs = float(price_bs_str)
+        price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
 
         # Download photo
-        photo = update.message.photo[-1]  # Largest photo
+        photo = update.message.photo[-1]
         photo_file = await photo.get_file()
         image_bytes = await photo_file.download_as_bytearray()
 
-        await update.message.reply_text("⏳ Verificando tu comprobante de pago...")
-
-        # Validate payment
-        result = await validate_payment(bytes(image_bytes), price_bs, sub_id)
-
-        if result.get("valid") is False:
-            reason_map = {
-                "duplicate_image": "Comprobante duplicado",
-                "not_comprobante": "No es un comprobante válido",
-                "amount_mismatch": result.get("message", "Monto incorrecto"),
-                "duplicate_reference": result.get("message", "Referencia duplicada"),
-                "payment_too_old": "Comprobante con más de 60 minutos",
-            }
-            reason = reason_map.get(result.get("reason", ""), result.get("message", "Pago inválido"))
-            await update.message.reply_text(
-                PAYMENT_INVALID.format(reason=reason, amount_bs=f"{price_bs:,.2f}"),
-                parse_mode="HTML",
-                reply_markup=payment_received_keyboard(),
-            )
-            return
-
-        # Save proof and notify admin for manual approval
-        payment_image_url = f"tg://photo/{photo.file_id}"
-        reference = result.get("reference") or result.get("data", {}).get("referencia") or "N/A"
-
-        from database.subscriptions import save_payment_proof
-        await save_payment_proof(sub_id, reference, payment_image_url)
-
-        # Tell client to wait
-        user = await get_user_by_telegram_id(telegram_id)
-        platform = await get_platform_by_id(platform_id)
-        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
-        client_name = (user or {}).get("name", "") if user else ""
-
+        # Immediately acknowledge to client — no matter what happens next
         await update.message.reply_text(
-            f"⏳ <b>Comprobante recibido</b>\n\n"
-            f"Hola <b>{client_name}</b>, tu comprobante está siendo revisado por nuestro equipo.\n\n"
-            f"📺 <b>{(platform or {}).get('name','')}</b> — Plan {plan_label}\n"
-            f"🔖 Ref: <code>{reference}</code>\n\n"
-            f"En breve recibirás tus datos de acceso. ¡Gracias por tu paciencia! 🙏",
+            "⏳ <b>Comprobante recibido</b>\n\n"
+            "Estamos verificando tu pago. En breve recibirás confirmación. 🙏",
             parse_mode="HTML",
         )
 
-        # Notify admin with OCR text ticket + approve/reject buttons
+        # ── Anti-fraud: duplicate image check (fast, no LLM needed) ──────
+        import hashlib
+        img_hash = hashlib.sha256(bytes(image_bytes)).hexdigest()
+        from database.subscriptions import check_payment_reference_exists
+        try:
+            from bot.middleware import get_user_data as _gd, set_user_data as _sd
+            from services.payment_service import _check_image_hash_duplicate, _store_image_hash
+            if await _check_image_hash_duplicate(img_hash):
+                await update.message.reply_text(
+                    "❌ Este comprobante ya fue enviado anteriormente. "
+                    "Si crees que es un error, contacta a soporte.",
+                    reply_markup=payment_received_keyboard(),
+                )
+                return
+        except Exception:
+            pass  # Don't let anti-fraud block the flow
+
+        # ── OCR via LLM (best-effort, never blocks) ──────────────────────
+        ocr: dict = {}
+        ocr_available = False
+        try:
+            from services.gemini_service import validate_payment_image
+            ocr = await validate_payment_image(bytes(image_bytes))
+            ocr_available = ocr.get("is_comprobante_valido") is True
+        except Exception as e:
+            logger.warning(f"OCR failed (non-blocking): {e}")
+
+        reference = ocr.get("referencia") or "N/A"
+
+        # ── Save proof to DB ─────────────────────────────────────────────
+        payment_image_url = f"tg://photo/{photo.file_id}"
+        from database.subscriptions import save_payment_proof
+        await save_payment_proof(sub_id, reference, payment_image_url)
+
+        # Store image hash to prevent duplicates
+        try:
+            from services.payment_service import _store_image_hash
+            await _store_image_hash(img_hash)
+        except Exception:
+            pass
+
+        # ── Load context for ticket ──────────────────────────────────────
+        user = await get_user_by_telegram_id(telegram_id)
+        platform = await get_platform_by_id(platform_id)
+        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
+        client_name = (user or {}).get("name", "") if user else str(telegram_id)
+        platform_name = (platform or {}).get("name", "?")
+
+        # ── Build admin ticket ───────────────────────────────────────────
         from services.notification_service import send_to_admin
         from bot.keyboards import pending_payment_keyboard
 
-        price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
-        ocr = result.get("data", {})
-        tipo = (ocr.get("tipo") or "pago_movil").replace("_", " ").title()
-        monto_ocr = ocr.get("monto", "?")
-        ref_ocr = ocr.get("referencia") or reference
-        fecha_ocr = ocr.get("fecha", "?")
-        hora_ocr = ocr.get("hora", "")
-        banco_origen = ocr.get("banco_origen", "?")
-        banco_destino = ocr.get("banco_destino", "")
-        confianza = ocr.get("confianza", "?")
-
-        hora_str = f" {hora_ocr}" if hora_ocr else ""
-        banco_destino_line = f"\n• 🏦 Banco destino: {banco_destino}" if banco_destino else ""
+        if ocr_available:
+            tipo = (ocr.get("tipo") or "pago_movil").replace("_", " ").title()
+            monto_ocr = ocr.get("monto", "?")
+            fecha_ocr = ocr.get("fecha", "?")
+            hora_ocr = ocr.get("hora", "")
+            banco_origen = ocr.get("banco_origen", "?")
+            banco_destino = ocr.get("banco_destino", "")
+            confianza = ocr.get("confianza", "?")
+            hora_str = f" {hora_ocr}" if hora_ocr else ""
+            banco_destino_line = f"\n• 🏦 Banco destino: {banco_destino}" if banco_destino else ""
+            ocr_section = (
+                f"📋 <b>DATOS DEL COMPROBANTE (OCR)</b>\n\n"
+                f"• 📝 Tipo: {tipo}\n"
+                f"• 💰 Monto: Bs {monto_ocr}\n"
+                f"• 🔖 Referencia: <code>{reference}</code>\n"
+                f"• 📅 Fecha: {fecha_ocr}{hora_str}\n"
+                f"• 🏦 Banco origen: {banco_origen}"
+                f"{banco_destino_line}\n"
+                f"• 🔍 Confianza OCR: {confianza}"
+            )
+        else:
+            ocr_section = (
+                f"📋 <b>COMPROBANTE</b>\n\n"
+                f"⚠️ OCR no disponible — revisa manualmente.\n"
+                f"• 🔖 Referencia declarada: <code>{reference}</code>"
+            )
 
         admin_ticket = (
             f"💳 <b>TICKET DE PAGO #{short_id(sub_id)}</b>\n\n"
             f"👤 <b>Cliente:</b> {client_name} (<code>{telegram_id}</code>)\n"
-            f"📺 <b>Servicio:</b> {(platform or {}).get('name', '')} — {plan_label}\n"
+            f"📺 <b>Servicio:</b> {platform_name} — {plan_label}\n"
             f"💵 <b>Monto esperado:</b> ${price_usd:.2f} USD / Bs {price_bs:,.2f}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📋 <b>DATOS DEL COMPROBANTE</b>\n\n"
-            f"• 📝 Tipo: {tipo}\n"
-            f"• 💰 Monto: Bs {monto_ocr}\n"
-            f"• 🔖 Referencia: <code>{ref_ocr}</code>\n"
-            f"• 📅 Fecha: {fecha_ocr}{hora_str}\n"
-            f"• 🏦 Banco origen: {banco_origen}"
-            f"{banco_destino_line}\n"
-            f"• 🔍 Confianza OCR: {confianza}\n\n"
+            f"{ocr_section}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"¿Apruebas o rechazas este pago?"
         )
@@ -327,8 +342,12 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         clear_user_data(telegram_id)
 
     except Exception as e:
-        logger.error(f"Error in handle_payment_photo: {e}")
-        await update.message.reply_text(
-            "Error al procesar tu comprobante. Por favor intenta nuevamente o contacta a soporte.",
-            reply_markup=payment_received_keyboard(),
-        )
+        logger.error(f"Error in handle_payment_photo: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(
+                "Hubo un problema procesando tu comprobante. "
+                "Por favor contacta a soporte directamente. 📞",
+                reply_markup=payment_received_keyboard(),
+            )
+        except Exception:
+            pass
