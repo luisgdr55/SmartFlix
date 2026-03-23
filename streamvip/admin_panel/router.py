@@ -807,6 +807,19 @@ async def user_edit(request: Request, user_id: str):
         return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
 
 
+@panel_router.post("/users/{user_id}/delete")
+async def user_delete(request: Request, user_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.users import delete_user
+        await delete_user(user_id)
+        return RedirectResponse(url="/panel/users?success=Cliente+eliminado+correctamente", status_code=302)
+    except Exception as e:
+        return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUBSCRIPTIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1012,6 +1025,19 @@ async def subscription_release(request: Request, sub_id: str):
         return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
 
 
+@panel_router.post("/subscriptions/{sub_id}/delete")
+async def subscription_delete(request: Request, sub_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.subscriptions import delete_subscription
+        await delete_subscription(sub_id)
+        return RedirectResponse(url="/panel/subscriptions?success=Suscripcion+eliminada+correctamente", status_code=302)
+    except Exception as e:
+        return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAYMENTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1122,11 +1148,9 @@ async def payment_reject(
     if guard:
         return guard
     try:
-        from database import get_supabase
-        from database.subscriptions import get_subscription_by_id
-        sb = get_supabase()
+        from database.subscriptions import get_subscription_by_id, delete_subscription
         sub = await get_subscription_by_id(sub_id)
-        sb.table("subscriptions").update({"status": "cancelled"}).eq("id", sub_id).execute()
+        await delete_subscription(sub_id)
         # Notify user
         try:
             if sub:

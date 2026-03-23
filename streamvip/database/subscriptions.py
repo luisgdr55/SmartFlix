@@ -136,6 +136,17 @@ async def cancel_subscription(sub_id: str) -> bool:
         return False
 
 
+async def delete_subscription(sub_id: str) -> bool:
+    """Permanently delete a subscription record."""
+    try:
+        sb = get_supabase()
+        sb.table("subscriptions").delete().eq("id", sub_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in delete_subscription: {e}")
+        return False
+
+
 async def get_expiring_subscriptions(days_ahead: int = 3) -> list[dict]:
     """Get subscriptions expiring in the next N days (for reminders)."""
     try:

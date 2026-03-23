@@ -54,6 +54,7 @@
             <th class="table-header">Precio USD</th>
             <th class="table-header">Estado</th>
             <th class="table-header">Pago</th>
+            <th class="table-header"></th>
           </tr>
         </thead>
         <tbody>
@@ -96,6 +97,12 @@
               {% else %}
               <span class="text-slate-600">—</span>
               {% endif %}
+            </td>
+            <td class="table-cell">
+              <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
+                onsubmit="return confirm('¿Eliminar esta suscripción permanentemente?')">
+                <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-2 py-1 rounded-lg transition-colors">🗑️</button>
+              </form>
             </td>
           </tr>
           {% else %}

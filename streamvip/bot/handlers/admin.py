@@ -851,7 +851,8 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
             await query.edit_message_text("Suscripción no encontrada.")
             return
 
-        await cancel_subscription(sub_id)
+        from database.subscriptions import delete_subscription
+        await delete_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
         # Notify user — invite to restart
