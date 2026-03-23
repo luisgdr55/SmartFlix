@@ -142,6 +142,13 @@ async def dashboard(request: Request):
             "billing_date", in_3_days_str
         ).order("billing_date").execute()
 
+        # Client subscriptions already expired (status=active but end_date in the past)
+        expired_subs = sb.table("subscriptions").select(
+            "id, end_date, plan_type, user_id, users(id, name, username), platforms(name, icon_emoji)"
+        ).eq("status", "active").lt(
+            "end_date", now_ve.isoformat()
+        ).order("end_date").limit(30).execute()
+
         context = {
             "request": request,
             "page": "dashboard",
@@ -155,6 +162,7 @@ async def dashboard(request: Request):
             "platform_availability": stats.get("platform_availability", []),
             "expiring_alert": expiring_alert.data or [],
             "accounts_due": accounts_due.data or [],
+            "expired_subs": expired_subs.data or [],
             "today_str": today_str,
             "now_ve": now_ve,
         }
@@ -174,6 +182,7 @@ async def dashboard(request: Request):
             "platform_availability": [],
             "expiring_alert": [],
             "accounts_due": [],
+            "expired_subs": [],
             "today_str": _ve_now().strftime("%Y-%m-%d"),
             "now_ve": _ve_now(),
             "error": str(e),

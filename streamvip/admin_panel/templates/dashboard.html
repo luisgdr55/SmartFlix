@@ -71,6 +71,41 @@
   </div>
 </div>
 {% endif %}
+
+{% if expired_subs %}
+<div class="mx-6 mt-4 bg-red-500/10 border border-red-500/30 rounded-2xl overflow-hidden">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-red-500/20">
+    <span class="text-lg">🔴</span>
+    <p class="text-sm font-semibold text-red-300">
+      {{ expired_subs | length }} cliente(s) con suscripción vencida sin renovar
+    </p>
+    <a href="/panel/payments" class="ml-auto text-xs text-red-400 hover:text-red-300 underline">Ver pagos →</a>
+  </div>
+  <div class="divide-y divide-red-500/10">
+    {% for sub in expired_subs %}
+    {% set ed = sub.get('end_date','')[:10] %}
+    {% set platform = sub.get('platforms') or {} %}
+    {% set user = sub.get('users') or {} %}
+    {% set uid = user.get('id') %}
+    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-red-500/5 transition-colors">
+      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
+      <div class="flex-1 min-w-0">
+        {% if uid %}
+        <a href="/panel/users/{{ uid }}" class="text-sm text-slate-200 font-medium hover:text-white transition-colors">
+          {{ user.get('name') or user.get('username') or '—' }}
+        </a>
+        {% else %}
+        <span class="text-sm text-slate-200 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
+        {% endif %}
+        <span class="text-slate-500 mx-1">·</span>
+        <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
+      </div>
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">🔴 VENCIDA {{ ed }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block content %}
