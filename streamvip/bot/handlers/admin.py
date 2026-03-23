@@ -791,7 +791,13 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
                 pin_line=pin_line,
                 instructions=instructions,
             )
-            await send_to_user(user_tid, f"✅ <b>Pago aprobado por el administrador</b>")
+            confirmed_text = PAYMENT_CONFIRMED.format(
+                platform=f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}",
+                start_date=format_datetime_vzla(now),
+                end_date=format_datetime_vzla(end_date),
+                reference=sub.get("payment_reference") or "N/A",
+            )
+            await send_to_user(user_tid, confirmed_text)
             await send_to_user(user_tid, access_text)
 
         await query.edit_message_text(f"✅ Pago #{short_id(sub_id)} aprobado y acceso enviado.")
@@ -827,19 +833,28 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
         await cancel_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
-        # Notify user
+        # Notify user with clear instructions
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")
         if user_tid:
             from services.notification_service import send_to_user
+            from bot.keyboards import main_menu_keyboard
             await send_to_user(
                 user_tid,
-                "❌ <b>Pago rechazado</b>\n\n"
-                "Tu pago no pudo ser verificado. "
-                "Si realizaste el pago, por favor contacta a soporte con tu comprobante."
+                "❌ <b>Comprobante no aprobado</b>\n\n"
+                "Tu comprobante de pago no pudo ser verificado.\n\n"
+                "<b>Posibles motivos:</b>\n"
+                "• El monto no coincide con el precio indicado\n"
+                "• El comprobante no es legible o está editado\n"
+                "• La referencia ya fue usada anteriormente\n"
+                "• El pago es de más de 60 minutos\n\n"
+                "¿Qué puedes hacer?\n"
+                "🔄 Inicia un nuevo pedido desde el menú\n"
+                "📞 Contacta a soporte si crees que es un error",
+                keyboard=main_menu_keyboard(),
             )
 
-        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado.")
+        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado y cliente notificado.")
     except Exception as e:
         logger.error(f"Error in handle_admin_reject_payment: {e}")
         await query.edit_message_text(f"Error al rechazar: {e}")

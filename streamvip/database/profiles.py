@@ -37,6 +37,8 @@ async def get_available_profiles(platform_id: str, profile_type: str = "monthly"
             .eq("platform_id", platform_id)
             .eq("profile_type", profile_type)
             .eq("status", "available")
+            .order("last_released", desc=False, nullsfirst=True)
+            .order("created_at", desc=False)
             .execute()
         )
         profiles = result.data or []

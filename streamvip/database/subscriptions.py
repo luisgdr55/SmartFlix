@@ -59,6 +59,20 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
         return []
 
 
+async def save_payment_proof(sub_id: str, payment_reference: str, payment_image_url: str) -> bool:
+    """Save payment proof to a pending subscription (awaiting admin approval)."""
+    try:
+        sb = get_supabase()
+        sb.table("subscriptions").update({
+            "payment_reference": payment_reference,
+            "payment_image_url": payment_image_url,
+        }).eq("id", sub_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in save_payment_proof: {e}")
+        return False
+
+
 async def confirm_subscription(
     sub_id: str,
     profile_id: str,

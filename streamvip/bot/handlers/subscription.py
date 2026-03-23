@@ -245,95 +245,48 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return
 
-        # Get available profile
-        profiles = await get_available_profiles(platform_id, plan_type)
-        if not profiles:
-            await update.message.reply_text(
-                "⚠️ No hay perfiles disponibles en este momento. "
-                "Tu pago fue recibido y te asignaremos un perfil pronto. "
-                "Por favor espera o contacta a soporte.",
-                reply_markup=payment_received_keyboard(),
-            )
-            # Notify admin
-            from services.notification_service import send_to_admin
-            await send_to_admin(
-                f"⚠️ <b>Sin perfiles disponibles</b>\n"
-                f"Usuario: {telegram_id}\n"
-                f"Suscripción: #{short_id(sub_id)}\n"
-                f"Platform ID: {platform_id}\n"
-                f"Plan: {plan_type}",
-            )
-            return
-
-        profile = profiles[0]
-        profile_id = str(profile["id"])
-
-        # Upload payment image URL (simplified - store reference)
+        # Save proof and notify admin for manual approval
         payment_image_url = f"tg://photo/{photo.file_id}"
         reference = result.get("reference") or result.get("data", {}).get("referencia") or "N/A"
 
-        # Confirm subscription
-        await confirm_subscription(sub_id, profile_id, reference, payment_image_url)
-        await assign_profile(profile_id)
+        from database.subscriptions import save_payment_proof
+        await save_payment_proof(sub_id, reference, payment_image_url)
 
-        # Update user purchase count
+        # Tell client to wait
         user = await get_user_by_telegram_id(telegram_id)
-        if user:
-            from database.users import increment_user_purchases
-            await increment_user_purchases(telegram_id)
-
-        # Get full data for access delivery
         platform = await get_platform_by_id(platform_id)
-        account = await get_account_by_id(str(profile.get("account_id", "")))
+        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
+        client_name = (user or {}).get("name", "") if user else ""
 
-        from datetime import datetime
-        import pytz
-        now = venezuela_now()
-        durations = {"monthly": 30, "express": 1, "week": 7}
-        end_date = now + timedelta(days=durations.get(plan_type, 30))
-
-        pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
-        platform_slug = (platform or {}).get("slug", "netflix")
-        instructions_tpl = ACCESS_INSTRUCTIONS.get(platform_slug, ACCESS_INSTRUCTIONS.get("netflix", ""))
-        instructions = instructions_tpl.format(profile_name=profile.get("profile_name", ""))
-
-        access_text = ACCESS_DELIVERED.format(
-            platform=f"{(platform or {}).get('icon_emoji', '')} {(platform or {}).get('name', '')}",
-            profile_name=profile.get("profile_name", ""),
-            email=(account or {}).get("email", ""),
-            password=(account or {}).get("password", ""),
-            pin_line=pin_line,
-            instructions=instructions,
+        await update.message.reply_text(
+            f"⏳ <b>Comprobante recibido</b>\n\n"
+            f"Hola <b>{client_name}</b>, tu comprobante está siendo revisado por nuestro equipo.\n\n"
+            f"📺 <b>{(platform or {}).get('name','')}</b> — Plan {plan_label}\n"
+            f"🔖 Ref: <code>{reference}</code>\n\n"
+            f"En breve recibirás tus datos de acceso. ¡Gracias por tu paciencia! 🙏",
+            parse_mode="HTML",
         )
 
-        confirmed_text = PAYMENT_CONFIRMED.format(
-            platform=f"{(platform or {}).get('icon_emoji', '')} {(platform or {}).get('name', '')}",
-            start_date=format_datetime_vzla(now),
-            end_date=format_datetime_vzla(end_date),
-            reference=reference,
-        )
-
-        await update.message.reply_text(confirmed_text, parse_mode="HTML")
-        await update.message.reply_text(access_text, parse_mode="HTML")
-
-        # Notify admin
+        # Notify admin with photo + approve/reject buttons
         from services.notification_service import send_to_admin
-        await send_to_admin(
-            f"✅ <b>Nuevo pago confirmado</b>\n"
-            f"👤 Usuario: {telegram_id}\n"
-            f"📺 Plataforma: {(platform or {}).get('name', '')}\n"
-            f"💵 Monto: ${float(get_user_data(telegram_id, 'price_usd') or 0):.2f} USD\n"
-            f"🔖 Referencia: {reference}"
+        from bot.keyboards import pending_payment_keyboard
+
+        price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
+        admin_caption = (
+            f"💳 <b>Nuevo comprobante de pago</b>\n\n"
+            f"👤 Cliente: <b>{client_name}</b> (TG: <code>{telegram_id}</code>)\n"
+            f"📺 Plataforma: <b>{(platform or {}).get('name','')}</b>\n"
+            f"📅 Plan: <b>{plan_label}</b>\n"
+            f"💵 Monto: <b>${price_usd:.2f} USD</b>\n"
+            f"🔖 Referencia: <code>{reference}</code>\n"
+            f"🆔 Pedido: <code>#{short_id(sub_id)}</code>\n\n"
+            f"Revisa el comprobante y aprueba o rechaza:"
         )
+        await send_to_admin(admin_caption, keyboard=pending_payment_keyboard(sub_id), photo_bytes=bytes(image_bytes))
 
         # Clear state
         clear_user_state(telegram_id)
         clear_user_data(telegram_id)
-
-        await update.message.reply_text(
-            "¿Necesitas algo más? 😊",
-            reply_markup=main_menu_keyboard(),
-        )
 
     except Exception as e:
         logger.error(f"Error in handle_payment_photo: {e}")
