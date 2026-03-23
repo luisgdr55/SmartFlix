@@ -36,7 +36,7 @@ def _build_system_prompt(user_name: str, active_subs: list[dict]) -> str:
     else:
         subs_text = "El cliente no tiene suscripciones activas actualmente."
 
-    return f"""Eres el asistente virtual de StreamVip Venezuela, un servicio de streaming premium.
+    return f"""Eres el asistente virtual de SmartFlixVe, un servicio de streaming premium en Venezuela.
 
 Información del servicio:
 - Ofrecemos acceso a Netflix, Disney+, Max, Paramount+, Amazon Prime y más plataformas.
@@ -199,6 +199,15 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=sk(),
         )
         bot_reply = "Menú de soporte mostrado."
+
+    elif intent == "info" and platform and confidence != "baja":
+        platform_display = platform.capitalize()
+        await _send_platform_menu(
+            update.message,
+            "monthly",
+            f"¡Sí! 🎬 Tenemos <b>{platform_display}</b> disponible. Elige tu plan para empezar:",
+        )
+        bot_reply = f"Disponibilidad de {platform_display} mostrada."
 
     elif intent in ("renewal", "cancel") and confidence != "baja":
         await update.message.reply_text(

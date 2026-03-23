@@ -246,7 +246,7 @@ async def interpret_user_intent(
                 {
                     "role": "system",
                     "content": (
-                        "Eres un clasificador de intenciones para StreamVip Venezuela, "
+                        "Eres un clasificador de intenciones para SmartFlixVe, "
                         "un servicio de streaming. Tu tarea es entender QUÉ QUIERE el usuario "
                         "basándote en el SIGNIFICADO del mensaje, no en palabras exactas.\n\n"
                         "Intenciones posibles:\n"
