@@ -242,7 +242,7 @@ async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
             
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
     except Exception as e:
         logger.error(f"Error in get_subscription_by_id: {e}")
         return None

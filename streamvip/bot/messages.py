@@ -69,7 +69,8 @@ ACCESS_DELIVERED = (
     "{pin_line}"
     "\n"
     "📋 <b>Instrucciones:</b>\n{instructions}\n\n"
-    "⚠️ <i>No compartas estos datos. Si tienes problemas usa /soporte</i>"
+    "⚠️ <i>No compartas estos datos. Si tienes problemas usa /soporte</i>\n\n"
+    "🎬 <b>¡Gracias por elegirnos! Disfruta del mejor contenido. 🙌✨</b>"
 )
 
 PIN_LINE = "🔢 <b>PIN del perfil:</b> <code>{pin}</code>\n"

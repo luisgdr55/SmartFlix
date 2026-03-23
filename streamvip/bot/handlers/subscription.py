@@ -285,22 +285,42 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode="HTML",
         )
 
-        # Notify admin with photo + approve/reject buttons
+        # Notify admin with OCR text ticket + approve/reject buttons
         from services.notification_service import send_to_admin
         from bot.keyboards import pending_payment_keyboard
 
         price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
-        admin_caption = (
-            f"💳 <b>Nuevo comprobante de pago</b>\n\n"
-            f"👤 Cliente: <b>{client_name}</b> (TG: <code>{telegram_id}</code>)\n"
-            f"📺 Plataforma: <b>{(platform or {}).get('name','')}</b>\n"
-            f"📅 Plan: <b>{plan_label}</b>\n"
-            f"💵 Monto: <b>${price_usd:.2f} USD</b>\n"
-            f"🔖 Referencia: <code>{reference}</code>\n"
-            f"🆔 Pedido: <code>#{short_id(sub_id)}</code>\n\n"
-            f"Revisa el comprobante y aprueba o rechaza:"
+        ocr = result.get("data", {})
+        tipo = (ocr.get("tipo") or "pago_movil").replace("_", " ").title()
+        monto_ocr = ocr.get("monto", "?")
+        ref_ocr = ocr.get("referencia") or reference
+        fecha_ocr = ocr.get("fecha", "?")
+        hora_ocr = ocr.get("hora", "")
+        banco_origen = ocr.get("banco_origen", "?")
+        banco_destino = ocr.get("banco_destino", "")
+        confianza = ocr.get("confianza", "?")
+
+        hora_str = f" {hora_ocr}" if hora_ocr else ""
+        banco_destino_line = f"\n• 🏦 Banco destino: {banco_destino}" if banco_destino else ""
+
+        admin_ticket = (
+            f"💳 <b>TICKET DE PAGO #{short_id(sub_id)}</b>\n\n"
+            f"👤 <b>Cliente:</b> {client_name} (<code>{telegram_id}</code>)\n"
+            f"📺 <b>Servicio:</b> {(platform or {}).get('name', '')} — {plan_label}\n"
+            f"💵 <b>Monto esperado:</b> ${price_usd:.2f} USD / Bs {price_bs:,.2f}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>DATOS DEL COMPROBANTE</b>\n\n"
+            f"• 📝 Tipo: {tipo}\n"
+            f"• 💰 Monto: Bs {monto_ocr}\n"
+            f"• 🔖 Referencia: <code>{ref_ocr}</code>\n"
+            f"• 📅 Fecha: {fecha_ocr}{hora_str}\n"
+            f"• 🏦 Banco origen: {banco_origen}"
+            f"{banco_destino_line}\n"
+            f"• 🔍 Confianza OCR: {confianza}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"¿Apruebas o rechazas este pago?"
         )
-        await send_to_admin(admin_caption, keyboard=pending_payment_keyboard(sub_id), photo_bytes=bytes(image_bytes))
+        await send_to_admin(admin_ticket, keyboard=pending_payment_keyboard(sub_id))
 
         # Clear state
         clear_user_state(telegram_id)
