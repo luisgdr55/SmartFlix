@@ -211,6 +211,23 @@ EXPIRY_NOTIFICATION = (
     "Presiona el botón para renovar 👇"
 )
 
+SOFT_CUT_NOTIFICATION = (
+    "🔒 <b>Acceso suspendido temporalmente</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> venció el <b>{end_date}</b> "
+    "y tu acceso ha sido suspendido.\n\n"
+    "Si deseas renovar y recuperar el acceso, usa el botón de abajo 👇\n\n"
+    "<i>Si ya realizaste el pago, contáctanos por soporte.</i>"
+)
+
+PROFILE_RELEASED_NOTIFICATION = (
+    "📤 <b>Suscripción finalizada</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> ha finalizado "
+    "y tu perfil ha sido liberado.\n\n"
+    "¡Esperamos haberte brindado un excelente servicio! 🎬\n\n"
+    "Cuando quieras volver, aquí estaremos 😊\n"
+    "Usa el botón de abajo para contratar un nuevo plan 👇"
+)
+
 PAYMENT_EXPIRED = (
     "⏰ <b>Tiempo de pago expirado</b>\n\n"
     "Tu pedido #{order_id} ha sido cancelado por no recibir el pago a tiempo.\n\n"

@@ -87,7 +87,8 @@
     {% set platform = sub.get('platforms') or {} %}
     {% set user = sub.get('users') or {} %}
     {% set uid = user.get('id') %}
-    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-red-500/5 transition-colors">
+    {% set has_profile = sub.get('profile_id') %}
+    <div class="flex flex-wrap items-center gap-2 px-5 py-2.5 hover:bg-red-500/5 transition-colors">
       <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
       <div class="flex-1 min-w-0">
         {% if uid %}
@@ -100,7 +101,31 @@
         <span class="text-slate-500 mx-1">·</span>
         <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
       </div>
-      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">🔴 VENCIDA {{ ed }}</span>
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full">🔴 {{ ed }}</span>
+      {% if has_profile %}
+      <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
+        onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
+        <button type="submit" title="Corte suave: cambia el PIN, el perfil queda asignado"
+          class="text-xs bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          🔒 Corte suave
+        </button>
+      </form>
+      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+        onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
+        <button type="submit" title="Liberar perfil: lo devuelve al pool de disponibles"
+          class="text-xs bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-200 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          📤 Liberar
+        </button>
+      </form>
+      {% else %}
+      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+        onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
+        <button type="submit" title="Sin perfil asignado — solo marca como expirada"
+          class="text-xs bg-slate-500/20 hover:bg-slate-500/30 border border-slate-500/40 text-slate-400 hover:text-slate-300 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          ✓ Cerrar
+        </button>
+      </form>
+      {% endif %}
     </div>
     {% endfor %}
   </div>

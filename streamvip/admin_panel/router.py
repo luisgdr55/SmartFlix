@@ -144,7 +144,7 @@ async def dashboard(request: Request):
 
         # Client subscriptions already expired (status=active but end_date in the past)
         expired_subs = sb.table("subscriptions").select(
-            "id, end_date, plan_type, user_id, users(id, name, username), platforms(name, icon_emoji)"
+            "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
         ).eq("status", "active").lt(
             "end_date", now_ve.isoformat()
         ).order("end_date").limit(30).execute()
@@ -902,6 +902,95 @@ async def subscription_edit(request: Request, sub_id: str):
     except Exception as e:
         logger.error(f"Subscription edit error: {e}")
         return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+
+
+@panel_router.post("/subscriptions/{sub_id}/soft-cut")
+async def subscription_soft_cut(request: Request, sub_id: str):
+    """Change profile PIN (soft cut) and mark subscription expired."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        import random
+        import string
+        from database import get_supabase
+        sb = get_supabase()
+
+        # Fetch subscription with profile_id
+        sub_res = sb.table("subscriptions").select(
+            "user_id, profile_id, plan_type, platforms(name, icon_emoji)"
+        ).eq("id", sub_id).limit(1).execute()
+        if not sub_res.data:
+            return RedirectResponse(url="/panel/?error=Suscripcion+no+encontrada", status_code=302)
+        sub = sub_res.data[0]
+        user_id = sub.get("user_id")
+        profile_id = sub.get("profile_id")
+
+        if not profile_id:
+            return RedirectResponse(url=f"/panel/users/{user_id}?error=Esta+suscripcion+no+tiene+perfil+asignado", status_code=302)
+
+        # Generate random 4-digit PIN
+        new_pin = "".join(random.choices(string.digits, k=4))
+        sb.table("profiles").update({"pin": new_pin}).eq("id", profile_id).execute()
+
+        # Mark subscription as expired
+        sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
+
+        # Notify user via Telegram (best-effort)
+        try:
+            from services.notification_service import send_soft_cut_notification
+            await send_soft_cut_notification(sub_id)
+        except Exception as notify_err:
+            logger.warning(f"Could not send soft-cut notification: {notify_err}")
+
+        redirect_base = f"/panel/users/{user_id}" if user_id else "/panel/"
+        return RedirectResponse(url=f"{redirect_base}?success=Corte+suave+aplicado+y+PIN+cambiado", status_code=302)
+    except Exception as e:
+        logger.error(f"Soft cut error: {e}")
+        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
+
+
+@panel_router.post("/subscriptions/{sub_id}/release")
+async def subscription_release(request: Request, sub_id: str):
+    """Release profile (mark available) and mark subscription expired."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+
+        sub_res = sb.table("subscriptions").select(
+            "user_id, profile_id"
+        ).eq("id", sub_id).limit(1).execute()
+        if not sub_res.data:
+            return RedirectResponse(url="/panel/?error=Suscripcion+no+encontrada", status_code=302)
+        sub = sub_res.data[0]
+        user_id = sub.get("user_id")
+        profile_id = sub.get("profile_id")
+
+        if profile_id:
+            from utils.helpers import venezuela_now
+            sb.table("profiles").update({
+                "status": "available",
+                "last_released": venezuela_now().isoformat(),
+            }).eq("id", profile_id).execute()
+
+        # Mark subscription as expired
+        sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
+
+        # Notify user via Telegram (best-effort)
+        try:
+            from services.notification_service import send_profile_released_notification
+            await send_profile_released_notification(sub_id)
+        except Exception as notify_err:
+            logger.warning(f"Could not send release notification: {notify_err}")
+
+        redirect_base = f"/panel/users/{user_id}" if user_id else "/panel/"
+        return RedirectResponse(url=f"{redirect_base}?success=Perfil+liberado+correctamente", status_code=302)
+    except Exception as e:
+        logger.error(f"Release subscription error: {e}")
+        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
