@@ -21,9 +21,21 @@ MODEL = "google/gemini-2.0-flash-001"
 CONV_TTL = 7200        # 2 horas de contexto en Redis
 MAX_CONV_MESSAGES = 10
 
+_redis_client: redis.Redis | None = None
+
 
 def _get_redis() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=10,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+        )
+    return _redis_client
 
 
 async def _call(

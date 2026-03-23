@@ -662,6 +662,27 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(config_text, parse_mode="HTML")
 
 
+async def cmd_testllm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Quick test to verify OpenRouter LLM is responding."""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    await update.message.reply_text("⏳ Probando conexión con el LLM...")
+    try:
+        from services.gemini_service import _call
+        response = await _call(
+            messages=[{"role": "user", "content": "Responde solo: OK"}],
+            temperature=0.1,
+            max_tokens=10,
+        )
+        await update.message.reply_text(f"✅ LLM respondió: <code>{response}</code>", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error LLM: <code>{e}</code>", parse_mode="HTML")
+
+
 async def _show_clients_list_callback(query, page: int = 1) -> None:
     """Edit-message version of client list for callbacks."""
     data = await get_clients_list(page=page, per_page=10)
