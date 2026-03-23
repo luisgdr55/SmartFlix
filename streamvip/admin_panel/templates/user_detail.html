@@ -79,6 +79,39 @@
           {% endif %}
         </div>
       </div>
+
+      <!-- Edit form -->
+      <div x-data="{ open: false }" class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+        <button @click="open = !open" class="w-full px-6 py-4 flex items-center justify-between text-sm font-semibold text-slate-300 hover:text-white transition-colors">
+          <span>✏️ Editar datos del cliente</span>
+          <svg class="w-4 h-4 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-cloak class="px-6 pb-5 border-t border-slate-700/40">
+          <form action="/panel/users/{{ user['id'] }}/edit" method="POST" class="space-y-3 mt-4">
+            <div>
+              <label class="form-label text-xs">Nombre</label>
+              <input type="text" name="name" value="{{ user.get('name') or '' }}" placeholder="Nombre completo" class="form-input text-sm py-2" />
+            </div>
+            <div>
+              <label class="form-label text-xs">Teléfono</label>
+              <input type="text" name="phone" value="{{ user.get('phone') or '' }}" placeholder="04141234567" class="form-input text-sm py-2" />
+            </div>
+            <div>
+              <label class="form-label text-xs">Usuario de Telegram</label>
+              <input type="text" name="username" value="{{ user.get('username') or '' }}" placeholder="sin @" class="form-input text-sm py-2" />
+            </div>
+            <div>
+              <label class="form-label text-xs">Telegram ID</label>
+              <input type="text" name="telegram_id" value="{{ user.get('telegram_id') or '' }}" placeholder="Número de ID" class="form-input text-sm py-2" />
+            </div>
+            <button type="submit" class="btn-primary w-full justify-center text-sm py-2.5">
+              💾 Guardar cambios
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
 
     <!-- Subscriptions -->

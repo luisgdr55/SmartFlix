@@ -646,6 +646,39 @@ async def user_unblock(request: Request, user_id: str):
         return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
 
 
+@panel_router.post("/users/{user_id}/edit")
+async def user_edit(request: Request, user_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        form = await request.form()
+        sb = get_supabase()
+        upd: dict = {}
+        name = (form.get("name") or "").strip()
+        phone = (form.get("phone") or "").strip()
+        username = (form.get("username") or "").strip().lstrip("@")
+        telegram_id_raw = (form.get("telegram_id") or "").strip()
+        if name:
+            upd["name"] = name
+        if phone:
+            upd["phone"] = phone
+        if username:
+            upd["username"] = username
+        if telegram_id_raw:
+            try:
+                upd["telegram_id"] = int(telegram_id_raw)
+            except ValueError:
+                return RedirectResponse(url=f"/panel/users/{user_id}?error=Telegram+ID+debe+ser+un+numero", status_code=302)
+        if upd:
+            sb.table("users").update(upd).eq("id", user_id).execute()
+        return RedirectResponse(url=f"/panel/users/{user_id}?success=Cliente+actualizado+correctamente", status_code=302)
+    except Exception as e:
+        logger.error(f"User edit error: {e}")
+        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUBSCRIPTIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -727,7 +760,7 @@ async def payments_list(request: Request):
     try:
         from database.subscriptions import get_pending_subscriptions
         from database import get_supabase
-        from database.platforms import get_active_platforms
+        from utils.helpers import venezuela_now
         pending = await get_pending_subscriptions()
         sb = get_supabase()
         # Get available profiles per platform for assignment
@@ -739,15 +772,29 @@ async def payments_list(request: Request):
                     "platform_id", pid
                 ).eq("status", "available").execute()
                 profiles_map[pid] = pres.data or []
+        # Expired subscriptions (status=active but end_date in the past)
+        now = venezuela_now()
+        expired_res = (
+            sb.table("subscriptions")
+            .select("*, users(id, name, username, telegram_id), platforms(name, icon_emoji)")
+            .eq("status", "active")
+            .lt("end_date", now.isoformat())
+            .order("end_date", desc=False)
+            .limit(50)
+            .execute()
+        )
+        expired = expired_res.data or []
     except Exception as e:
         logger.error(f"Payments list error: {e}")
         pending = []
         profiles_map = {}
+        expired = []
     return templates.TemplateResponse("payments.html", {
         "request": request,
         "page": "payments",
         "pending": pending,
         "profiles_map": profiles_map,
+        "expired": expired,
         "success": request.query_params.get("success"),
         "error": request.query_params.get("error"),
     })

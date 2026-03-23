@@ -232,32 +232,64 @@ async def interpret_user_intent(
     message_text: str,
     conversation_context: list[dict],
 ) -> dict:
-    """Detecta la intención del usuario en un mensaje libre."""
+    """
+    Detecta la intención del usuario por CONTEXTO Y SEMÁNTICA, no por palabras clave.
+    Retorna JSON con intent, platform, confidence.
+    """
     try:
         context_str = "\n".join(
-            [f"{m['role']}: {m['content']}" for m in conversation_context[-5:]]
-        )
+            [f"{m['role']}: {m['content']}" for m in conversation_context[-4:]]
+        ) if conversation_context else "(sin historial)"
+
         result = await _call(
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Eres asistente de StreamVip Venezuela (servicio de streaming).\n"
-                    f"Contexto:\n{context_str}\n\n"
-                    f"Nuevo mensaje: {message_text}\n\n"
-                    f"Determina la intención. Responde SOLO con JSON:\n"
-                    '{"intent": "subscribe/express/week/support/renewal/cancel/info/other", '
-                    '"platform": "netflix/disney/max/paramount/prime/null", '
-                    '"confidence": "alta/media/baja", '
-                    '"suggested_response": "respuesta breve en español venezolano"}'
-                ),
-            }],
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres un clasificador de intenciones para StreamVip Venezuela, "
+                        "un servicio de streaming. Tu tarea es entender QUÉ QUIERE el usuario "
+                        "basándote en el SIGNIFICADO del mensaje, no en palabras exactas.\n\n"
+                        "Intenciones posibles:\n"
+                        "- subscribe: quiere contratar acceso mensual (~30 días) a una plataforma\n"
+                        "- express: quiere acceso rápido de 24 horas\n"
+                        "- week: quiere acceso por una semana (7 días)\n"
+                        "- support: tiene un problema técnico, no le funciona algo, perdió acceso\n"
+                        "- renewal: quiere renovar o preguntar sobre su suscripción actual\n"
+                        "- cancel: quiere cancelar o pausar\n"
+                        "- info: pregunta sobre precios, cómo funciona, qué plataformas hay\n"
+                        "- other: saludo, conversación general, o no relacionado con el servicio\n\n"
+                        "Plataformas reconocibles (pon null si no se menciona ninguna):\n"
+                        "netflix, disney, max, paramount, prime, apple, crunchyroll\n\n"
+                        "IMPORTANTE: Razona por intención. Ejemplos:\n"
+                        "'quiero ver pelis' → subscribe (quiere acceso a streaming)\n"
+                        "'me salió error de contraseña' → support\n"
+                        "'cuánto está la mensualidad' → info\n"
+                        "'se me acabó' → renewal\n"
+                        "'hola' → other\n\n"
+                        "Responde ÚNICAMENTE con JSON válido, sin explicaciones:\n"
+                        '{"intent":"...","platform":"...o null","confidence":"alta/media/baja"}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Historial reciente:\n{context_str}\n\n"
+                        f"Mensaje actual: {message_text}"
+                    ),
+                },
+            ],
             temperature=0.1,
+            max_tokens=80,
         )
         text = result.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        data = json.loads(text)
+        # Normalize platform null strings
+        if data.get("platform") in ("null", "none", "", "None"):
+            data["platform"] = None
+        return data
     except Exception as e:
         logger.error(f"Error in interpret_user_intent: {e}")
-        return {"intent": "other", "platform": None, "confidence": "baja", "suggested_response": ""}
+        return {"intent": "other", "platform": None, "confidence": "baja"}
 
 
 async def generate_troubleshooting_response(

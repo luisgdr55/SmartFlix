@@ -165,10 +165,12 @@ async def _text_message_router(update: Update, context) -> None:
     elif state and (state.startswith("admin:precios:") or state == "admin:tasa_manual"):
         from bot.handlers._prices_addon import handle_price_text_input
         await handle_price_text_input(update, context, state)
+    elif state and state.startswith("admin:edit_client:"):
+        await _handle_admin_edit_client_flow(update, context, state)
     else:
-        # Default: try to show main menu or interpret intent
-        from bot.handlers.start import start_handler
-        await start_handler(update, context)
+        # AI-powered free-text handler — understands any message by intent
+        from bot.handlers.ai_chat import handle_free_text
+        await handle_free_text(update, context)
 
 
 async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> None:
@@ -249,6 +251,57 @@ async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> N
             )
         else:
             await update.message.reply_text("❌ Error al crear la cuenta.")
+
+
+async def _handle_admin_edit_client_flow(update: Update, context, state: str) -> None:
+    """Handle admin edit-client text input (name or phone)."""
+    if not update.message or not update.effective_user:
+        return
+    admin_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    from bot.middleware import clear_user_state
+    from database.users import update_user_name, update_user_phone, log_admin_action
+
+    # state format: admin:edit_client:<field>:<target_telegram_id>
+    parts = state.split(":")
+    if len(parts) < 4:
+        clear_user_state(admin_id)
+        return
+
+    field = parts[2]      # "name" or "phone"
+    target_id = int(parts[3])
+
+    if text.lower() == "/cancelar":
+        clear_user_state(admin_id)
+        await update.message.reply_text("❌ Edición cancelada.")
+        return
+
+    if field == "name":
+        success = await update_user_name(target_id, text)
+        if success:
+            await log_admin_action(admin_id, "edit_client_name", {"target": target_id, "name": text})
+            await update.message.reply_text(
+                f"✅ Nombre actualizado a <b>{text}</b> para el cliente <code>{target_id}</code>.\n\n"
+                f"Usa /cliente {target_id} para ver el perfil.",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("❌ Error al actualizar el nombre.")
+
+    elif field == "phone":
+        success = await update_user_phone(target_id, text)
+        if success:
+            await log_admin_action(admin_id, "edit_client_phone", {"target": target_id, "phone": text})
+            await update.message.reply_text(
+                f"✅ Teléfono actualizado a <b>{text}</b> para el cliente <code>{target_id}</code>.\n\n"
+                f"Usa /cliente {target_id} para ver el perfil.",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("❌ Error al actualizar el teléfono.")
+
+    clear_user_state(admin_id)
 
 
 async def _global_error_handler(update: object, context) -> None:

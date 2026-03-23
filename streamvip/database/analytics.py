@@ -163,7 +163,7 @@ async def get_client_detail(telegram_id: int) -> Optional[dict]:
         if not user_result.data:
             return None
 
-        user = user_result.data
+        user = user_result.data[0]
 
         subs_result = (
             sb.table("subscriptions")

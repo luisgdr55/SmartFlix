@@ -10,6 +10,8 @@ from bot.keyboards import (
     admin_dashboard_keyboard, pending_payment_keyboard, paginator_keyboard,
     platforms_keyboard, flyer_preview_keyboard, main_menu_keyboard,
     prices_menu_keyboard, platform_price_edit_keyboard, confirm_price_keyboard,
+    client_detail_keyboard,
+    clients_list_keyboard,
 )
 from bot.messages import ADMIN_DASHBOARD
 from bot.middleware import set_user_state, set_user_data, get_user_data, clear_user_state
@@ -18,7 +20,7 @@ from database.analytics import get_dashboard_stats, get_income_report, get_clien
 from database.subscriptions import get_pending_subscriptions, confirm_subscription, cancel_subscription
 from database.profiles import get_available_profiles, assign_profile, update_profile_pin
 from database.platforms import get_active_platforms, get_platform_by_id, update_platform_prices
-from database.users import block_user, log_admin_action, get_user_by_telegram_id
+from database.users import block_user, unblock_user, log_admin_action, get_user_by_telegram_id, update_user_name, update_user_phone
 from services.exchange_service import update_rate, get_current_rate, fetch_binance_p2p_rate, auto_update_rate
 from utils.helpers import format_datetime_vzla, short_id
 from utils.validators import is_admin
@@ -296,25 +298,31 @@ async def cmd_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = data["user"]
     subs = data.get("subscriptions", [])
 
+    is_blocked = user.get("status") == "blocked"
+    status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+
     text = (
         f"👤 <b>Detalle del Cliente</b>\n\n"
         f"📝 Nombre: {user.get('name') or 'N/A'}\n"
         f"👤 Username: @{user.get('username') or 'N/A'}\n"
         f"🆔 Telegram ID: <code>{user.get('telegram_id')}</code>\n"
         f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
-        f"📅 Registrado: {format_datetime_vzla(None)}\n"
         f"🛒 Compras: {user.get('total_purchases', 0)}\n"
-        f"📊 Estado: {user.get('status', 'active')}\n\n"
+        f"📊 Estado: {status_icon}\n\n"
         f"📋 <b>Últimas suscripciones ({len(subs)}):</b>\n"
     )
 
     for sub in subs[:5]:
         platform = (sub.get("platforms") or {}).get("name", "?")
         plan = sub.get("plan_type", "?")
-        status = sub.get("status", "?")
-        text += f"  • {platform} ({plan}) - {status}\n"
+        sub_status = sub.get("status", "?")
+        text += f"  • {platform} ({plan}) - {sub_status}\n"
 
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=client_detail_keyboard(target_id, is_blocked),
+    )
 
 
 async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -654,6 +662,60 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(config_text, parse_mode="HTML")
 
 
+async def _show_clients_list_callback(query, page: int = 1) -> None:
+    """Edit-message version of client list for callbacks."""
+    data = await get_clients_list(page=page, per_page=10)
+    clients = data.get("clients", [])
+    total = data.get("total", 0)
+    total_pages = data.get("total_pages", 1)
+
+    if not clients:
+        await query.edit_message_text("No hay clientes registrados.")
+        return
+
+    text = f"👥 <b>Clientes</b> — Página {page}/{total_pages} (Total: {total})\n\nToca un cliente para ver su perfil y editarlo:"
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=clients_list_keyboard(clients, page, total_pages),
+    )
+
+
+async def _show_client_detail_callback(query, target_id: int) -> None:
+    """Edit-message version of client detail for callbacks."""
+    data = await get_client_detail(target_id)
+    if not data:
+        await query.edit_message_text(f"❌ Cliente {target_id} no encontrado.")
+        return
+
+    user = data["user"]
+    subs = data.get("subscriptions", [])
+    is_blocked = user.get("status") == "blocked"
+    status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+
+    text = (
+        f"👤 <b>Detalle del Cliente</b>\n\n"
+        f"📝 Nombre: {user.get('name') or 'N/A'}\n"
+        f"👤 Username: @{user.get('username') or 'N/A'}\n"
+        f"🆔 Telegram ID: <code>{user.get('telegram_id')}</code>\n"
+        f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
+        f"🛒 Compras: {user.get('total_purchases', 0)}\n"
+        f"📊 Estado: {status_icon}\n\n"
+        f"📋 <b>Últimas suscripciones ({len(subs)}):</b>\n"
+    )
+    for sub in subs[:5]:
+        platform = (sub.get("platforms") or {}).get("name", "?")
+        plan = sub.get("plan_type", "?")
+        sub_status = sub.get("status", "?")
+        text += f"  • {platform} ({plan}) - {sub_status}\n"
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=client_detail_keyboard(target_id, is_blocked),
+    )
+
+
 async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin approves a pending payment manually."""
     query = update.callback_query
@@ -849,7 +911,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await cmd_pendientes(update, context)
     elif data == "admin:clients":
         await query.answer()
-        await cmd_clientes(update, context)
+        await _show_clients_list_callback(query, page=1)
     elif data == "admin:income":
         await query.answer()
         await cmd_ingresos(update, context)
@@ -875,6 +937,50 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             f"O usa el botón 🔄 Auto-fetch para obtenerla de Binance P2P.",
             parse_mode="HTML",
         )
+    elif data.startswith("admin:edit_name:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        set_user_state(telegram_id, f"admin:edit_client:name:{target_id}")
+        await query.edit_message_text(
+            f"✏️ Ingresa el <b>nuevo nombre</b> para el cliente <code>{target_id}</code>:\n\n"
+            f"(Escribe el nombre o /cancelar para abortar)",
+            parse_mode="HTML",
+        )
+
+    elif data.startswith("admin:edit_phone:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        set_user_state(telegram_id, f"admin:edit_client:phone:{target_id}")
+        await query.edit_message_text(
+            f"📱 Ingresa el <b>nuevo teléfono</b> para el cliente <code>{target_id}</code>:\n\n"
+            f"(Ej: 04141234567 o /cancelar para abortar)",
+            parse_mode="HTML",
+        )
+
+    elif data.startswith("admin:block:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await block_user(target_id)
+        await log_admin_action(telegram_id, "block_user", {"target_telegram_id": target_id})
+        await _show_client_detail_callback(query, target_id)
+
+    elif data.startswith("admin:unblock:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await unblock_user(target_id)
+        await log_admin_action(telegram_id, "unblock_user", {"target_telegram_id": target_id})
+        await _show_client_detail_callback(query, target_id)
+
+    elif data.startswith("admin:clients_page:"):
+        await query.answer()
+        page = int(data.split(":")[2])
+        await _show_clients_list_callback(query, page=page)
+
+    elif data.startswith("admin:client_detail:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await _show_client_detail_callback(query, target_id)
+
     elif data == "admin:back":
         await query.answer()
         await admin_dashboard(update, context)
