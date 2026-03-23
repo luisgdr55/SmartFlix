@@ -1568,3 +1568,46 @@ async def api_payments_pending(request: Request):
         return JSONResponse({"count": len(pending), "payments": pending})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@panel_router.get("/api/debug/availability")
+async def api_debug_availability(request: Request):
+    """Diagnóstico: muestra exactamente lo que el bot ve en disponibilidad de perfiles."""
+    if not verify_session(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        from database import get_supabase
+        from database.platforms import get_active_platforms
+        from database.profiles import get_all_profiles_for_platform
+        sb = get_supabase()
+
+        platforms = await get_active_platforms()
+        result = []
+        for p in platforms:
+            pid = p["id"]
+            # All profiles for this platform regardless of status/type
+            all_profiles = await get_all_profiles_for_platform(pid)
+            # What the bot actually queries
+            by_type = {}
+            for pt in ("monthly", "express", "week"):
+                res = sb.table("profiles").select("id, profile_name, status, profile_type") \
+                    .eq("platform_id", pid).eq("profile_type", pt).eq("status", "available").execute()
+                by_type[pt] = len(res.data or [])
+
+            result.append({
+                "platform": p["name"],
+                "platform_id": pid,
+                "total_profiles_in_db": len(all_profiles),
+                "profiles_breakdown": [
+                    {"name": pr["profile_name"], "type": pr["profile_type"], "status": pr["status"]}
+                    for pr in all_profiles
+                ],
+                "bot_sees": {
+                    "monthly_available": by_type["monthly"],
+                    "express_available": by_type["express"],
+                    "week_available": by_type["week"],
+                }
+            })
+        return JSONResponse({"platforms": result})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
