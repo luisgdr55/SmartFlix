@@ -127,15 +127,33 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
     telegram_id = update.effective_user.id
 
     try:
-        platform_id = get_user_data(telegram_id, "selected_platform_id")
-        plan_type = get_user_data(telegram_id, "selected_plan_type") or "monthly"
-        price_usd = float(get_user_data(telegram_id, "price_usd") or 4.50)
-        price_bs = float(get_user_data(telegram_id, "price_bs") or 150.0)
-        rate_used = float(get_user_data(telegram_id, "rate_used") or 36.0)
+        # Extract platform_id and plan_type from callback data (primary source)
+        # callback format: confirm:{plan_type}:{platform_id}
+        cb_parts = (query.data or "").split(":")
+        plan_type = cb_parts[1] if len(cb_parts) > 1 else (get_user_data(telegram_id, "selected_plan_type") or "monthly")
+        platform_id = cb_parts[2] if len(cb_parts) > 2 else get_user_data(telegram_id, "selected_platform_id")
 
         if not platform_id:
             await query.edit_message_text("Sesión expirada. Usa /start para comenzar de nuevo.")
             return
+
+        # Try Redis for price data; recalculate if missing
+        price_usd_str = get_user_data(telegram_id, "price_usd")
+        price_bs_str  = get_user_data(telegram_id, "price_bs")
+        rate_str      = get_user_data(telegram_id, "rate_used")
+
+        if price_usd_str and price_bs_str and rate_str:
+            price_usd = float(price_usd_str)
+            price_bs  = float(price_bs_str)
+            rate_used = float(rate_str)
+        else:
+            # Redis data lost — recalculate from platform
+            platform_tmp = await get_platform_by_id(platform_id)
+            price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+            price_usd = float((platform_tmp or {}).get(price_field) or 4.50)
+            price_bs  = await calculate_price_bs(price_usd)
+            rate_obj  = await get_current_rate()
+            rate_used = float((rate_obj or {}).get("usd_binance") or 36.0)
 
         user = await get_user_by_telegram_id(telegram_id)
         if not user:

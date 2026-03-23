@@ -412,11 +412,18 @@ async def handle_contact_admin(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         from services.notification_service import send_to_admin
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        username = update.effective_user.username
+        tg_link = f"https://t.me/{username}" if username else f"tg://user?id={telegram_id}"
+        link_label = f"@{username}" if username else f"ID {telegram_id}"
         await send_to_admin(
             f"🆘 <b>Usuario solicita soporte</b>\n\n"
-            f"👤 Usuario: @{update.effective_user.username or 'sin username'}\n"
-            f"🆔 ID: {telegram_id}\n"
-            f"📝 Nombre: {update.effective_user.full_name}"
+            f"👤 Nombre: {update.effective_user.full_name}\n"
+            f"🔗 Contacto: {tg_link}\n"
+            f"🆔 ID: <code>{telegram_id}</code>",
+            keyboard=InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"💬 Abrir chat con {link_label}", url=tg_link)
+            ]])
         )
 
         await query.edit_message_text(
