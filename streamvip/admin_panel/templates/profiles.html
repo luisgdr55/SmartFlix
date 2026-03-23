@@ -96,10 +96,17 @@
             </td>
             <td class="table-cell">
               {% set s = p.get('status', '') %}
-              {% if s == 'available' %}<span class="badge-available">🟢 Disponible</span>
-              {% elif s == 'occupied' %}<span class="badge-occupied">🔴 Ocupado</span>
-              {% elif s == 'maintenance' %}<span class="badge-maintenance">🔧 Mantenimiento</span>
-              {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
+              <form action="/panel/profiles/{{ p['id'] }}/set-status" method="POST">
+                <select name="status" onchange="this.form.submit()"
+                  class="text-xs rounded-lg px-2 py-1 border font-medium cursor-pointer focus:outline-none
+                  {% if s == 'available' %}bg-emerald-500/15 border-emerald-500/40 text-emerald-300
+                  {% elif s == 'occupied' %}bg-red-500/15 border-red-500/40 text-red-300
+                  {% else %}bg-slate-600/30 border-slate-500/40 text-slate-400{% endif %}">
+                  <option value="available" {% if s == 'available' %}selected{% endif %}>🟢 Disponible</option>
+                  <option value="occupied"  {% if s == 'occupied'  %}selected{% endif %}>🔴 Ocupado</option>
+                  <option value="maintenance" {% if s == 'maintenance' %}selected{% endif %}>🔧 Mantenimiento</option>
+                </select>
+              </form>
             </td>
             <td class="table-cell text-sm">
               {% set sub = p.get('_active_sub') %}

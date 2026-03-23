@@ -531,6 +531,25 @@ async def profile_edit_save(
         return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
 
 
+@panel_router.post("/profiles/{profile_id}/set-status")
+async def profile_set_status(request: Request, profile_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        form = await request.form()
+        status = (form.get("status") or "").strip()
+        if status not in ("available", "occupied", "maintenance"):
+            return RedirectResponse(url="/panel/profiles?error=Estado+invalido", status_code=302)
+        sb = get_supabase()
+        sb.table("profiles").update({"status": status}).eq("id", profile_id).execute()
+        return RedirectResponse(url=request.headers.get("referer", "/panel/profiles"), status_code=302)
+    except Exception as e:
+        logger.error(f"Profile set-status error: {e}")
+        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+
+
 @panel_router.post("/profiles/{profile_id}/delete")
 async def profile_delete(request: Request, profile_id: str):
     guard = _auth_guard(request)
