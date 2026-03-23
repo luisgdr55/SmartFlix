@@ -605,6 +605,7 @@ async def user_detail(request: Request, user_id: str):
         return guard
     try:
         from database import get_supabase
+        from database.platforms import get_active_platforms
         sb = get_supabase()
         user_res = sb.table("users").select("*").eq("id", user_id).execute()
         user = user_res.data[0] if user_res.data else None
@@ -614,6 +615,7 @@ async def user_detail(request: Request, user_id: str):
             "*, platforms(name, icon_emoji), profiles(profile_name, pin)"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
         subscriptions = subs_res.data or []
+        platforms = await get_active_platforms()
     except Exception as e:
         logger.error(f"User detail error: {e}")
         return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
@@ -623,10 +625,106 @@ async def user_detail(request: Request, user_id: str):
         "page": "users",
         "user": user,
         "subscriptions": subscriptions,
+        "platforms": platforms,
         "now_date": venezuela_now().strftime("%Y-%m-%d"),
         "success": request.query_params.get("success"),
         "error": request.query_params.get("error"),
     })
+
+
+@panel_router.post("/users/{user_id}/add-subscription")
+async def user_add_subscription(request: Request, user_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from utils.helpers import venezuela_now
+        from datetime import datetime
+        import pytz
+
+        form = await request.form()
+        sb = get_supabase()
+        tz_ve = pytz.timezone("America/Caracas")
+
+        platform_id  = (form.get("platform_id") or "").strip()
+        plan_type    = (form.get("plan_type") or "monthly").strip()
+        end_date_str = (form.get("end_date") or "").strip()
+        price        = float(form.get("price_usd") or 0)
+        reference    = (form.get("payment_reference") or "MIGRADO").strip()
+        profile_mode = (form.get("profile_mode") or "existing").strip()
+
+        if not platform_id or not end_date_str:
+            return RedirectResponse(url=f"/panel/users/{user_id}?error=Plataforma+y+fecha+son+obligatorios", status_code=302)
+
+        if profile_mode == "new":
+            acc_id   = (form.get("new_account_id") or "").strip()
+            pname    = (form.get("new_profile_name") or "").strip()
+            ptype    = (form.get("new_profile_type") or "monthly").strip()
+            pin_val  = (form.get("new_pin") or "").strip()
+            is_extra = form.get("new_is_extra_member") == "on"
+            ex_email = (form.get("new_extra_email") or "").strip()
+            ex_pass  = (form.get("new_extra_password") or "").strip()
+            if not acc_id or not pname:
+                return RedirectResponse(url=f"/panel/users/{user_id}?error=Cuenta+y+nombre+de+perfil+son+obligatorios", status_code=302)
+            profile_ins: dict = {
+                "platform_id": platform_id,
+                "account_id": acc_id,
+                "profile_name": pname,
+                "profile_type": ptype,
+                "status": "occupied",
+                "is_extra_member": is_extra,
+            }
+            if is_extra:
+                if ex_email: profile_ins["extra_email"] = ex_email
+                if ex_pass:  profile_ins["extra_password"] = ex_pass
+            else:
+                if pin_val:  profile_ins["pin"] = pin_val
+            new_prof = sb.table("profiles").insert(profile_ins).execute()
+            prof_id  = new_prof.data[0]["id"]
+        else:
+            prof_id = (form.get("profile_id") or "").strip()
+            if not prof_id:
+                return RedirectResponse(url=f"/panel/users/{user_id}?error=Debes+seleccionar+un+perfil", status_code=302)
+            sb.table("profiles").update({"status": "occupied"}).eq("id", prof_id).execute()
+
+        end_dt = datetime.strptime(end_date_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        end_dt = tz_ve.localize(end_dt)
+
+        new_sub = sb.table("subscriptions").insert({
+            "user_id": user_id,
+            "profile_id": prof_id,
+            "platform_id": platform_id,
+            "plan_type": plan_type,
+            "start_date": venezuela_now().isoformat(),
+            "end_date": end_dt.isoformat(),
+            "price_usd": price,
+            "status": "active",
+            "payment_reference": reference or "MIGRADO",
+            "payment_confirmed_at": venezuela_now().isoformat(),
+            "reminder_sent": False,
+            "expiry_notified": False,
+        }).execute()
+
+        # Update total_purchases
+        user_res = sb.table("users").select("total_purchases").eq("id", user_id).execute()
+        current = (user_res.data[0].get("total_purchases") or 0) if user_res.data else 0
+        sb.table("users").update({"total_purchases": current + 1}).eq("id", user_id).execute()
+
+        # Send reminder if expiring soon
+        days_left = (end_dt.astimezone(tz_ve) - venezuela_now()).days
+        sub_id = new_sub.data[0]["id"] if new_sub.data else None
+        if sub_id and days_left <= 3:
+            try:
+                from services.notification_service import send_expiry_reminder
+                await send_expiry_reminder(str(sub_id))
+            except Exception as notify_err:
+                logger.warning(f"Could not send immediate reminder: {notify_err}")
+
+        return RedirectResponse(url=f"/panel/users/{user_id}?success=Suscripcion+agregada+correctamente", status_code=302)
+    except Exception as e:
+        logger.error(f"Add subscription error: {e}")
+        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:120]}", status_code=302)
 
 
 @panel_router.post("/users/{user_id}/block")
