@@ -608,11 +608,13 @@ async def user_detail(request: Request, user_id: str):
     except Exception as e:
         logger.error(f"User detail error: {e}")
         return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+    from utils.helpers import venezuela_now
     return templates.TemplateResponse("user_detail.html", {
         "request": request,
         "page": "users",
         "user": user,
         "subscriptions": subscriptions,
+        "now_date": venezuela_now().strftime("%Y-%m-%d"),
         "success": request.query_params.get("success"),
         "error": request.query_params.get("error"),
     })
@@ -746,6 +748,53 @@ async def subscriptions_list(request: Request):
         "per_page": per_page,
         "total_pages": total_pages,
     })
+
+
+@panel_router.post("/subscriptions/{sub_id}/edit")
+async def subscription_edit(request: Request, sub_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        form = await request.form()
+        sb = get_supabase()
+
+        # Fetch sub to get user_id for redirect
+        sub_res = sb.table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute()
+        user_id = sub_res.data[0]["user_id"] if sub_res.data else None
+
+        upd: dict = {}
+        end_date = (form.get("end_date") or "").strip()
+        status = (form.get("status") or "").strip()
+        plan_type = (form.get("plan_type") or "").strip()
+        price_usd = (form.get("price_usd") or "").strip()
+
+        if end_date:
+            # Store as end-of-day in ISO format
+            from datetime import datetime
+            import pytz
+            tz_ve = pytz.timezone("America/Caracas")
+            dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            upd["end_date"] = tz_ve.localize(dt).isoformat()
+        if status:
+            upd["status"] = status
+        if plan_type:
+            upd["plan_type"] = plan_type
+        if price_usd:
+            try:
+                upd["price_usd"] = float(price_usd)
+            except ValueError:
+                pass
+
+        if upd:
+            sb.table("subscriptions").update(upd).eq("id", sub_id).execute()
+
+        redirect_url = f"/panel/users/{user_id}?success=Suscripcion+actualizada" if user_id else "/panel/subscriptions?success=Suscripcion+actualizada"
+        return RedirectResponse(url=redirect_url, status_code=302)
+    except Exception as e:
+        logger.error(f"Subscription edit error: {e}")
+        return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

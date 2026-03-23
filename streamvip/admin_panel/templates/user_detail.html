@@ -118,7 +118,7 @@
     <div class="lg:col-span-2">
       <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
         <div class="px-6 py-4 border-b border-slate-700/50">
-          <h3 class="text-sm font-semibold text-slate-300">📋 Historial de Suscripciones ({{ subscriptions|length }})</h3>
+          <h3 class="text-sm font-semibold text-slate-300">📋 Suscripciones ({{ subscriptions|length }})</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full">
@@ -126,33 +126,40 @@
               <tr class="border-b border-slate-700/50 bg-slate-900/20">
                 <th class="table-header">Plataforma</th>
                 <th class="table-header">Plan</th>
-                <th class="table-header">Inicio</th>
                 <th class="table-header">Vence</th>
                 <th class="table-header">Precio</th>
                 <th class="table-header">Estado</th>
+                <th class="table-header"></th>
               </tr>
             </thead>
             <tbody>
               {% for sub in subscriptions %}
-              <tr class="table-row">
-                <td class="table-cell">
+              <tr x-data="{ editing: false }" class="table-row border-b border-slate-700/30 last:border-0">
+
+                <!-- View mode -->
+                <td class="table-cell" x-show="!editing">
                   <span class="font-medium">
                     {{ (sub.get('platforms') or {}).get('icon_emoji','') }}
                     {{ (sub.get('platforms') or {}).get('name','—') }}
                   </span>
                 </td>
-                <td class="table-cell">
+                <td class="table-cell" x-show="!editing">
                   {% set t = sub.get('plan_type','') %}
                   {% if t == 'express' %}<span class="text-xs text-yellow-400">⚡ Express</span>
                   {% elif t == 'week' %}<span class="text-xs text-blue-400">Semanal</span>
                   {% else %}<span class="text-xs text-slate-300 capitalize">{{ t }}</span>{% endif %}
                 </td>
-                <td class="table-cell text-sm text-slate-400">{{ sub.get('start_date','—')[:10] if sub.get('start_date') else '—' }}</td>
-                <td class="table-cell text-sm text-slate-400">{{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}</td>
-                <td class="table-cell text-sm text-emerald-400 font-medium">
+                <td class="table-cell text-sm" x-show="!editing">
+                  {% set ed = sub.get('end_date','') %}
+                  {% if ed %}
+                    {% if ed[:10] < now_date %}<span class="text-red-400 font-medium">{{ ed[:10] }}</span>
+                    {% else %}<span class="text-slate-300">{{ ed[:10] }}</span>{% endif %}
+                  {% else %}—{% endif %}
+                </td>
+                <td class="table-cell text-sm text-emerald-400 font-medium" x-show="!editing">
                   ${{ "%.2f"|format(sub.get('price_usd') or 0) }}
                 </td>
-                <td class="table-cell">
+                <td class="table-cell" x-show="!editing">
                   {% set s = sub.get('status','') %}
                   {% if s == 'active' %}<span class="badge-active">Activa</span>
                   {% elif s == 'pending_payment' %}<span class="badge-pending">Pendiente</span>
@@ -160,6 +167,53 @@
                   {% elif s == 'cancelled' %}<span class="badge-cancelled">Cancelada</span>
                   {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
                 </td>
+                <td class="table-cell" x-show="!editing">
+                  <button @click="editing = true" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">✏️ Editar</button>
+                </td>
+
+                <!-- Edit mode (spans all columns) -->
+                <td colspan="6" x-show="editing" x-cloak class="px-4 py-3 bg-slate-900/40">
+                  <form action="/panel/subscriptions/{{ sub['id'] }}/edit" method="POST">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                      <div>
+                        <label class="form-label text-xs">Fecha vencimiento</label>
+                        <input type="date" name="end_date"
+                          value="{{ sub.get('end_date','')[:10] if sub.get('end_date') else '' }}"
+                          class="form-input text-sm py-1.5" />
+                      </div>
+                      <div>
+                        <label class="form-label text-xs">Estado</label>
+                        <select name="status" class="form-input text-sm py-1.5">
+                          {% set s = sub.get('status','') %}
+                          <option value="active" {% if s == 'active' %}selected{% endif %}>Activa</option>
+                          <option value="expired" {% if s == 'expired' %}selected{% endif %}>Expirada</option>
+                          <option value="cancelled" {% if s == 'cancelled' %}selected{% endif %}>Cancelada</option>
+                          <option value="pending_payment" {% if s == 'pending_payment' %}selected{% endif %}>Pendiente pago</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="form-label text-xs">Plan</label>
+                        <select name="plan_type" class="form-input text-sm py-1.5">
+                          {% set pt = sub.get('plan_type','') %}
+                          <option value="monthly" {% if pt == 'monthly' %}selected{% endif %}>Mensual</option>
+                          <option value="week" {% if pt == 'week' %}selected{% endif %}>Semanal</option>
+                          <option value="express" {% if pt == 'express' %}selected{% endif %}>Express</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="form-label text-xs">Precio USD</label>
+                        <input type="number" step="0.01" name="price_usd"
+                          value="{{ sub.get('price_usd') or '' }}"
+                          class="form-input text-sm py-1.5" placeholder="0.00" />
+                      </div>
+                    </div>
+                    <div class="flex gap-2">
+                      <button type="submit" class="btn-primary text-xs py-1.5 px-4">💾 Guardar</button>
+                      <button type="button" @click="editing = false" class="btn-secondary text-xs py-1.5 px-4">Cancelar</button>
+                    </div>
+                  </form>
+                </td>
+
               </tr>
               {% else %}
               <tr>
