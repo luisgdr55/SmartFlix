@@ -8,6 +8,39 @@
   ⚠️ Error cargando estadísticas: {{ error }}
 </div>
 {% endif %}
+
+{% if expiring_alert %}
+<div class="mx-6 mt-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl overflow-hidden">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-amber-500/20">
+    <span class="text-lg">🔔</span>
+    <p class="text-sm font-semibold text-amber-300">
+      {{ expiring_alert | length }} suscripción(es) vencen hoy o en los próximos 3 días
+    </p>
+    <a href="/panel/subscriptions" class="ml-auto text-xs text-amber-400 hover:text-amber-300 underline">Ver todas →</a>
+  </div>
+  <div class="divide-y divide-amber-500/10">
+    {% for sub in expiring_alert %}
+    {% set ed = sub['end_date'][:10] %}
+    {% set platform = sub.get('platforms') or {} %}
+    {% set user = sub.get('users') or {} %}
+    {% set today = now_ve.strftime('%Y-%m-%d') %}
+    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-amber-500/5 transition-colors">
+      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
+      <div class="flex-1 min-w-0">
+        <span class="text-sm text-slate-200 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
+        <span class="text-slate-500 mx-1">·</span>
+        <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
+      </div>
+      {% if ed == today %}
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">⚠️ Vence HOY</span>
+      {% else %}
+      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ ed }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block content %}

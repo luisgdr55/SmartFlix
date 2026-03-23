@@ -122,6 +122,17 @@ async def dashboard(request: Request):
         ).eq("plan_type", "express").execute()
         express_active = express_result.count or 0
 
+        # Expiring today or within 3 days
+        import pytz
+        tz_ve = pytz.timezone("America/Caracas")
+        now_ve = venezuela_now()
+        in_3_days = now_ve + timedelta(days=3)
+        expiring_alert = sb.table("subscriptions").select(
+            "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
+        ).eq("status", "active").gte("end_date", now_ve.isoformat()).lte(
+            "end_date", in_3_days.isoformat()
+        ).order("end_date").execute()
+
         context = {
             "request": request,
             "page": "dashboard",
@@ -133,9 +144,12 @@ async def dashboard(request: Request):
             "daily_labels": daily_labels,
             "daily_values": daily_values,
             "platform_availability": stats.get("platform_availability", []),
+            "expiring_alert": expiring_alert.data or [],
+            "now_ve": now_ve,
         }
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
+        from utils.helpers import venezuela_now as _ve_now
         context = {
             "request": request,
             "page": "dashboard",
@@ -147,6 +161,8 @@ async def dashboard(request: Request):
             "daily_labels": [],
             "daily_values": [],
             "platform_availability": [],
+            "expiring_alert": [],
+            "now_ve": _ve_now(),
             "error": str(e),
         }
     return templates.TemplateResponse("dashboard.html", context)
