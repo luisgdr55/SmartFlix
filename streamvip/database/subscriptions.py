@@ -59,6 +59,25 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
         return []
 
 
+async def get_user_pending_subscription(user_id: str) -> Optional[dict]:
+    """Return the most recent pending_payment subscription for a user."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("*, platforms(name, slug, icon_emoji)")
+            .eq("user_id", user_id)
+            .eq("status", "pending_payment")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error in get_user_pending_subscription: {e}")
+        return None
+
+
 async def save_payment_proof(sub_id: str, payment_reference: str, payment_image_url: str) -> bool:
     """Save payment proof to a pending subscription (awaiting admin approval)."""
     try:
