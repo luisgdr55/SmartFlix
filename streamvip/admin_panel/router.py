@@ -1516,15 +1516,16 @@ async def migrate_post(request: Request):
 
 @panel_router.get("/api/profiles/available/{platform_id}")
 async def api_profiles_by_platform(request: Request, platform_id: str):
-    """Return available profiles for a given platform (used by migrate form JS)."""
+    """Return all profiles for a given platform (used by migrate form JS).
+    Includes occupied profiles so admins can link pre-assigned profiles during migration."""
     if not verify_session(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     try:
         from database import get_supabase
         sb = get_supabase()
         res = sb.table("profiles").select(
-            "id, profile_name, profile_type, is_extra_member, extra_email"
-        ).eq("platform_id", platform_id).eq("status", "available").order("profile_type").execute()
+            "id, profile_name, profile_type, status, is_extra_member, extra_email"
+        ).eq("platform_id", platform_id).order("status").order("profile_type").execute()
         return JSONResponse({"profiles": res.data or []})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

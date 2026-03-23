@@ -160,7 +160,7 @@
                 <template x-for="pr in (row.profiles || [])" :key="pr.id">
                   <option :value="pr.id"
                     :data-extra="pr.is_extra_member ? 'true' : 'false'"
-                    x-text="(pr.is_extra_member ? '🏠 [CUPO EXTRA] ' : '') + pr.profile_name + ' (' + (pr.profile_type==='monthly'?'Mensual':pr.profile_type==='week'?'Semanal':'Express') + ')' + (pr.is_extra_member && pr.extra_email ? ' — ' + pr.extra_email : '')">
+                    x-text="(pr.status==='occupied'?'🔴 ':pr.status==='maintenance'?'🔧 ':'🟢 ') + (pr.is_extra_member ? '[CUPO EXTRA] ' : '') + pr.profile_name + ' (' + (pr.profile_type==='monthly'?'Mensual':pr.profile_type==='week'?'Semanal':'Express') + ')' + (pr.is_extra_member && pr.extra_email ? ' — ' + pr.extra_email : '')">
                   </option>
                 </template>
               </select>
