@@ -352,6 +352,24 @@ async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
         return None
 
 
+async def get_expired_subscriptions(limit: int = 30) -> list[dict]:
+    """Get subscriptions with status='expired' ordered by end_date desc."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)")
+            .eq("status", "expired")
+            .order("end_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error in get_expired_subscriptions: {e}")
+        return []
+
+
 async def cancel_expired_pending_subscriptions() -> int:
     """Cancel pending subscriptions older than 45 minutes. Returns count of cancelled."""
     try:

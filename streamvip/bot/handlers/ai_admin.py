@@ -83,6 +83,13 @@ def _detect_intent(text: str) -> dict | None:
         name = _extract_name_after_de(t)
         return {"action": "cancel_sub", "name": name}
 
+    # ── expired subscriptions ─────────────────────────────────────
+    expired_kws = ["vencida", "vencido", "expirada", "expirado", "cuenta vencida",
+                   "suscripción vencida", "subscripcion vencida", "clientes vencidos",
+                   "quiénes vencieron", "quienes vencieron", "cuáles vencieron"]
+    if any(k in t for k in expired_kws):
+        return {"action": "expired_clients"}
+
     # ── find client ───────────────────────────────────────────────
     find_kws = ["busca", "buscar", "info de", "información de", "informacion de",
                 "datos de", "perfil de", "cliente", "quién es", "quien es"]
@@ -139,6 +146,7 @@ async def _llm_intent(text: str) -> dict:
                     "- block_user: bloquear cliente (parámetro name)\n"
                     "- unblock_user: desbloquear cliente (parámetro name)\n"
                     "- cancel_sub: cancelar suscripción de un cliente (parámetro name)\n"
+                    "- expired_clients: ver clientes con suscripción vencida\n"
                     "- other: conversación general o comando no reconocido\n\n"
                     "Responde ÚNICAMENTE con JSON válido:\n"
                     '{"action":"...","name":"nombre o null","period":"today/week/month o null","rate":0}\n\n'
@@ -343,6 +351,50 @@ async def _handle_block_unblock(message, name_query: str, action: str, admin_id:
     await message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
 
+async def _handle_expired_clients(message) -> None:
+    from database.subscriptions import get_expired_subscriptions
+    subs = await get_expired_subscriptions(limit=30)
+    if not subs:
+        await message.reply_text("✅ No hay suscripciones vencidas registradas.")
+        return
+
+    # Group by client (telegram_id) to avoid repeating same client
+    seen: dict[int, dict] = {}
+    for s in subs:
+        user = s.get("users") or {}
+        tid = user.get("telegram_id")
+        if not tid:
+            continue
+        platform = s.get("platforms") or {}
+        entry = seen.setdefault(tid, {
+            "name": user.get("name") or user.get("username") or f"ID {tid}",
+            "telegram_id": tid,
+            "subs": [],
+        })
+        end = (s.get("end_date") or "")[:10]
+        icon = platform.get("icon_emoji", "📺")
+        plat_name = platform.get("name", "?")
+        plan = s.get("plan_type", "?")
+        entry["subs"].append(f"{icon} {plat_name} ({plan}) — venció {end}")
+
+    lines = [f"📋 <b>{len(seen)} cliente(s) con suscripción vencida:</b>\n"]
+    buttons = []
+    for tid, data in list(seen.items())[:15]:
+        name = data["name"]
+        sub_lines = "\n   ".join(data["subs"][:3])
+        lines.append(f"👤 <b>{name}</b> (<code>{tid}</code>)\n   {sub_lines}")
+        buttons.append([InlineKeyboardButton(
+            f"Ver {name}", callback_data=f"admin:client_detail:{tid}"
+        )])
+
+    # Split into chunks if too long
+    full_text = "\n\n".join(lines)
+    if len(full_text) > 3800:
+        full_text = "\n\n".join(lines[:10]) + f"\n\n… y {len(seen)-9} más."
+
+    await message.reply_text(full_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+
+
 async def _handle_cancel_sub(message, name_query: str, admin_id: int) -> None:
     if not name_query:
         await message.reply_text("¿De qué cliente quieres cancelar la suscripción?")
@@ -465,6 +517,9 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
 
         elif action == "rate_update" and rate_val > 0:
             await _handle_rate_update(update.message, float(rate_val), admin_id)
+
+        elif action == "expired_clients":
+            await _handle_expired_clients(update.message)
 
         elif action == "find_client":
             await _handle_find_client(update.message, name)
