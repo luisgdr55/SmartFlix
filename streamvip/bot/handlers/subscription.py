@@ -436,6 +436,8 @@ async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
             name = item.get("name", "?")
             emoji = item.get("emoji", "📺")
             plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h", "week": "Semanal 7d"}.get(plan_type, plan_type)
+            plan_days = {"monthly": 30, "express": 1, "week": 7}.get(plan_type, 30)
+            end_date = now + timedelta(days=plan_days)
 
             sub = await create_subscription(
                 user_id=str(user["id"]),
@@ -444,6 +446,7 @@ async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
                 price_usd=price_usd,
                 price_bs=price_bs,
                 rate_used=float(item.get("rate_used") or 36),
+                end_date=end_date,
             )
             if sub:
                 sub_ids.append(str(sub["id"]))

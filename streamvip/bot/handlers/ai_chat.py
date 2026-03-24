@@ -167,7 +167,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     Handle any free-text message.
     1. Detect intent via LLM.
-    2. If actionable (subscribe/express/week/support/renewal/multi_order) → route with inline keyboard.
+    2. If actionable → route to correct handler.
     3. Otherwise → generate conversational response.
     """
     if not update.message or not update.effective_user:
@@ -176,172 +176,172 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     telegram_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # Show typing indicator
-    await context.bot.send_chat_action(
-        chat_id=update.message.chat_id, action=ChatAction.TYPING
-    )
+    try:
+        await context.bot.send_chat_action(
+            chat_id=update.message.chat_id, action=ChatAction.TYPING
+        )
+    except Exception:
+        pass
 
-    # Load conversation history, user context, and prices in parallel
-    import asyncio
-    conv_task = asyncio.create_task(asyncio.to_thread(get_conversation_context, telegram_id))
-    ctx_task = asyncio.create_task(_get_user_context(telegram_id))
-    prices_task = asyncio.create_task(_get_prices_context())
-    conversation = await conv_task
-    user_name, active_subs = await ctx_task
-    prices_text = await prices_task
+    try:
+        import asyncio
+        conv_task = asyncio.create_task(asyncio.to_thread(get_conversation_context, telegram_id))
+        ctx_task = asyncio.create_task(_get_user_context(telegram_id))
+        prices_task = asyncio.create_task(_get_prices_context())
+        conversation = await conv_task
+        user_name, active_subs = await ctx_task
+        prices_text = await prices_task
+    except Exception as e:
+        logger.warning(f"Context load error: {e}")
+        conversation, user_name, active_subs, prices_text = [], "", [], "Precios no disponibles"
 
-    # Store user message
     store_conversation_message(telegram_id, "user", text)
 
-    # Detect intent
     intent_data = await interpret_user_intent(text, conversation)
     intent = intent_data.get("intent", "other")
     platform = intent_data.get("platform")
-    plan_type_hint = intent_data.get("plan_type")  # may be None
+    plan_type_hint = intent_data.get("plan_type")
     confidence = intent_data.get("confidence", "baja")
 
     logger.info(f"AI intent [{telegram_id}]: {intent} | platform: {platform} | conf: {confidence}")
 
     bot_reply = None
 
-    # ── Route based on intent ──────────────────────────────────────
-    if intent == "subscribe" and confidence != "baja":
-        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-        await _send_platform_menu(
-            update.message,
-            "monthly",
-            f"¡Claro! 🎬 Elige la plataforma{platform_hint} para tu suscripción mensual:",
-        )
-        bot_reply = f"Menú de suscripción mensual mostrado{' (' + platform + ')' if platform else ''}."
+    try:
+        if intent == "subscribe" and confidence != "baja":
+            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+            await _send_platform_menu(
+                update.message,
+                "monthly",
+                f"¡Claro! 🎬 Elige la plataforma{platform_hint} para tu suscripción mensual:",
+            )
+            bot_reply = f"Menú mensual mostrado{' (' + platform + ')' if platform else ''}."
 
-    elif intent == "express" and confidence != "baja":
-        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-        await _send_platform_menu(
-            update.message,
-            "express",
-            f"⚡ ¡Express 24h!{' ' + platform_hint if platform else ''} Elige la plataforma:",
-        )
-        bot_reply = "Menú express mostrado."
+        elif intent == "express" and confidence != "baja":
+            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+            await _send_platform_menu(
+                update.message,
+                "express",
+                f"⚡ ¡Express 24h!{' ' + platform_hint if platform else ''} Elige la plataforma:",
+            )
+            bot_reply = "Menú express mostrado."
 
-    elif intent == "week" and confidence != "baja":
-        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-        await _send_platform_menu(
-            update.message,
-            "week",
-            f"📅 Pack semanal{platform_hint}. Elige la plataforma:",
-        )
-        bot_reply = "Menú semanal mostrado."
+        elif intent == "week" and confidence != "baja":
+            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+            await _send_platform_menu(
+                update.message,
+                "week",
+                f"📅 Pack semanal{platform_hint}. Elige la plataforma:",
+            )
+            bot_reply = "Menú semanal mostrado."
 
-    elif intent == "support" and confidence != "baja":
-        from bot.keyboards import support_keyboard as sk
-        await update.message.reply_text(
-            "🆘 <b>Soporte StreamVip</b>\n\n¿Con qué te puedo ayudar?",
-            parse_mode="HTML",
-            reply_markup=sk(),
-        )
-        bot_reply = "Menú de soporte mostrado."
+        elif intent == "support" and confidence != "baja":
+            from bot.keyboards import support_keyboard as sk
+            await update.message.reply_text(
+                "🆘 <b>Soporte SmartFlixVe</b>\n\n¿Con qué te puedo ayudar?",
+                parse_mode="HTML",
+                reply_markup=sk(),
+            )
+            bot_reply = "Menú soporte mostrado."
 
-    elif intent == "info" and confidence != "baja":
-        # Build price response directly from prices_text — no extra LLM call needed
-        if platform:
-            plat_cap = platform.capitalize()
-            # Filter lines for this platform
-            plat_lines = [l for l in prices_text.split("\n") if platform.lower() in l.lower() or plat_cap.lower() in l.lower()]
-            if plat_lines:
-                response = (
-                    f"🎬 Precios de <b>{plat_cap}</b>:\n\n"
-                    + "\n".join(plat_lines)
-                    + "\n\n¿Cuál plan te interesa? Selecciona abajo 👇"
+        elif intent == "info" and confidence != "baja":
+            if platform:
+                plat_cap = platform.capitalize()
+                plat_lines = [
+                    l for l in prices_text.split("\n")
+                    if platform.lower() in l.lower() or plat_cap.lower() in l.lower()
+                ]
+                if plat_lines:
+                    response = (
+                        f"🎬 Precios de <b>{plat_cap}</b>:\n\n"
+                        + "\n".join(plat_lines)
+                        + "\n\n¿Cuál plan te interesa? Selecciona abajo 👇"
+                    )
+                else:
+                    response = f"¡Tenemos <b>{plat_cap}</b> disponible! Elige tu plan abajo 👇"
+                from database.analytics import get_platform_availability
+                availability = await get_platform_availability()
+                await update.message.reply_text(
+                    response, parse_mode="HTML",
+                    reply_markup=platforms_keyboard(availability, "monthly"),
                 )
             else:
-                response = f"¡Tenemos <b>{plat_cap}</b> disponible! Elige tu plan abajo 👇"
-            from database.analytics import get_platform_availability
-            availability = await get_platform_availability()
-            await update.message.reply_text(
-                response, parse_mode="HTML",
-                reply_markup=platforms_keyboard(availability, "monthly"),
-            )
-        else:
-            if prices_text and "no disponible" not in prices_text:
-                response = f"🎬 <b>Precios actuales de SmartFlixVe:</b>\n\n{prices_text}\n\n¿Cuál plataforma te interesa?"
-            else:
-                response = "¡Tenemos varias plataformas disponibles! Selecciona abajo 👇"
-            await update.message.reply_text(
-                response, parse_mode="HTML",
-                reply_markup=main_menu_keyboard(),
-            )
-        bot_reply = f"Precios mostrados{' de ' + platform if platform else ''}."
-
-    elif intent == "multi_order" and confidence != "baja":
-        from services.gemini_service import extract_order_items
-        from services.cart_service import save_cart
-        from services.exchange_service import get_current_rate
-        from database import get_supabase
-
-        items_raw = await extract_order_items(text)
-        # Fallback: use platforms list from intent_data
-        if not items_raw:
-            platforms_list = intent_data.get("platforms") or []
-            if isinstance(platforms_list, list):
-                items_raw = [{"platform": p, "plan_type": "monthly"} for p in platforms_list if p]
-
-        if not items_raw:
-            await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
-            bot_reply = "Menú mostrado."
-        else:
-            sb = get_supabase()
-            rate_data = await get_current_rate()
-            rate = float((rate_data or {}).get("usd_binance") or 36.0)
-
-            cart_items = []
-            not_found = []
-            for raw_item in items_raw:
-                slug_q = raw_item.get("platform", "").lower().strip()
-                plan_type = raw_item.get("plan_type", "monthly")
-                # Search by slug first, then by name
-                res = sb.table("platforms").select("*").eq("is_active", True).ilike("slug", f"%{slug_q}%").execute()
-                if not res.data:
-                    res = sb.table("platforms").select("*").eq("is_active", True).ilike("name", f"%{slug_q}%").execute()
-                if not res.data:
-                    not_found.append(slug_q)
-                    continue
-                plat = res.data[0]
-                price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
-                price_usd = float(plat.get(price_field) or 0)
-                cart_items.append({
-                    "platform_id": str(plat["id"]),
-                    "name": plat.get("name", ""),
-                    "emoji": plat.get("icon_emoji", "📺"),
-                    "plan_type": plan_type,
-                    "price_usd": price_usd,
-                    "price_bs": round(price_usd * rate, 2),
-                    "rate_used": rate,
-                })
-
-            if not cart_items:
+                if prices_text and "no disponible" not in prices_text:
+                    response = f"🎬 <b>Precios actuales de SmartFlixVe:</b>\n\n{prices_text}\n\n¿Cuál plataforma te interesa?"
+                else:
+                    response = "¡Tenemos varias plataformas disponibles! Selecciona abajo 👇"
                 await update.message.reply_text(
-                    "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
+                    response, parse_mode="HTML",
                     reply_markup=main_menu_keyboard(),
                 )
-                bot_reply = "Plataformas no encontradas."
-            else:
-                save_cart(telegram_id, cart_items)
-                total_usd = sum(i["price_usd"] for i in cart_items)
-                total_bs = sum(i["price_bs"] for i in cart_items)
-                lines = ["🛒 <b>Tu carrito:</b>\n"]
-                for item in cart_items:
-                    plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
-                    lines.append(f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
-                lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
-                if not_found:
-                    lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
-                from bot.keyboards import cart_keyboard
-                await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
-                bot_reply = f"Carrito con {len(cart_items)} servicios."
+            bot_reply = f"Precios mostrados{' de ' + platform if platform else ''}."
 
-    elif intent == "credentials" and confidence != "baja":
-        # Show the user's active credentials directly
-        try:
+        elif intent == "multi_order" and confidence != "baja":
+            from services.gemini_service import extract_order_items
+            from services.cart_service import save_cart
+            from services.exchange_service import get_current_rate
+            from database import get_supabase
+            from bot.keyboards import cart_keyboard
+
+            items_raw = await extract_order_items(text)
+            if not items_raw:
+                platforms_list = intent_data.get("platforms") or []
+                if isinstance(platforms_list, list):
+                    items_raw = [{"platform": p, "plan_type": plan_type_hint or "monthly"} for p in platforms_list if p]
+
+            if not items_raw:
+                await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
+                bot_reply = "Menú mostrado."
+            else:
+                sb = get_supabase()
+                rate_data = await get_current_rate()
+                rate = float((rate_data or {}).get("usd_binance") or 36.0)
+
+                cart_items = []
+                not_found = []
+                for raw_item in items_raw:
+                    slug_q = raw_item.get("platform", "").lower().strip()
+                    item_plan = raw_item.get("plan_type", "monthly")
+                    res = sb.table("platforms").select("*").eq("is_active", True).ilike("slug", f"%{slug_q}%").execute()
+                    if not res.data:
+                        res = sb.table("platforms").select("*").eq("is_active", True).ilike("name", f"%{slug_q}%").execute()
+                    if not res.data:
+                        not_found.append(slug_q)
+                        continue
+                    plat = res.data[0]
+                    price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(item_plan, "monthly_price_usd")
+                    price_usd = float(plat.get(price_field) or 0)
+                    cart_items.append({
+                        "platform_id": str(plat["id"]),
+                        "name": plat.get("name", ""),
+                        "emoji": plat.get("icon_emoji", "📺"),
+                        "plan_type": item_plan,
+                        "price_usd": price_usd,
+                        "price_bs": round(price_usd * rate, 2),
+                        "rate_used": rate,
+                    })
+
+                if not cart_items:
+                    await update.message.reply_text(
+                        "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
+                        reply_markup=main_menu_keyboard(),
+                    )
+                    bot_reply = "Plataformas no encontradas."
+                else:
+                    save_cart(telegram_id, cart_items)
+                    total_usd = sum(i["price_usd"] for i in cart_items)
+                    total_bs = sum(i["price_bs"] for i in cart_items)
+                    lines = ["🛒 <b>Tu carrito:</b>\n"]
+                    for item in cart_items:
+                        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
+                        lines.append(f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
+                    lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+                    if not_found:
+                        lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
+                    await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
+                    bot_reply = f"Carrito con {len(cart_items)} servicios."
+
+        elif intent == "credentials" and confidence != "baja":
             from database.users import get_user_by_telegram_id
             from database.subscriptions import get_user_active_subscriptions
             from database.accounts import get_account_by_id
@@ -352,11 +352,11 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             active = [s for s in subs if s.get("status") == "active"]
 
             if not active:
-                response = (
-                    f"Hola {user_name or 'amigo/a'}! 👋 No tienes suscripciones activas en este momento.\n\n"
-                    "¿Quieres contratar un servicio? Usa el menú abajo 👇"
+                await update.message.reply_text(
+                    f"Hola {user_name or 'amigo/a'}! 👋 No tienes suscripciones activas.\n\n"
+                    "¿Quieres contratar un servicio? Usa el menú abajo 👇",
+                    reply_markup=main_menu_keyboard(),
                 )
-                await update.message.reply_text(response, reply_markup=main_menu_keyboard())
             else:
                 sb = get_supabase()
                 lines = [f"🔐 <b>Tus datos de acceso, {user_name or 'amigo/a'}:</b>\n"]
@@ -367,11 +367,8 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     end_raw = (sub.get("end_date") or "")[:10]
                     profile_id = sub.get("profile_id")
                     email, password, pin, profile_name = "—", "—", None, None
-
                     if profile_id:
-                        prof_res = sb.table("profiles").select(
-                            "profile_name, pin, account_id"
-                        ).eq("id", profile_id).limit(1).execute()
+                        prof_res = sb.table("profiles").select("profile_name, pin, account_id").eq("id", profile_id).limit(1).execute()
                         if prof_res.data:
                             prof = prof_res.data[0]
                             profile_name = prof.get("profile_name")
@@ -382,7 +379,6 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                                 if acc:
                                     email = acc.get("email", "—")
                                     password = acc.get("password", "—")
-
                     block = [f"\n{icon} <b>{name}</b>"]
                     block.append(f"📧 Email: <code>{email}</code>")
                     block.append(f"🔑 Contraseña: <code>{password}</code>")
@@ -393,36 +389,20 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     if end_raw:
                         block.append(f"📅 Vence: {end_raw[8:10]}-{end_raw[5:7]}-{end_raw[0:4]}")
                     lines.append("\n".join(block))
-
                 lines.append("\n\n⚠️ <i>No compartas estos datos con nadie.</i>")
-                await update.message.reply_text(
-                    "\n".join(lines),
-                    parse_mode="HTML",
-                    reply_markup=main_menu_keyboard(),
-                )
+                await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=main_menu_keyboard())
             bot_reply = "Credenciales mostradas."
-        except Exception as e:
-            logger.error(f"credentials handler error: {e}")
-            await update.message.reply_text(
-                "Hubo un error al cargar tus datos. Intenta de nuevo o contacta soporte.",
-                reply_markup=main_menu_keyboard(),
-            )
-            bot_reply = "Error credenciales."
 
-    elif intent == "availability" and confidence != "baja":
-        # Show real availability counts for the requested platform/plan
-        try:
+        elif intent == "availability" and confidence != "baja":
             from database.analytics import get_platform_availability
             availability = await get_platform_availability()
-
             plan_labels = {"monthly": "mensual", "express": "express 24h", "week": "semanal"}
             plan_key_map = {"monthly": "monthly_available", "express": "express_available", "week": "week_available"}
 
             if platform:
-                # Filter to the requested platform
                 match = next(
                     (p for p in availability if platform.lower() in p.get("name", "").lower() or platform.lower() in p.get("slug", "").lower()),
-                    None
+                    None,
                 )
                 if not match:
                     response = f"No encontré la plataforma <b>{platform.capitalize()}</b>. ¿Quizás quisiste decir otra?"
@@ -430,84 +410,61 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     count = match.get(plan_key_map[plan_type_hint], 0)
                     label = plan_labels[plan_type_hint]
                     icon = match.get("icon_emoji", "📺")
-                    name = match.get("name", "")
+                    pname = match.get("name", "")
                     if count > 0:
-                        response = (
-                            f"{icon} <b>{name}</b> — plan {label}:\n\n"
-                            f"✅ Hay <b>{count} pantalla{'s' if count != 1 else ''} disponible{'s' if count != 1 else ''}</b>.\n\n"
-                            f"¿Te animas? Elige tu plan abajo 👇"
-                        )
+                        response = f"{icon} <b>{pname}</b> — plan {label}:\n\n✅ Hay <b>{count} pantalla{'s' if count != 1 else ''} disponible{'s' if count != 1 else ''}</b>.\n\n¿Te animas? Elige tu plan abajo 👇"
                     else:
-                        response = (
-                            f"{icon} <b>{name}</b> — plan {label}:\n\n"
-                            f"😔 Por el momento <b>no hay disponibilidad</b> en ese plan.\n"
-                            f"Puedes unirte a la lista de espera o revisar otros planes."
-                        )
+                        response = f"{icon} <b>{pname}</b> — plan {label}:\n\n😔 Por el momento <b>no hay disponibilidad</b> en ese plan.\nPuedes revisar otros planes abajo."
                 else:
-                    # Show all plans for that platform
                     icon = match.get("icon_emoji", "📺")
-                    name = match.get("name", "")
+                    pname = match.get("name", "")
                     m = match.get("monthly_available", 0)
                     e = match.get("express_available", 0)
                     w = match.get("week_available", 0)
                     def _slot(n): return f"<b>{n}</b> disponible{'s' if n != 1 else ''}" if n > 0 else "<b>sin stock</b>"
-                    response = (
-                        f"{icon} <b>Disponibilidad de {name}:</b>\n\n"
-                        f"📅 Mensual: {_slot(m)}\n"
-                        f"📆 Semanal: {_slot(w)}\n"
-                        f"⚡ Express 24h: {_slot(e)}\n\n"
-                        f"¿Cuál plan te interesa?"
-                    )
+                    response = f"{icon} <b>Disponibilidad de {pname}:</b>\n\n📅 Mensual: {_slot(m)}\n📆 Semanal: {_slot(w)}\n⚡ Express 24h: {_slot(e)}\n\n¿Cuál plan te interesa?"
             else:
-                # General availability summary
-                lines = ["📊 <b>Disponibilidad actual:</b>\n"]
+                avail_lines = ["📊 <b>Disponibilidad actual:</b>\n"]
                 for p in availability:
-                    icon = p.get("icon_emoji", "📺")
-                    name = p.get("name", "")
                     m = p.get("monthly_available", 0)
                     e = p.get("express_available", 0)
-                    status = "✅" if (m + e) > 0 else "❌"
-                    lines.append(f"{status} {icon} <b>{name}</b>: {m} mensual | {e} express")
-                response = "\n".join(lines)
+                    status_icon = "✅" if (m + e) > 0 else "❌"
+                    avail_lines.append(f"{status_icon} {p.get('icon_emoji','📺')} <b>{p.get('name','')}</b>: {m} mensual | {e} express")
+                response = "\n".join(avail_lines)
 
             await update.message.reply_text(
-                response,
-                parse_mode="HTML",
+                response, parse_mode="HTML",
                 reply_markup=platforms_keyboard(availability, plan_type_hint or "monthly"),
             )
             bot_reply = f"Disponibilidad mostrada{' de ' + platform if platform else ''}."
-        except Exception as e:
-            logger.error(f"availability handler error: {e}")
+
+        elif intent in ("renewal", "cancel") and confidence != "baja":
             await update.message.reply_text(
-                "Hubo un error al consultar disponibilidad. Intenta de nuevo.",
-                reply_markup=main_menu_keyboard(),
+                "📋 Aquí puedes ver y renovar tus servicios activos:",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📋 Ver mis servicios", callback_data="menu:my_services")
+                ]]),
             )
-            bot_reply = "Error disponibilidad."
+            bot_reply = "Menú servicios mostrado."
 
-    elif intent in ("renewal", "cancel") and confidence != "baja":
-        await update.message.reply_text(
-            "📋 Aquí puedes ver y renovar tus servicios activos:",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 Ver mis servicios", callback_data="menu:my_services")
-            ]]),
-        )
-        bot_reply = "Menú de servicios mostrado."
+        else:
+            system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
+            response = await _chat_response(system_prompt, conversation, text)
+            try:
+                await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
+            except Exception:
+                await update.message.reply_text(response, reply_markup=main_menu_keyboard())
+            bot_reply = response
 
-    else:
-        # Conversational response
-        system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
-        response = await _chat_response(system_prompt, conversation, text)
+    except Exception as e:
+        logger.error(f"handle_free_text routing error [{telegram_id}] intent={intent}: {e}", exc_info=True)
         try:
             await update.message.reply_text(
-                response,
-                parse_mode="HTML",
+                "Disculpa, tuve un problema procesando tu mensaje. ¿En qué te puedo ayudar?",
                 reply_markup=main_menu_keyboard(),
             )
         except Exception:
-            # HTML parsing failed — send as plain text
-            await update.message.reply_text(response, reply_markup=main_menu_keyboard())
-        bot_reply = response
+            pass
 
-    # Store bot response in conversation history
     if bot_reply:
         store_conversation_message(telegram_id, "assistant", bot_reply)
