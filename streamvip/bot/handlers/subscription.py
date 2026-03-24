@@ -225,6 +225,9 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.message or not update.effective_user:
         return
 
+    import hashlib
+    import html as _html
+
     telegram_id = update.effective_user.id
 
     try:
@@ -241,10 +244,12 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         price_bs = float(price_bs_str)
         price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
 
-        # Download photo
+        # Download photo — also grab the real HTTPS URL for dashboard
         photo = update.message.photo[-1]
         photo_file = await photo.get_file()
         image_bytes = await photo_file.download_as_bytearray()
+        # file_path in PTB v20 is the full Telegram CDN URL
+        payment_image_url = photo_file.file_path or f"tg://photo/{photo.file_id}"
 
         # Immediately acknowledge to client — no matter what happens next
         await update.message.reply_text(
@@ -254,11 +259,8 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
         # ── Anti-fraud: duplicate image check (fast, no LLM needed) ──────
-        import hashlib
         img_hash = hashlib.sha256(bytes(image_bytes)).hexdigest()
-        from database.subscriptions import check_payment_reference_exists
         try:
-            from bot.middleware import get_user_data as _gd, set_user_data as _sd
             from services.payment_service import _check_image_hash_duplicate, _store_image_hash
             if await _check_image_hash_duplicate(img_hash):
                 await update.message.reply_text(
@@ -283,7 +285,6 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         reference = ocr.get("referencia") or "N/A"
 
         # ── Save proof to DB ─────────────────────────────────────────────
-        payment_image_url = f"tg://photo/{photo.file_id}"
         from database.subscriptions import save_payment_proof
         await save_payment_proof(sub_id, reference, payment_image_url)
 
@@ -298,8 +299,9 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         user = await get_user_by_telegram_id(telegram_id)
         platform = await get_platform_by_id(platform_id)
         plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
-        client_name = (user or {}).get("name", "") if user else str(telegram_id)
-        platform_name = (platform or {}).get("name", "?")
+        # Escape HTML to prevent Telegram parse errors when names contain special chars
+        client_name = _html.escape((user or {}).get("name", "") or str(telegram_id))
+        platform_name = _html.escape((platform or {}).get("name", "?"))
 
         # ── Build admin ticket ───────────────────────────────────────────
         from services.notification_service import send_to_admin
@@ -308,7 +310,7 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         if ocr_available:
             def _v(key: str, default: str = "—") -> str:
                 val = ocr.get(key)
-                return str(val).strip() if val else default
+                return _html.escape(str(val).strip()) if val else default
 
             hora_str = f" {_v('hora', '')}" if ocr.get("hora") else ""
             ocr_section = (
@@ -326,8 +328,8 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             reference = ocr.get("referencia") or reference
         else:
             ocr_section = (
-                f"📋 <b>COMPROBANTE RECIBIDO</b>\n\n"
-                f"⚠️ OCR no disponible — revisar imagen manualmente."
+                "📋 <b>COMPROBANTE RECIBIDO</b>\n\n"
+                "⚠️ OCR no disponible — revisar imagen manualmente."
             )
 
         admin_ticket = (
@@ -335,11 +337,13 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             f"👤 <b>Cliente:</b> {client_name} (<code>{telegram_id}</code>)\n"
             f"📺 <b>Servicio:</b> {platform_name} — {plan_label}\n"
             f"💵 <b>Monto esperado:</b> ${price_usd:.2f} USD / Bs {price_bs:,.2f}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{ocr_section}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"¿Apruebas o rechazas este pago?"
         )
+
+        # Send image first so admin can see the comprobante
+        await send_to_admin("📎 Comprobante adjunto:", photo_bytes=bytes(image_bytes))
+        # Then send ticket with Approve/Reject buttons
         await send_to_admin(admin_ticket, keyboard=pending_payment_keyboard(sub_id))
 
         # Clear state

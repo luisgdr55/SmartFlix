@@ -683,6 +683,25 @@ async def cmd_testllm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"❌ Error LLM: <code>{e}</code>", parse_mode="HTML")
 
 
+async def cmd_testnotif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a test notification to all admin IDs to verify the notification pipeline."""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    await update.message.reply_text("⏳ Enviando notificación de prueba...")
+    try:
+        from services.notification_service import send_to_admin
+        await send_to_admin(
+            "🧪 <b>Test de notificación</b>\n\nSi ves este mensaje, el sistema de notificaciones funciona correctamente. ✅"
+        )
+        await update.message.reply_text("✅ Notificación enviada. Verifica que la recibiste.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al enviar notificación: <code>{e}</code>", parse_mode="HTML")
+
+
 async def _show_clients_list_callback(query, page: int = 1) -> None:
     """Edit-message version of client list for callbacks."""
     data = await get_clients_list(page=page, per_page=10)
@@ -851,12 +870,22 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
             await query.edit_message_text("Suscripción no encontrada.")
             return
 
-        from database.subscriptions import delete_subscription
+        from database.subscriptions import delete_subscription, get_user_active_subscriptions
         await delete_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
+        # Delete the user record too if they have no other subscriptions
+        sub_user = sub.get("users") or {}
+        sub_user_id = sub.get("user_id")
+        if sub_user_id:
+            remaining = await get_user_active_subscriptions(str(sub_user_id))
+            if not remaining:
+                from database.users import delete_user
+                await delete_user(str(sub_user_id))
+                logger.info(f"Deleted user {sub_user_id} after payment rejection (no remaining subscriptions)")
+
         # Notify user — invite to restart
-        user = sub.get("users") or {}
+        user = sub_user
         user_tid = user.get("telegram_id")
         platform = sub.get("platforms") or {}
         platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
