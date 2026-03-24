@@ -44,10 +44,9 @@ def platforms_keyboard(platforms_with_stock: list[dict], plan_type: str) -> Inli
 def confirm_order_keyboard(platform_id: str, plan_type: str) -> InlineKeyboardMarkup:
     """Confirm or cancel an order."""
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Confirmar pedido", callback_data=f"confirm:{plan_type}:{platform_id}"),
-            InlineKeyboardButton("❌ Cambiar", callback_data=f"menu:{plan_type if plan_type != 'monthly' else 'subscribe'}"),
-        ],
+        [InlineKeyboardButton("✅ Pagar ahora", callback_data=f"confirm:{plan_type}:{platform_id}")],
+        [InlineKeyboardButton("🛒 Agregar al carrito y seguir", callback_data=f"cart:add:{plan_type}:{platform_id}")],
+        [InlineKeyboardButton("🔙 Cambiar plataforma", callback_data=f"menu:{plan_type if plan_type != 'monthly' else 'subscribe'}")],
     ])
 
 

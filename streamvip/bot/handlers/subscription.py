@@ -397,6 +397,78 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
 
 
+async def handle_cart_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add current platform selection to cart, then show cart."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+
+    telegram_id = update.effective_user.id
+
+    try:
+        # callback: cart:add:{plan_type}:{platform_id}
+        parts = (query.data or "").split(":")
+        plan_type = parts[2] if len(parts) > 2 else "monthly"
+        platform_id = parts[3] if len(parts) > 3 else None
+
+        if not platform_id:
+            await query.edit_message_text("Error: plataforma no identificada.", reply_markup=main_menu_keyboard())
+            return
+
+        platform = await get_platform_by_id(platform_id)
+        if not platform:
+            await query.edit_message_text("Plataforma no encontrada.", reply_markup=main_menu_keyboard())
+            return
+
+        # Get price from Redis (already stored by handle_platform_selected), or recalculate
+        price_usd_str = get_user_data(telegram_id, "price_usd")
+        price_bs_str = get_user_data(telegram_id, "price_bs")
+        rate_str = get_user_data(telegram_id, "rate_used")
+
+        if price_usd_str and price_bs_str:
+            price_usd = float(price_usd_str)
+            price_bs = float(price_bs_str)
+            rate_used = float(rate_str or "36")
+        else:
+            price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd"}.get(plan_type, "monthly_price_usd")
+            price_usd = float(platform.get(price_field) or 0)
+            rate_obj = await get_current_rate()
+            rate_used = float((rate_obj or {}).get("usd_binance") or 36.0)
+            price_bs = round(price_usd * rate_used, 2)
+
+        from services.cart_service import add_to_cart, get_cart
+        from bot.keyboards import cart_keyboard
+
+        item = {
+            "platform_id": platform_id,
+            "name": platform.get("name", "?"),
+            "emoji": platform.get("icon_emoji") or "📺",
+            "plan_type": plan_type,
+            "price_usd": price_usd,
+            "price_bs": price_bs,
+            "rate_used": rate_used,
+        }
+        cart = add_to_cart(telegram_id, item)
+
+        total_usd = sum(float(i.get("price_usd") or 0) for i in cart)
+        total_bs = sum(float(i.get("price_bs") or 0) for i in cart)
+
+        plan_labels = {"monthly": "Mensual", "express": "Express 24h"}
+        lines = ["🛒 <b>Carrito actualizado:</b>\n"]
+        for i in cart:
+            pl = plan_labels.get(i.get("plan_type", "monthly"), i.get("plan_type", ""))
+            lines.append(f"{i.get('emoji','📺')} <b>{i.get('name','?')}</b> — {pl}: ${float(i.get('price_usd',0)):.2f} / Bs {float(i.get('price_bs',0)):,.0f}")
+        lines.append(f"\n<b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+        lines.append("\n¿Agregar otro servicio o confirmar pedido?")
+
+        await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
+
+    except Exception as e:
+        logger.error(f"handle_cart_add error: {e}", exc_info=True)
+        await query.edit_message_text("Error al agregar al carrito.", reply_markup=main_menu_keyboard())
+
+
 async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Create pending_payment subscriptions for all cart items and show payment instructions."""
     query = update.callback_query

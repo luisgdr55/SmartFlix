@@ -119,16 +119,19 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))
 
     # Shopping cart callbacks
-    from bot.handlers.subscription import handle_cart_confirm, handle_cart_clear
+    from bot.handlers.subscription import handle_cart_confirm, handle_cart_clear, handle_cart_add
 
     async def _handle_cart_callback(update, context):
         query = update.callback_query
         if not query:
             return
-        if query.data == "cart:confirm":
+        data = query.data or ""
+        if data == "cart:confirm":
             await handle_cart_confirm(update, context)
-        elif query.data == "cart:clear":
+        elif data == "cart:clear":
             await handle_cart_clear(update, context)
+        elif data.startswith("cart:add:"):
+            await handle_cart_add(update, context)
 
     app.add_handler(CallbackQueryHandler(_handle_cart_callback, pattern="^cart:"))
 
