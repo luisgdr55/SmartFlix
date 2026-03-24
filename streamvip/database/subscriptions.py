@@ -352,19 +352,50 @@ async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
         return None
 
 
-async def get_expired_subscriptions(limit: int = 30) -> list[dict]:
-    """Get subscriptions with status='expired' ordered by end_date desc."""
+async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
+    """
+    Get subscriptions that are effectively expired:
+      - status = 'expired'
+      - status = 'active' but end_date is in the past
+    Results ordered by end_date desc.
+    """
     try:
         sb = get_supabase()
-        result = (
+        now = venezuela_now()
+        fields = "id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)"
+
+        # Query 1: explicit expired status
+        r1 = (
             sb.table("subscriptions")
-            .select("id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)")
+            .select(fields)
             .eq("status", "expired")
             .order("end_date", desc=True)
             .limit(limit)
             .execute()
         )
-        return result.data or []
+
+        # Query 2: active subs whose end_date is already past
+        r2 = (
+            sb.table("subscriptions")
+            .select(fields)
+            .eq("status", "active")
+            .lte("end_date", now.isoformat())
+            .order("end_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+
+        # Merge, deduplicate by id
+        seen_ids: set = set()
+        merged = []
+        for row in (r1.data or []) + (r2.data or []):
+            if row["id"] not in seen_ids:
+                seen_ids.add(row["id"])
+                merged.append(row)
+
+        # Sort by end_date descending
+        merged.sort(key=lambda x: x.get("end_date") or "", reverse=True)
+        return merged[:limit]
     except Exception as e:
         logger.error(f"Error in get_expired_subscriptions: {e}")
         return []
