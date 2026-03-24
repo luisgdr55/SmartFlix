@@ -347,6 +347,72 @@ async def _lookup_platforms_from_items(items_raw: list[dict]) -> tuple[list[dict
     return cart_items, not_found
 
 
+async def _handle_multi_order(update, telegram_id: int, text: str, intent_data: dict, plan_type_hint) -> str:
+    """Handle multi-platform cart order. Isolated for easy debugging."""
+    from services.gemini_service import extract_order_items
+    from services.cart_service import save_cart
+    from bot.keyboards import cart_keyboard
+
+    # Step 1: extract order items (LLM, may fail)
+    items_raw: list[dict] = []
+    try:
+        items_raw = await extract_order_items(text)
+        logger.info(f"multi_order extract_order_items result: {items_raw}")
+    except Exception as e:
+        logger.warning(f"multi_order extract_order_items failed: {e}")
+
+    # Step 2: fallback to keyword-detected platforms
+    if not items_raw:
+        platforms_list = intent_data.get("platforms") or []
+        items_raw = [
+            {"platform": p, "plan_type": plan_type_hint or "monthly"}
+            for p in platforms_list if p
+        ]
+        logger.info(f"multi_order keyword fallback items: {items_raw}")
+
+    if not items_raw:
+        await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
+        return "Menú mostrado."
+
+    # Step 3: lookup platforms in DB
+    logger.info(f"multi_order calling _lookup_platforms_from_items with: {items_raw}")
+    cart_items, not_found = await _lookup_platforms_from_items(items_raw)
+    logger.info(f"multi_order lookup result: cart={cart_items} not_found={not_found}")
+
+    if not cart_items:
+        await update.message.reply_text(
+            "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
+            reply_markup=main_menu_keyboard(),
+        )
+        return "Plataformas no encontradas."
+
+    # Step 4: save cart and show
+    save_cart(telegram_id, cart_items)
+    total_usd = sum(i["price_usd"] for i in cart_items)
+    total_bs = sum(i["price_bs"] for i in cart_items)
+    lines = ["🛒 <b>Tu carrito:</b>\n"]
+    for item in cart_items:
+        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
+        lines.append(
+            f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: "
+            f"${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}"
+        )
+    lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+    if not_found:
+        lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
+    except Exception as e:
+        logger.error(f"multi_order reply_text error: {e}")
+        # HTML parse error — strip tags and retry
+        import re
+        plain = re.sub(r"<[^>]+>", "", "\n".join(lines))
+        await update.message.reply_text(plain, reply_markup=cart_keyboard())
+
+    return f"Carrito con {len(cart_items)} servicios."
+
+
 # ─────────────────────────────────────────────────────────────────
 # MAIN HANDLER
 # ─────────────────────────────────────────────────────────────────
@@ -468,46 +534,9 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         # ── multi_order ───────────────────────────────────────────
         elif intent == "multi_order" and confidence != "baja":
-            from services.gemini_service import extract_order_items
-            from services.cart_service import save_cart
-            from bot.keyboards import cart_keyboard
-
-            # Try LLM extraction for per-platform plan types
-            items_raw = await extract_order_items(text)
-
-            # Fallback: use detected platforms list (all same plan)
-            if not items_raw:
-                platforms_list = intent_data.get("platforms") or []
-                items_raw = [
-                    {"platform": p, "plan_type": plan_type_hint or "monthly"}
-                    for p in platforms_list if p
-                ]
-
-            if not items_raw:
-                await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
-                bot_reply = "Menú mostrado."
-            else:
-                cart_items, not_found = await _lookup_platforms_from_items(items_raw)
-
-                if not cart_items:
-                    await update.message.reply_text(
-                        "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
-                        reply_markup=main_menu_keyboard(),
-                    )
-                    bot_reply = "Plataformas no encontradas."
-                else:
-                    save_cart(telegram_id, cart_items)
-                    total_usd = sum(i["price_usd"] for i in cart_items)
-                    total_bs = sum(i["price_bs"] for i in cart_items)
-                    lines = ["🛒 <b>Tu carrito:</b>\n"]
-                    for item in cart_items:
-                        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
-                        lines.append(f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
-                    lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
-                    if not_found:
-                        lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
-                    await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
-                    bot_reply = f"Carrito con {len(cart_items)} servicios."
+            bot_reply = await _handle_multi_order(
+                update, telegram_id, text, intent_data, plan_type_hint
+            )
 
         # ── credentials ───────────────────────────────────────────
         elif intent == "credentials" and confidence != "baja":
@@ -633,14 +662,19 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except Exception as e:
         logger.error(f"handle_free_text error [{telegram_id}] intent={intent}: {e}", exc_info=True)
         try:
-            system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
-            response = await _chat_response(system_prompt, conversation, text)
-            try:
-                await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
-            except Exception:
-                await update.message.reply_text(response, reply_markup=main_menu_keyboard())
-            bot_reply = response
-        except Exception:
+            if intent == "multi_order":
+                # Retry multi_order with minimal path (no LLM extraction)
+                bot_reply = await _handle_multi_order(update, telegram_id, text, intent_data, plan_type_hint)
+            else:
+                system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
+                response = await _chat_response(system_prompt, conversation, text)
+                try:
+                    await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
+                except Exception:
+                    await update.message.reply_text(response, reply_markup=main_menu_keyboard())
+                bot_reply = response
+        except Exception as e2:
+            logger.error(f"handle_free_text fallback error: {e2}", exc_info=True)
             await update.message.reply_text(
                 "Disculpa, tuve un problema. ¿En qué te puedo ayudar?",
                 reply_markup=main_menu_keyboard(),
