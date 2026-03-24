@@ -355,47 +355,54 @@ async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
 async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
     """
     Get subscriptions that are effectively expired:
-      - status = 'expired'
-      - status = 'active' but end_date is in the past
-    Results ordered by end_date desc.
+      - status = 'expired' or 'expired_payment'
+      - status = 'active' but end_date is already in the past
+    Fetches broadly (excludes only pending_payment/cancelled) and filters in
+    Python to avoid timezone comparison issues with Supabase timestamptz.
     """
     try:
         sb = get_supabase()
         now = venezuela_now()
         fields = "id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)"
 
-        # Query 1: explicit expired status
-        r1 = (
+        # Fetch all non-pending, non-cancelled subscriptions (includes expired_payment)
+        result = (
             sb.table("subscriptions")
             .select(fields)
-            .eq("status", "expired")
+            .not_.in_("status", ["pending_payment", "cancelled"])
             .order("end_date", desc=True)
-            .limit(limit)
+            .limit(300)
             .execute()
         )
 
-        # Query 2: active subs whose end_date is already past
-        r2 = (
-            sb.table("subscriptions")
-            .select(fields)
-            .eq("status", "active")
-            .lte("end_date", now.isoformat())
-            .order("end_date", desc=True)
-            .limit(limit)
-            .execute()
-        )
+        rows = result.data or []
+        logger.info(f"get_expired_subscriptions raw rows: {len(rows)}")
 
-        # Merge, deduplicate by id
-        seen_ids: set = set()
-        merged = []
-        for row in (r1.data or []) + (r2.data or []):
-            if row["id"] not in seen_ids:
-                seen_ids.add(row["id"])
-                merged.append(row)
+        expired = []
+        for row in rows:
+            status = row.get("status")
+            # Definitively expired statuses
+            if status in ("expired", "expired_payment"):
+                expired.append(row)
+                continue
+            # 'active' but end_date already past → also expired
+            if status == "active":
+                end_raw = row.get("end_date")
+                if not end_raw:
+                    continue
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt.tzinfo is None:
+                        import pytz
+                        end_dt = pytz.utc.localize(end_dt)
+                    if end_dt < now:
+                        expired.append(row)
+                except Exception:
+                    pass
 
-        # Sort by end_date descending
-        merged.sort(key=lambda x: x.get("end_date") or "", reverse=True)
-        return merged[:limit]
+        logger.info(f"get_expired_subscriptions filtered expired: {len(expired)}")
+        expired.sort(key=lambda x: x.get("end_date") or "", reverse=True)
+        return expired[:limit]
     except Exception as e:
         logger.error(f"Error in get_expired_subscriptions: {e}")
         return []
