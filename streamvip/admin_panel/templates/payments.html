@@ -98,7 +98,13 @@
         <!-- Approve form -->
         {% set pid = sub.get('platform_id','') %}
         {% set profiles = profiles_map.get(pid, []) %}
+        {% set is_renewal = renewal_map.get(sub['id'], False) %}
         <form action="/panel/payments/{{ sub['id'] }}/approve" method="POST" class="space-y-3">
+          {% if is_renewal %}
+          <div class="bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs text-indigo-300">
+            🔄 <b>Renovación</b> — el cliente ya tiene perfil asignado. Se extenderá la fecha de corte automáticamente.
+          </div>
+          {% else %}
           <div>
             <label class="form-label text-xs">Asignar perfil *</label>
             <select name="profile_id" required class="form-input text-sm py-2">
@@ -108,15 +114,15 @@
               {% endfor %}
             </select>
           </div>
+          {% endif %}
           <div>
             <label class="form-label text-xs">Referencia de pago</label>
             <input type="text" name="payment_reference" placeholder="Ref. o nota" value="PANEL-APROBADO" class="form-input text-sm py-2" />
           </div>
           <div class="flex gap-2 pt-1">
             <button type="submit" class="btn-success flex-1 justify-center text-sm py-2.5">
-              ✅ Aprobar
+              ✅ {% if is_renewal %}Aprobar Renovación{% else %}Aprobar{% endif %}
             </button>
-            <!-- Reject inline -->
             <button type="button"
               @click="rejectSub('{{ sub['id'] }}')"
               class="btn-danger flex-1 justify-center text-sm py-2.5">

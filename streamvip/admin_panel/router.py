@@ -1074,16 +1074,27 @@ async def payments_list(request: Request):
             .execute()
         )
         expired = expired_res.data or []
+        # Detect renewals: check if each pending sub's user already has a profile for that platform
+        from database.subscriptions import get_user_platform_active_subscription
+        renewal_map: dict = {}
+        for sub in pending:
+            uid = str(sub.get("user_id", ""))
+            pid = str(sub.get("platform_id", ""))
+            if uid and pid:
+                existing = await get_user_platform_active_subscription(uid, pid)
+                renewal_map[sub["id"]] = bool(existing and existing.get("profile_id"))
     except Exception as e:
         logger.error(f"Payments list error: {e}")
         pending = []
         profiles_map = {}
         expired = []
+        renewal_map = {}
     return templates.TemplateResponse("payments.html", {
         "request": request,
         "page": "payments",
         "pending": pending,
         "profiles_map": profiles_map,
+        "renewal_map": renewal_map,
         "expired": expired,
         "success": request.query_params.get("success"),
         "error": request.query_params.get("error"),
@@ -1094,48 +1105,97 @@ async def payments_list(request: Request):
 async def payment_approve(
     request: Request,
     sub_id: str,
-    profile_id: str = Form(...),
+    profile_id: str = Form(default=""),
     payment_reference: str = Form(default="PANEL-MANUAL"),
 ):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
-        from database.subscriptions import confirm_subscription, get_subscription_by_id
+        from database.subscriptions import (
+            confirm_subscription, get_subscription_by_id,
+            get_user_platform_active_subscription, confirm_renewal_subscription,
+        )
         from database.profiles import assign_profile
+        from database.users import increment_user_purchases
+        from services.notification_service import send_to_user
+        from utils.helpers import venezuela_now, format_datetime_vzla
+        from datetime import datetime, timedelta
+
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             return RedirectResponse(url="/panel/payments?error=Suscripcion+no+encontrada", status_code=302)
+
+        user_id = str(sub.get("user_id", ""))
+        platform_id = str(sub.get("platform_id", ""))
+        plan_type = sub.get("plan_type", "monthly")
+        user = sub.get("users") or {}
+        platform = sub.get("platforms") or {}
+        telegram_id = user.get("telegram_id")
+        platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
+        durations = {"monthly": 30, "express": 1, "week": 7}
+        duration_days = durations.get(plan_type, 30)
+
+        # ── RENEWAL CHECK ──────────────────────────────────────────────
+        existing_sub = await get_user_platform_active_subscription(user_id, platform_id)
+        if existing_sub and existing_sub.get("profile_id"):
+            existing_profile_id = str(existing_sub["profile_id"])
+            profile_data = existing_sub.get("profiles") or {}
+
+            now = venezuela_now()
+            existing_end_str = (existing_sub.get("end_date") or "")[:10]
+            today_str = now.strftime("%Y-%m-%d")
+            if existing_end_str > today_str:
+                try:
+                    base = datetime.fromisoformat(existing_sub["end_date"].replace("Z", "+00:00"))
+                    base = base.replace(tzinfo=now.tzinfo)
+                except Exception:
+                    base = now
+            else:
+                base = now
+            new_end_date = base + timedelta(days=duration_days)
+
+            ok = await confirm_renewal_subscription(sub_id, existing_profile_id, payment_reference, new_end_date)
+            if ok:
+                if telegram_id:
+                    await increment_user_purchases(telegram_id)
+                    try:
+                        renewal_msg = (
+                            f"✅ <b>¡Renovación confirmada!</b>\n\n"
+                            f"Tu suscripción de <b>{platform_label}</b> ha sido renovada.\n\n"
+                            f"👤 Perfil: <b>{profile_data.get('profile_name', '')}</b>\n"
+                            f"📅 Nueva fecha de corte: <b>{format_datetime_vzla(new_end_date)}</b>\n\n"
+                            f"¡Gracias por tu preferencia! 🙌 Disfruta el streaming. 🎬"
+                        )
+                        await send_to_user(telegram_id, renewal_msg)
+                    except Exception as notify_err:
+                        logger.warning(f"Could not notify renewal: {notify_err}")
+                return RedirectResponse(url="/panel/payments?success=Renovacion+aprobada+y+cliente+notificado", status_code=302)
+            return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+renovacion", status_code=302)
+
+        # ── NEW SUBSCRIPTION PATH ──────────────────────────────────────
+        if not profile_id:
+            return RedirectResponse(url="/panel/payments?error=Selecciona+un+perfil+para+nueva+suscripcion", status_code=302)
+
         image_url = sub.get("payment_image_url") or ""
         ok = await confirm_subscription(sub_id, profile_id, payment_reference, image_url)
         if ok:
             await assign_profile(profile_id)
-            # Increment purchase counter
+            if telegram_id:
+                await increment_user_purchases(telegram_id)
             try:
-                from database.users import increment_user_purchases
-                user_tg = (sub.get("users") or {}).get("telegram_id")
-                if user_tg:
-                    await increment_user_purchases(user_tg)
-            except Exception as inc_err:
-                logger.warning(f"Could not increment purchases: {inc_err}")
-            # Notify user via Telegram
-            try:
-                user = sub.get("users") or {}
-                platform = sub.get("platforms") or {}
-                telegram_id = user.get("telegram_id")
+                from database import get_supabase
+                sb = get_supabase()
+                profile_res = sb.table("profiles").select("profile_name, pin").eq("id", profile_id).execute()
+                profile_data = profile_res.data[0] if profile_res.data else {}
+                msg = (
+                    f"✅ <b>¡Pago aprobado!</b>\n\n"
+                    f"Tu suscripción de <b>{platform_label}</b> ha sido activada.\n\n"
+                    f"📱 <b>Perfil:</b> {profile_data.get('profile_name','')}\n"
+                    f"🔑 <b>PIN:</b> {profile_data.get('pin') or 'Sin PIN'}\n\n"
+                    f"¡Disfruta tu servicio! 🎬"
+                )
                 if telegram_id:
-                    from database import get_supabase
-                    sb = get_supabase()
-                    profile_res = sb.table("profiles").select("profile_name, pin").eq("id", profile_id).execute()
-                    profile_data = profile_res.data[0] if profile_res.data else {}
-                    from services.notification_service import send_to_user
-                    msg = (
-                        f"✅ <b>¡Pago aprobado!</b>\n\n"
-                        f"Tu suscripción de <b>{platform.get('icon_emoji','')} {platform.get('name','')}</b> ha sido activada.\n\n"
-                        f"📱 <b>Perfil:</b> {profile_data.get('profile_name','')}\n"
-                        f"🔑 <b>PIN:</b> {profile_data.get('pin') or 'Sin PIN'}\n\n"
-                        f"¡Disfruta tu servicio!"
-                    )
                     await send_to_user(telegram_id, msg)
             except Exception as notify_err:
                 logger.warning(f"Could not notify user after approve: {notify_err}")

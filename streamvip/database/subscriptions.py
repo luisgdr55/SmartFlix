@@ -59,6 +59,50 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
         return []
 
 
+async def get_user_platform_active_subscription(user_id: str, platform_id: str) -> Optional[dict]:
+    """Find the most recent active/expired subscription for user+platform that has a profile assigned.
+    Used to detect renewals at approval time."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("*, profiles(id, profile_name, pin, account_id)")
+            .eq("user_id", user_id)
+            .eq("platform_id", platform_id)
+            .in_("status", ["active", "expired"])
+            .not_.is_("profile_id", "null")
+            .order("end_date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error in get_user_platform_active_subscription: {e}")
+        return None
+
+
+async def confirm_renewal_subscription(
+    sub_id: str,
+    profile_id: str,
+    payment_reference: str,
+    new_end_date: datetime,
+) -> bool:
+    """Confirm a renewal: mark as active with the existing profile and a new end_date."""
+    try:
+        sb = get_supabase()
+        sb.table("subscriptions").update({
+            "status": "active",
+            "profile_id": profile_id,
+            "payment_reference": payment_reference,
+            "payment_confirmed_at": venezuela_now().isoformat(),
+            "end_date": new_end_date.isoformat(),
+        }).eq("id", sub_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in confirm_renewal_subscription: {e}")
+        return False
+
+
 async def get_user_attention_subscriptions(user_id: str) -> dict:
     """Return subs that need user attention: unpaid debt or expired/vencidas.
     Covers all statuses (pending_payment, expired_payment, active-past-end, expired).

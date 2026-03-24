@@ -774,7 +774,16 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
     sub_id = parts[2]
 
     try:
-        from database.subscriptions import get_subscription_by_id
+        from database.subscriptions import (
+            get_subscription_by_id, get_user_platform_active_subscription,
+            confirm_renewal_subscription,
+        )
+        from database.users import increment_user_purchases
+        from database.platforms import get_platform_by_id
+        from services.notification_service import send_to_user
+        from utils.helpers import format_datetime_vzla, venezuela_now
+        from datetime import datetime, timedelta
+
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             await query.edit_message_text("Suscripción no encontrada.")
@@ -782,7 +791,56 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         platform_id = str(sub.get("platform_id", ""))
         plan_type = sub.get("plan_type", "monthly")
+        user = sub.get("users") or {}
+        user_tid = user.get("telegram_id")
+        user_id = str(sub.get("user_id", ""))
+        durations = {"monthly": 30, "express": 1, "week": 7}
+        duration_days = durations.get(plan_type, 30)
 
+        platform = await get_platform_by_id(platform_id)
+        platform_label = f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}"
+
+        # ── RENEWAL CHECK ──────────────────────────────────────────────
+        existing_sub = await get_user_platform_active_subscription(user_id, platform_id)
+        if existing_sub and existing_sub.get("profile_id"):
+            profile_id = str(existing_sub["profile_id"])
+            profile = existing_sub.get("profiles") or {}
+
+            # New end_date: extend from current end_date (if future) or from now
+            now = venezuela_now()
+            existing_end_str = (existing_sub.get("end_date") or "")[:10]
+            today_str = now.strftime("%Y-%m-%d")
+            if existing_end_str > today_str:
+                try:
+                    base = datetime.fromisoformat(existing_sub["end_date"].replace("Z", "+00:00"))
+                    base = base.replace(tzinfo=now.tzinfo)
+                except Exception:
+                    base = now
+            else:
+                base = now
+            new_end_date = base + timedelta(days=duration_days)
+
+            await confirm_renewal_subscription(sub_id, profile_id, "MANUAL-ADMIN", new_end_date)
+            await log_admin_action(telegram_id, "approve_renewal", {"sub_id": sub_id})
+
+            if user_tid:
+                await increment_user_purchases(user_tid)
+                renewal_msg = (
+                    f"✅ <b>¡Renovación confirmada!</b>\n\n"
+                    f"Tu suscripción de <b>{platform_label}</b> ha sido renovada.\n\n"
+                    f"👤 Perfil: <b>{profile.get('profile_name', '')}</b>\n"
+                    f"📅 Nueva fecha de corte: <b>{format_datetime_vzla(new_end_date)}</b>\n\n"
+                    f"¡Gracias por tu preferencia! 🙌 Disfruta el streaming. 🎬"
+                )
+                await send_to_user(user_tid, renewal_msg)
+
+            await query.edit_message_text(
+                f"✅ Renovación #{short_id(sub_id)} aprobada.\n"
+                f"Nueva fecha de corte: {format_datetime_vzla(new_end_date)}"
+            )
+            return
+
+        # ── NEW SUBSCRIPTION PATH ──────────────────────────────────────
         profiles = await get_available_profiles(platform_id, plan_type)
         if not profiles:
             await query.edit_message_text(
@@ -796,32 +854,18 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         await confirm_subscription(sub_id, profile_id, "MANUAL-ADMIN", "manual_approval")
         await assign_profile(profile_id)
-
         await log_admin_action(telegram_id, "approve_payment", {"sub_id": sub_id})
 
-        # Increment purchase counter
-        user = sub.get("users") or {}
-        user_tid = user.get("telegram_id")
         if user_tid:
-            from database.users import increment_user_purchases
             await increment_user_purchases(user_tid)
 
-        # Notify user
         if user_tid:
-            from services.notification_service import send_to_user
-            from database.platforms import get_platform_by_id
             from database.accounts import get_account_by_id
-
-            platform = await get_platform_by_id(platform_id)
-            account = await get_account_by_id(str(profile.get("account_id", "")))
-
             from bot.messages import ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE, PAYMENT_CONFIRMED
-            from utils.helpers import format_datetime_vzla, venezuela_now
-            from datetime import timedelta
 
+            account = await get_account_by_id(str(profile.get("account_id", "")))
             now = venezuela_now()
-            durations = {"monthly": 30, "express": 1, "week": 7}
-            end_date = now + timedelta(days=durations.get(plan_type, 30))
+            end_date = now + timedelta(days=duration_days)
 
             pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
             platform_slug = (platform or {}).get("slug", "netflix")
@@ -829,7 +873,7 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
             instructions = instructions_tpl.format(profile_name=profile.get("profile_name", ""))
 
             access_text = ACCESS_DELIVERED.format(
-                platform=f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}",
+                platform=platform_label,
                 profile_name=profile.get("profile_name", ""),
                 email=(account or {}).get("email", ""),
                 password=(account or {}).get("password", ""),
@@ -837,7 +881,7 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
                 instructions=instructions,
             )
             confirmed_text = PAYMENT_CONFIRMED.format(
-                platform=f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}",
+                platform=platform_label,
                 start_date=format_datetime_vzla(now),
                 end_date=format_datetime_vzla(end_date),
                 reference=sub.get("payment_reference") or "N/A",
