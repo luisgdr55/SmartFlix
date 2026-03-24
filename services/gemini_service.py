@@ -21,9 +21,21 @@ MODEL = "google/gemini-2.0-flash-001"
 CONV_TTL = 7200        # 2 horas de contexto en Redis
 MAX_CONV_MESSAGES = 10
 
+_redis_client: redis.Redis | None = None
+
 
 def _get_redis() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=10,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+        )
+    return _redis_client
 
 
 async def _call(
@@ -94,19 +106,22 @@ async def validate_payment_image(image_bytes: bytes) -> dict:
                     "text": (
                         "Analiza esta imagen de comprobante de pago venezolano "
                         "(Pago Móvil o transferencia bancaria). "
-                        "Extrae la información y responde SOLO con JSON válido:\n"
+                        "Extrae TODOS los datos visibles y responde SOLO con JSON válido:\n"
                         "{\n"
                         '  "is_comprobante_valido": true/false,\n'
-                        '  "monto": "número como string, ej: 1250.50",\n'
-                        '  "referencia": "número de referencia",\n'
+                        '  "referencia": "número de referencia o confirmación",\n'
                         '  "fecha": "fecha en formato DD/MM/YYYY",\n'
                         '  "hora": "hora HH:MM si está visible",\n'
-                        '  "banco_origen": "nombre del banco",\n'
-                        '  "banco_destino": "banco destino si aparece",\n'
+                        '  "celular_destino": "número de teléfono destino si aparece",\n'
+                        '  "cedula_receptor": "cédula o RIF del receptor si aparece",\n'
+                        '  "banco_emisor": "banco que realiza el pago",\n'
+                        '  "banco_receptor": "banco que recibe el pago",\n'
+                        '  "monto": "monto en Bs como número, ej: 1250.50",\n'
+                        '  "concepto": "concepto o descripción si aparece",\n'
                         '  "tipo": "pago_movil o transferencia",\n'
                         '  "confianza": "alta/media/baja"\n'
                         "}\n"
-                        "Si no es comprobante válido: is_comprobante_valido=false, demás campos vacíos."
+                        "Si no es comprobante válido: is_comprobante_valido=false, demás campos vacíos o null."
                     ),
                 },
                 {
@@ -232,32 +247,99 @@ async def interpret_user_intent(
     message_text: str,
     conversation_context: list[dict],
 ) -> dict:
-    """Detecta la intención del usuario en un mensaje libre."""
+    """
+    Detecta la intención del usuario por CONTEXTO Y SEMÁNTICA, no por palabras clave.
+    Retorna JSON con intent, platform, platforms, confidence.
+    """
     try:
         context_str = "\n".join(
-            [f"{m['role']}: {m['content']}" for m in conversation_context[-5:]]
+            [f"{m['role']}: {m['content']}" for m in conversation_context[-4:]]
+        ) if conversation_context else "(sin historial)"
+
+        result = await _call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres un clasificador de intenciones para SmartFlixVe, "
+                        "un servicio de streaming. Tu tarea es entender QUÉ QUIERE el usuario "
+                        "basándote en el SIGNIFICADO del mensaje, no en palabras exactas.\n\n"
+                        "Intenciones posibles:\n"
+                        "- subscribe: quiere contratar acceso mensual (~30 días) a una plataforma\n"
+                        "- express: quiere acceso rápido de 24 horas\n"
+                        "- week: quiere acceso por una semana (7 días)\n"
+                        "- multi_order: quiere contratar MÚLTIPLES servicios a la vez (menciona 2 o más plataformas/planes en el mismo mensaje)\n"
+                        "- support: tiene un problema técnico, no le funciona algo, perdió acceso\n"
+                        "- renewal: quiere renovar o preguntar sobre su suscripción actual\n"
+                        "- cancel: quiere cancelar o pausar\n"
+                        "- info: pregunta sobre precios, cómo funciona, qué plataformas hay\n"
+                        "- other: saludo, conversación general, o no relacionado con el servicio\n\n"
+                        "Plataformas reconocibles (pon null si no se menciona ninguna):\n"
+                        "netflix, disney, max, paramount, prime, apple, crunchyroll\n\n"
+                        "IMPORTANTE: Razona por intención. Ejemplos:\n"
+                        "'quiero ver pelis' → subscribe (quiere acceso a streaming)\n"
+                        "'me salió error de contraseña' → support\n"
+                        "'cuánto está la mensualidad' → info\n"
+                        "'se me acabó' → renewal\n"
+                        "'hola' → other\n"
+                        "'quiero netflix y hbomax' → multi_order (dos plataformas)\n\n"
+                        "Para multi_order devuelve platforms como lista: [\"netflix\",\"max\"]. Para otros intents platforms es null.\n\n"
+                        "Responde ÚNICAMENTE con JSON válido, sin explicaciones:\n"
+                        '{"intent":"...","platform":"...o null","platforms":["lista","o",null],"confidence":"alta/media/baja"}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Historial reciente:\n{context_str}\n\n"
+                        f"Mensaje actual: {message_text}"
+                    ),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=120,
         )
+        text = result.replace("```json", "").replace("```", "").strip()
+        data = json.loads(text)
+        # Normalize platform null strings
+        if data.get("platform") in ("null", "none", "", "None"):
+            data["platform"] = None
+        # Normalize platforms field
+        if data.get("platforms") in ("null", "none", "", "None", None):
+            data["platforms"] = None
+        return data
+    except Exception as e:
+        logger.error(f"Error in interpret_user_intent: {e}")
+        return {"intent": "other", "platform": None, "platforms": None, "confidence": "baja"}
+
+
+async def extract_order_items(message_text: str) -> list[dict]:
+    """Extract list of {platform, plan_type} from a message about ordering."""
+    try:
         result = await _call(
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Eres asistente de StreamVip Venezuela (servicio de streaming).\n"
-                    f"Contexto:\n{context_str}\n\n"
-                    f"Nuevo mensaje: {message_text}\n\n"
-                    f"Determina la intención. Responde SOLO con JSON:\n"
-                    '{"intent": "subscribe/express/week/support/renewal/cancel/info/other", '
-                    '"platform": "netflix/disney/max/paramount/prime/null", '
-                    '"confidence": "alta/media/baja", '
-                    '"suggested_response": "respuesta breve en español venezolano"}'
+                    "Eres un extractor de pedidos para SmartFlixVe Venezuela.\n"
+                    "Analiza el mensaje y extrae los servicios de streaming que quiere comprar.\n\n"
+                    "Plataformas: netflix, disney, max, hbomax, paramount, prime, apple, crunchyroll\n"
+                    "(hbomax y max son la misma: usa 'max'. disney+ es 'disney')\n"
+                    "Planes: monthly (mensual, default si no se especifica), express (24h), week (semanal)\n\n"
+                    "Devuelve ÚNICAMENTE JSON array válido:\n"
+                    '[{"platform":"netflix","plan_type":"monthly"},{"platform":"max","plan_type":"monthly"}]\n\n'
+                    "Si no hay servicios claros, devuelve []\n\n"
+                    f"Mensaje: {message_text}"
                 ),
             }],
             temperature=0.1,
+            max_tokens=200,
         )
         text = result.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        data = json.loads(text)
+        return data if isinstance(data, list) else []
     except Exception as e:
-        logger.error(f"Error in interpret_user_intent: {e}")
-        return {"intent": "other", "platform": None, "confidence": "baja", "suggested_response": ""}
+        logger.error(f"Error in extract_order_items: {e}")
+        return []
 
 
 async def generate_troubleshooting_response(

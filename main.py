@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from telegram import Update, Bot
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    filters
+    filters, Defaults
 )
 
 from config import settings
@@ -35,7 +35,7 @@ def build_telegram_app() -> Application:
     """Build and configure the Telegram bot application with all handlers."""
     from bot.handlers.start import start_handler, handle_name_response, handle_contact_shared
     from bot.handlers.menu import show_main_menu
-    from bot.handlers.subscription import show_subscription_platforms, handle_platform_selected, handle_order_confirmed
+    from bot.handlers.subscription import show_subscription_platforms, handle_platform_selected, handle_order_confirmed, handle_cart_confirm, handle_cart_clear
     from bot.handlers.express import show_express_platforms, handle_express_platform_selected, handle_express_confirmed, handle_queue_join
     from bot.handlers.week_pack import show_week_platforms, handle_week_platform_selected, handle_week_confirmed
     from bot.handlers.my_services import show_my_services, handle_service_detail, handle_renewal
@@ -48,12 +48,12 @@ def build_telegram_app() -> Application:
     from bot.handlers.admin import (
         admin_dashboard, cmd_tasa, cmd_tasabcv, cmd_addcuenta, cmd_addexpress,
         cmd_editpin, cmd_clientes, cmd_cliente, cmd_pendientes, cmd_ingresos,
-        cmd_bloquear, cmd_broadcast, cmd_flyer, cmd_promo, cmd_config,
-        handle_admin_callback
+        cmd_bloquear, cmd_broadcast, cmd_flyer, cmd_promo, cmd_config, cmd_testllm,
+        cmd_testnotif, handle_admin_callback
     )
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
 
     # =====================================================
     # COMMAND HANDLERS
@@ -74,6 +74,8 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("flyer", cmd_flyer))
     app.add_handler(CommandHandler("promo", cmd_promo))
     app.add_handler(CommandHandler("config", cmd_config))
+    app.add_handler(CommandHandler("testllm", cmd_testllm))
+    app.add_handler(CommandHandler("testnotif", cmd_testnotif))
     app.add_handler(CommandHandler("precios", cmd_precios))
 
     # =====================================================
@@ -120,6 +122,18 @@ def build_telegram_app() -> Application:
     # Price management callbacks (prices:*)
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))
 
+    # Cart callbacks
+    async def _handle_cart_callback(update, context):
+        query = update.callback_query
+        if not query:
+            return
+        if query.data == "cart:confirm":
+            await handle_cart_confirm(update, context)
+        elif query.data == "cart:clear":
+            await handle_cart_clear(update, context)
+
+    app.add_handler(CallbackQueryHandler(_handle_cart_callback, pattern="^cart:"))
+
     # =====================================================
     # MESSAGE HANDLERS
     # =====================================================
@@ -165,10 +179,12 @@ async def _text_message_router(update: Update, context) -> None:
     elif state and (state.startswith("admin:precios:") or state == "admin:tasa_manual"):
         from bot.handlers._prices_addon import handle_price_text_input
         await handle_price_text_input(update, context, state)
+    elif state and state.startswith("admin:edit_client:"):
+        await _handle_admin_edit_client_flow(update, context, state)
     else:
-        # Default: try to show main menu or interpret intent
-        from bot.handlers.start import start_handler
-        await start_handler(update, context)
+        # AI-powered free-text handler — understands any message by intent
+        from bot.handlers.ai_chat import handle_free_text
+        await handle_free_text(update, context)
 
 
 async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> None:
@@ -251,6 +267,57 @@ async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> N
             await update.message.reply_text("❌ Error al crear la cuenta.")
 
 
+async def _handle_admin_edit_client_flow(update: Update, context, state: str) -> None:
+    """Handle admin edit-client text input (name or phone)."""
+    if not update.message or not update.effective_user:
+        return
+    admin_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    from bot.middleware import clear_user_state
+    from database.users import update_user_name, update_user_phone, log_admin_action
+
+    # state format: admin:edit_client:<field>:<target_telegram_id>
+    parts = state.split(":")
+    if len(parts) < 4:
+        clear_user_state(admin_id)
+        return
+
+    field = parts[2]      # "name" or "phone"
+    target_id = int(parts[3])
+
+    if text.lower() == "/cancelar":
+        clear_user_state(admin_id)
+        await update.message.reply_text("❌ Edición cancelada.")
+        return
+
+    if field == "name":
+        success = await update_user_name(target_id, text)
+        if success:
+            await log_admin_action(admin_id, "edit_client_name", {"target": target_id, "name": text})
+            await update.message.reply_text(
+                f"✅ Nombre actualizado a <b>{text}</b> para el cliente <code>{target_id}</code>.\n\n"
+                f"Usa /cliente {target_id} para ver el perfil.",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("❌ Error al actualizar el nombre.")
+
+    elif field == "phone":
+        success = await update_user_phone(target_id, text)
+        if success:
+            await log_admin_action(admin_id, "edit_client_phone", {"target": target_id, "phone": text})
+            await update.message.reply_text(
+                f"✅ Teléfono actualizado a <b>{text}</b> para el cliente <code>{target_id}</code>.\n\n"
+                f"Usa /cliente {target_id} para ver el perfil.",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("❌ Error al actualizar el teléfono.")
+
+    clear_user_state(admin_id)
+
+
 async def _global_error_handler(update: object, context) -> None:
     """Global error handler - log errors and notify user."""
     logger.error(f"Exception while handling update: {context.error}", exc_info=context.error)
@@ -282,6 +349,11 @@ async def lifespan(app: FastAPI):
         allowed_updates=["message", "callback_query", "inline_query"],
     )
     logger.info(f"Webhook set to: {webhook_url}")
+
+    # Register initialized bot for outbound notifications
+    from services.notification_service import init_notification_bot
+    init_notification_bot(_telegram_app.bot)
+    logger.info("Notification bot initialized")
 
     # Start scheduler
     from scheduler.jobs import setup_scheduler

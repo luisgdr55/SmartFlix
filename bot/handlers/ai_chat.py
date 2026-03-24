@@ -1,0 +1,346 @@
+"""
+AI-powered free-text message handler.
+Uses OpenRouter (Gemini) to understand user intent and route to the correct flow,
+or generate a conversational response when the intent is informational.
+"""
+from __future__ import annotations
+
+import logging
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from telegram.constants import ChatAction
+
+from services.gemini_service import (
+    interpret_user_intent,
+    store_conversation_message,
+    get_conversation_context,
+    _call,
+)
+from bot.keyboards import main_menu_keyboard, platforms_keyboard, support_keyboard
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────
+# PRICES CONTEXT — real prices from DB for LLM
+# ─────────────────────────────────────────────────────────────────
+async def _get_prices_context() -> str:
+    """Fetch real platform prices from DB for LLM context."""
+    try:
+        from database import get_supabase
+        from services.exchange_service import get_current_rate
+        sb = get_supabase()
+        result = sb.table("platforms").select(
+            "name, icon_emoji, monthly_price_usd, express_price_usd, week_price_usd, slug"
+        ).eq("is_active", True).order("name").execute()
+        rate_data = await get_current_rate()
+        rate = float((rate_data or {}).get("usd_binance") or 36.0)
+        lines = []
+        for p in (result.data or []):
+            icon = p.get("icon_emoji", "📺")
+            name = p.get("name", "")
+            parts = []
+            if p.get("monthly_price_usd"):
+                usd = float(p["monthly_price_usd"])
+                parts.append(f"Mensual ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if p.get("week_price_usd"):
+                usd = float(p["week_price_usd"])
+                parts.append(f"Semanal ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if p.get("express_price_usd"):
+                usd = float(p["express_price_usd"])
+                parts.append(f"Express 24h ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if parts:
+                lines.append(f"{icon} {name}: {' | '.join(parts)}")
+        return "\n".join(lines) if lines else "Precios no disponibles"
+    except Exception as e:
+        logger.warning(f"_get_prices_context error: {e}")
+        return "Precios no disponibles en este momento"
+
+
+# ─────────────────────────────────────────────────────────────────
+# SYSTEM PROMPT — service context for conversational responses
+# ─────────────────────────────────────────────────────────────────
+def _build_system_prompt(user_name: str, active_subs: list[dict], prices_text: str = "") -> str:
+    subs_text = ""
+    if active_subs:
+        lines = []
+        for s in active_subs:
+            p = (s.get("platforms") or {})
+            lines.append(f"- {p.get('icon_emoji','')} {p.get('name','?')} ({s.get('plan_type','?')})")
+        subs_text = "Suscripciones activas del cliente:\n" + "\n".join(lines)
+    else:
+        subs_text = "El cliente no tiene suscripciones activas actualmente."
+
+    prices_section = f"\nPrecios actuales (REALES, puedes citarlos):\n{prices_text}" if prices_text else ""
+
+    return f"""Eres el asistente virtual de SmartFlixVe, un servicio de streaming premium en Venezuela.
+
+Información del servicio:
+- Ofrecemos acceso a Netflix, Disney+, Max, Paramount+, Amazon Prime y más plataformas.
+- Planes disponibles: Mensual (~30 días), Semanal (7 días), Express (24 horas).
+- Precios en bolívares (Bs) según tasa del día. El cliente paga por Pago Móvil o transferencia.
+- Una vez confirmado el pago, el cliente recibe sus credenciales por este mismo chat.
+
+Cliente: {user_name or "Estimado cliente"}
+{subs_text}
+{prices_section}
+
+Instrucciones:
+- Responde en español venezolano, tono amigable y cercano, como el dueño del servicio.
+- Sé conciso: máximo 5 oraciones por respuesta.
+- Si el cliente pregunta precios, respóndele con los precios reales que tienes arriba.
+- Si el cliente quiere suscribirse, dile que toque el botón del menú para iniciar su pedido.
+- Usa HTML básico (<b>texto</b>) para negritas cuando sea útil.
+- Si no puedes ayudar, indica que puede contactar a soporte con el botón del menú."""
+
+
+async def _get_user_context(telegram_id: int) -> tuple[str, list[dict]]:
+    """Return (user_name, active_subscriptions) for the given telegram_id."""
+    try:
+        from database.users import get_user_by_telegram_id
+        from database.subscriptions import get_user_active_subscriptions
+        from datetime import datetime, timezone
+
+        user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            return "", []
+
+        name = user.get("name") or user.get("username") or ""
+        subs_raw = await get_user_active_subscriptions(str(user["id"]))
+        now = datetime.now(timezone.utc)
+        active = []
+        for s in subs_raw:
+            if s.get("status") != "active":
+                continue
+            end_raw = s.get("end_date", "")
+            if end_raw:
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt < now:
+                        continue
+                except Exception:
+                    pass
+            active.append(s)
+        return name, active
+    except Exception as e:
+        logger.warning(f"Could not load user context: {e}")
+        return "", []
+
+
+async def _chat_response(system_prompt: str, conversation: list[dict], user_message: str) -> str:
+    """Generate a full conversational response."""
+    messages = [{"role": "system", "content": system_prompt}]
+    # Include last 6 turns of conversation history
+    for m in conversation[-6:]:
+        messages.append(m)
+    messages.append({"role": "user", "content": user_message})
+    try:
+        return await _call(messages, temperature=0.5, max_tokens=300)
+    except Exception as e:
+        logger.error(f"chat_response error: {e}")
+        return "Lo siento, tuve un problema. ¿En qué te puedo ayudar? Usa el menú de abajo 👇"
+
+
+async def _send_platform_menu(message, plan_type: str, intro: str) -> None:
+    """Send platform selection keyboard for a given plan type."""
+    from database.analytics import get_platform_availability
+    try:
+        availability = await get_platform_availability()
+        await message.reply_text(
+            intro,
+            parse_mode="HTML",
+            reply_markup=platforms_keyboard(availability, plan_type),
+        )
+    except Exception as e:
+        logger.error(f"Error sending platform menu: {e}")
+        await message.reply_text(
+            "Usa el menú para elegir tu plataforma 👇",
+            reply_markup=main_menu_keyboard(),
+        )
+
+
+# ─────────────────────────────────────────────────────────────────
+# MAIN HANDLER
+# ─────────────────────────────────────────────────────────────────
+async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle any free-text message.
+    1. Detect intent via LLM.
+    2. If actionable (subscribe/express/week/support/renewal/multi_order) → route with inline keyboard.
+    3. Otherwise → generate conversational response.
+    """
+    if not update.message or not update.effective_user:
+        return
+
+    telegram_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    # Show typing indicator
+    await context.bot.send_chat_action(
+        chat_id=update.message.chat_id, action=ChatAction.TYPING
+    )
+
+    # Load conversation history, user context, and prices in parallel
+    import asyncio
+    conv_task = asyncio.create_task(asyncio.to_thread(get_conversation_context, telegram_id))
+    ctx_task = asyncio.create_task(_get_user_context(telegram_id))
+    prices_task = asyncio.create_task(_get_prices_context())
+    conversation = await conv_task
+    user_name, active_subs = await ctx_task
+    prices_text = await prices_task
+
+    # Store user message
+    store_conversation_message(telegram_id, "user", text)
+
+    # Detect intent
+    intent_data = await interpret_user_intent(text, conversation)
+    intent = intent_data.get("intent", "other")
+    platform = intent_data.get("platform")  # e.g. "netflix", "disney", or None
+    confidence = intent_data.get("confidence", "baja")
+
+    logger.info(f"AI intent [{telegram_id}]: {intent} | platform: {platform} | conf: {confidence}")
+
+    bot_reply = None
+
+    # ── Route based on intent ──────────────────────────────────────
+    if intent == "subscribe" and confidence != "baja":
+        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+        await _send_platform_menu(
+            update.message,
+            "monthly",
+            f"¡Claro! 🎬 Elige la plataforma{platform_hint} para tu suscripción mensual:",
+        )
+        bot_reply = f"Menú de suscripción mensual mostrado{' (' + platform + ')' if platform else ''}."
+
+    elif intent == "express" and confidence != "baja":
+        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+        await _send_platform_menu(
+            update.message,
+            "express",
+            f"⚡ ¡Express 24h!{' ' + platform_hint if platform else ''} Elige la plataforma:",
+        )
+        bot_reply = "Menú express mostrado."
+
+    elif intent == "week" and confidence != "baja":
+        platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
+        await _send_platform_menu(
+            update.message,
+            "week",
+            f"📅 Pack semanal{platform_hint}. Elige la plataforma:",
+        )
+        bot_reply = "Menú semanal mostrado."
+
+    elif intent == "support" and confidence != "baja":
+        from bot.keyboards import support_keyboard as sk
+        await update.message.reply_text(
+            "🆘 <b>Soporte StreamVip</b>\n\n¿Con qué te puedo ayudar?",
+            parse_mode="HTML",
+            reply_markup=sk(),
+        )
+        bot_reply = "Menú de soporte mostrado."
+
+    elif intent == "info" and confidence != "baja":
+        # Respond with real prices + show menu
+        system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
+        price_q = f"El cliente pregunta sobre precios{' de ' + platform.capitalize() if platform else ''}. Respóndele de forma amigable con los precios reales."
+        response = await _chat_response(system_prompt, conversation, price_q)
+        if platform:
+            from database.analytics import get_platform_availability
+            availability = await get_platform_availability()
+            from bot.keyboards import platforms_keyboard
+            await update.message.reply_text(response, parse_mode="HTML", reply_markup=platforms_keyboard(availability, "monthly"))
+        else:
+            await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
+        bot_reply = response
+
+    elif intent == "multi_order" and confidence != "baja":
+        from services.gemini_service import extract_order_items
+        from services.cart_service import save_cart
+        from services.exchange_service import get_current_rate
+        from database import get_supabase
+
+        items_raw = await extract_order_items(text)
+        # Fallback: use platforms list from intent_data
+        if not items_raw:
+            platforms_list = intent_data.get("platforms") or []
+            if isinstance(platforms_list, list):
+                items_raw = [{"platform": p, "plan_type": "monthly"} for p in platforms_list if p]
+
+        if not items_raw:
+            await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
+            bot_reply = "Menú mostrado."
+        else:
+            sb = get_supabase()
+            rate_data = await get_current_rate()
+            rate = float((rate_data or {}).get("usd_binance") or 36.0)
+
+            cart_items = []
+            not_found = []
+            for raw_item in items_raw:
+                slug_q = raw_item.get("platform", "").lower().strip()
+                plan_type = raw_item.get("plan_type", "monthly")
+                # Search by slug first, then by name
+                res = sb.table("platforms").select("*").eq("is_active", True).ilike("slug", f"%{slug_q}%").execute()
+                if not res.data:
+                    res = sb.table("platforms").select("*").eq("is_active", True).ilike("name", f"%{slug_q}%").execute()
+                if not res.data:
+                    not_found.append(slug_q)
+                    continue
+                plat = res.data[0]
+                price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+                price_usd = float(plat.get(price_field) or 0)
+                cart_items.append({
+                    "platform_id": str(plat["id"]),
+                    "name": plat.get("name", ""),
+                    "emoji": plat.get("icon_emoji", "📺"),
+                    "plan_type": plan_type,
+                    "price_usd": price_usd,
+                    "price_bs": round(price_usd * rate, 2),
+                    "rate_used": rate,
+                })
+
+            if not cart_items:
+                await update.message.reply_text(
+                    "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
+                    reply_markup=main_menu_keyboard(),
+                )
+                bot_reply = "Plataformas no encontradas."
+            else:
+                save_cart(telegram_id, cart_items)
+                total_usd = sum(i["price_usd"] for i in cart_items)
+                total_bs = sum(i["price_bs"] for i in cart_items)
+                lines = ["🛒 <b>Tu carrito:</b>\n"]
+                for item in cart_items:
+                    plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
+                    lines.append(f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
+                lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+                if not_found:
+                    lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
+                from bot.keyboards import cart_keyboard
+                await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
+                bot_reply = f"Carrito con {len(cart_items)} servicios."
+
+    elif intent in ("renewal", "cancel") and confidence != "baja":
+        await update.message.reply_text(
+            "📋 Aquí puedes ver y renovar tus servicios activos:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Ver mis servicios", callback_data="menu:my_services")
+            ]]),
+        )
+        bot_reply = "Menú de servicios mostrado."
+
+    else:
+        # Conversational response
+        system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
+        response = await _chat_response(system_prompt, conversation, text)
+        await update.message.reply_text(
+            response,
+            parse_mode="HTML",
+            reply_markup=main_menu_keyboard(),
+        )
+        bot_reply = response
+
+    # Store bot response in conversation history
+    if bot_reply:
+        store_conversation_message(telegram_id, "assistant", bot_reply)

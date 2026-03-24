@@ -9,12 +9,13 @@ from telegram.ext import ContextTypes
 from bot.keyboards import (
     platforms_keyboard, confirm_order_keyboard, payment_received_keyboard, main_menu_keyboard
 )
+from services.cart_service import get_cart, clear_cart
 from bot.messages import (
     SUBSCRIPTION_PLATFORM_SELECT, SUBSCRIPTION_CONFIRM, PAYMENT_INSTRUCTIONS,
-    PAYMENT_CONFIRMED, ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE, PAYMENT_INVALID
+    PAYMENT_CONFIRMED, ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE
 )
 from bot.middleware import (
-    get_user_state, set_user_state, clear_user_state,
+    set_user_state, clear_user_state,
     get_user_data, set_user_data, clear_user_data
 )
 from database.users import get_user_by_telegram_id
@@ -24,7 +25,7 @@ from database.profiles import get_available_profiles, assign_profile
 from database.subscriptions import create_subscription, confirm_subscription
 from database.analytics import get_platform_availability
 from services.exchange_service import calculate_price_bs, get_current_rate
-from services.payment_service import validate_payment, get_payment_config
+from services.payment_service import get_payment_config
 from utils.helpers import venezuela_now, short_id, format_datetime_vzla
 
 logger = logging.getLogger(__name__)
@@ -127,15 +128,33 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
     telegram_id = update.effective_user.id
 
     try:
-        platform_id = get_user_data(telegram_id, "selected_platform_id")
-        plan_type = get_user_data(telegram_id, "selected_plan_type") or "monthly"
-        price_usd = float(get_user_data(telegram_id, "price_usd") or 4.50)
-        price_bs = float(get_user_data(telegram_id, "price_bs") or 150.0)
-        rate_used = float(get_user_data(telegram_id, "rate_used") or 36.0)
+        # Extract platform_id and plan_type from callback data (primary source)
+        # callback format: confirm:{plan_type}:{platform_id}
+        cb_parts = (query.data or "").split(":")
+        plan_type = cb_parts[1] if len(cb_parts) > 1 else (get_user_data(telegram_id, "selected_plan_type") or "monthly")
+        platform_id = cb_parts[2] if len(cb_parts) > 2 else get_user_data(telegram_id, "selected_platform_id")
 
         if not platform_id:
             await query.edit_message_text("Sesión expirada. Usa /start para comenzar de nuevo.")
             return
+
+        # Try Redis for price data; recalculate if missing
+        price_usd_str = get_user_data(telegram_id, "price_usd")
+        price_bs_str  = get_user_data(telegram_id, "price_bs")
+        rate_str      = get_user_data(telegram_id, "rate_used")
+
+        if price_usd_str and price_bs_str and rate_str:
+            price_usd = float(price_usd_str)
+            price_bs  = float(price_bs_str)
+            rate_used = float(rate_str)
+        else:
+            # Redis data lost — recalculate from platform
+            platform_tmp = await get_platform_by_id(platform_id)
+            price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+            price_usd = float((platform_tmp or {}).get(price_field) or 4.50)
+            price_bs  = await calculate_price_bs(price_usd)
+            rate_obj  = await get_current_rate()
+            rate_used = float((rate_obj or {}).get("usd_binance") or 36.0)
 
         user = await get_user_by_telegram_id(telegram_id)
         if not user:
@@ -163,7 +182,14 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         sub_id = str(sub["id"])
+        # Refresh all session data so handle_payment_photo always has what it needs,
+        # even if the user takes time before sending the comprobante.
         set_user_data(telegram_id, "current_sub_id", sub_id)
+        set_user_data(telegram_id, "selected_platform_id", platform_id)
+        set_user_data(telegram_id, "selected_plan_type", plan_type)
+        set_user_data(telegram_id, "price_usd", str(price_usd))
+        set_user_data(telegram_id, "price_bs", str(price_bs))
+        set_user_data(telegram_id, "rate_used", str(rate_used))
         set_user_state(telegram_id, "awaiting_payment")
 
         # Get payment config
@@ -200,144 +226,264 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.message or not update.effective_user:
         return
 
-    telegram_id = update.effective_user.id
-    state = get_user_state(telegram_id)
+    import hashlib
+    import html as _html
 
-    if state != "awaiting_payment":
-        return
+    telegram_id = update.effective_user.id
 
     try:
+        # ── Step 1: Resolve subscription data (Redis primary, DB fallback) ──
         sub_id = get_user_data(telegram_id, "current_sub_id")
         price_bs_str = get_user_data(telegram_id, "price_bs")
         platform_id = get_user_data(telegram_id, "selected_platform_id")
         plan_type = get_user_data(telegram_id, "selected_plan_type") or "monthly"
+        price_usd_str = get_user_data(telegram_id, "price_usd") or "0"
 
+        # If ANY critical key is missing, recover directly from DB
+        # (covers: Redis down, TTL expired, state lost between requests)
         if not sub_id or not price_bs_str or not platform_id:
-            await update.message.reply_text("Sesión expirada. Usa /start para iniciar un nuevo pedido.")
-            clear_user_state(telegram_id)
-            return
+            logger.info(f"Redis session incomplete for {telegram_id}, falling back to DB")
+            user_db = await get_user_by_telegram_id(telegram_id)
+            if user_db:
+                from database.subscriptions import get_user_pending_subscription
+                pending = await get_user_pending_subscription(str(user_db["id"]))
+                if pending:
+                    sub_id = str(pending["id"])
+                    platform_id = str(pending.get("platform_id") or "")
+                    plan_type = pending.get("plan_type") or "monthly"
+                    price_bs_str = str(pending.get("price_bs") or "0")
+                    price_usd_str = str(pending.get("price_usd") or "0")
+                else:
+                    await update.message.reply_text(
+                        "No encontramos un pedido pendiente. "
+                        "Usa /start para iniciar un nuevo pedido. 📋"
+                    )
+                    clear_user_state(telegram_id)
+                    return
+            else:
+                await update.message.reply_text(
+                    "No encontramos tu cuenta. Usa /start para comenzar. 📋"
+                )
+                return
 
         price_bs = float(price_bs_str)
+        price_usd = float(price_usd_str)
 
-        # Download photo
-        photo = update.message.photo[-1]  # Largest photo
+        # ── Step 2: Download photo ────────────────────────────────────────
+        photo = update.message.photo[-1]
         photo_file = await photo.get_file()
         image_bytes = await photo_file.download_as_bytearray()
 
-        await update.message.reply_text("⏳ Verificando tu comprobante de pago...")
+        # ── Step 3: Immediate client acknowledgment ───────────────────────
+        await update.message.reply_text(
+            "⏳ <b>Comprobante recibido</b>\n\n"
+            "Estamos verificando tu pago. En breve recibirás confirmación. 🙏",
+            parse_mode="HTML",
+        )
 
-        # Validate payment
-        result = await validate_payment(bytes(image_bytes), price_bs, sub_id)
+        # ── Step 4: Anti-fraud duplicate check ───────────────────────────
+        img_hash = hashlib.sha256(bytes(image_bytes)).hexdigest()
+        try:
+            from services.payment_service import _check_image_hash_duplicate, _store_image_hash
+            if await _check_image_hash_duplicate(img_hash):
+                await update.message.reply_text(
+                    "❌ Este comprobante ya fue enviado anteriormente. "
+                    "Si crees que es un error, contacta a soporte.",
+                    reply_markup=payment_received_keyboard(),
+                )
+                return
+        except Exception:
+            pass  # Don't let anti-fraud block the flow
 
-        if result.get("valid") is False:
-            reason_map = {
-                "duplicate_image": "Comprobante duplicado",
-                "not_comprobante": "No es un comprobante válido",
-                "amount_mismatch": result.get("message", "Monto incorrecto"),
-                "duplicate_reference": result.get("message", "Referencia duplicada"),
-                "payment_too_old": "Comprobante con más de 60 minutos",
-            }
-            reason = reason_map.get(result.get("reason", ""), result.get("message", "Pago inválido"))
-            await update.message.reply_text(
-                PAYMENT_INVALID.format(reason=reason, amount_bs=f"{price_bs:,.2f}"),
-                parse_mode="HTML",
-                reply_markup=payment_received_keyboard(),
+        # ── Step 5: OCR via LLM (best-effort, never blocks) ──────────────
+        ocr: dict = {}
+        ocr_available = False
+        try:
+            from services.gemini_service import validate_payment_image
+            ocr = await validate_payment_image(bytes(image_bytes))
+            ocr_available = ocr.get("is_comprobante_valido") is True
+        except Exception as e:
+            logger.warning(f"OCR failed (non-blocking): {e}")
+
+        reference = ocr.get("referencia") or "SIN-REF"
+
+        # ── Step 6: Build OCR text for dashboard storage ──────────────────
+        def _ov(key: str, default: str = "—") -> str:
+            val = ocr.get(key)
+            return str(val).strip() if val else default
+
+        if ocr_available:
+            hora_part = f" {_ov('hora')}" if ocr.get("hora") else ""
+            ocr_text_for_db = (
+                f"Referencia: {_ov('referencia')}\n"
+                f"Fecha: {_ov('fecha')}{hora_part}\n"
+                f"Monto: Bs {_ov('monto')}\n"
+                f"Celular destino: {_ov('celular_destino')}\n"
+                f"Cédula receptor: {_ov('cedula_receptor')}\n"
+                f"Banco emisor: {_ov('banco_emisor')}\n"
+                f"Banco receptor: {_ov('banco_receptor')}\n"
+                f"Concepto: {_ov('concepto')}\n"
+                f"Confianza OCR: {_ov('confianza')}"
             )
-            return
+            reference = ocr.get("referencia") or reference
+        else:
+            ocr_text_for_db = f"OCR no disponible | file_id:{photo.file_id}"
 
-        # Get available profile
-        profiles = await get_available_profiles(platform_id, plan_type)
-        if not profiles:
-            await update.message.reply_text(
-                "⚠️ No hay perfiles disponibles en este momento. "
-                "Tu pago fue recibido y te asignaremos un perfil pronto. "
-                "Por favor espera o contacta a soporte.",
-                reply_markup=payment_received_keyboard(),
-            )
-            # Notify admin
-            from services.notification_service import send_to_admin
-            await send_to_admin(
-                f"⚠️ <b>Sin perfiles disponibles</b>\n"
-                f"Usuario: {telegram_id}\n"
-                f"Suscripción: #{short_id(sub_id)}\n"
-                f"Platform ID: {platform_id}\n"
-                f"Plan: {plan_type}",
-            )
-            return
+        # ── Step 7: Save to DB (reference + OCR text as payment_image_url) ─
+        from database.subscriptions import save_payment_proof
+        await save_payment_proof(sub_id, reference, ocr_text_for_db)
 
-        profile = profiles[0]
-        profile_id = str(profile["id"])
+        # Store image hash to prevent duplicates
+        try:
+            from services.payment_service import _store_image_hash
+            await _store_image_hash(img_hash)
+        except Exception:
+            pass
 
-        # Upload payment image URL (simplified - store reference)
-        payment_image_url = f"tg://photo/{photo.file_id}"
-        reference = result.get("reference") or result.get("data", {}).get("referencia") or "N/A"
-
-        # Confirm subscription
-        await confirm_subscription(sub_id, profile_id, reference, payment_image_url)
-        await assign_profile(profile_id)
-
-        # Update user purchase count
+        # ── Step 8: Load context and build admin ticket ───────────────────
         user = await get_user_by_telegram_id(telegram_id)
-        if user:
-            from database.users import increment_user_purchases
-            await increment_user_purchases(telegram_id)
-
-        # Get full data for access delivery
         platform = await get_platform_by_id(platform_id)
-        account = await get_account_by_id(str(profile.get("account_id", "")))
+        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
+        client_name = _html.escape((user or {}).get("name", "") or str(telegram_id))
+        platform_name = _html.escape((platform or {}).get("name", "?"))
 
-        from datetime import datetime
-        import pytz
-        now = venezuela_now()
-        durations = {"monthly": 30, "express": 1, "week": 7}
-        end_date = now + timedelta(days=durations.get(plan_type, 30))
-
-        pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
-        platform_slug = (platform or {}).get("slug", "netflix")
-        instructions_tpl = ACCESS_INSTRUCTIONS.get(platform_slug, ACCESS_INSTRUCTIONS.get("netflix", ""))
-        instructions = instructions_tpl.format(profile_name=profile.get("profile_name", ""))
-
-        access_text = ACCESS_DELIVERED.format(
-            platform=f"{(platform or {}).get('icon_emoji', '')} {(platform or {}).get('name', '')}",
-            profile_name=profile.get("profile_name", ""),
-            email=(account or {}).get("email", ""),
-            password=(account or {}).get("password", ""),
-            pin_line=pin_line,
-            instructions=instructions,
-        )
-
-        confirmed_text = PAYMENT_CONFIRMED.format(
-            platform=f"{(platform or {}).get('icon_emoji', '')} {(platform or {}).get('name', '')}",
-            start_date=format_datetime_vzla(now),
-            end_date=format_datetime_vzla(end_date),
-            reference=reference,
-        )
-
-        await update.message.reply_text(confirmed_text, parse_mode="HTML")
-        await update.message.reply_text(access_text, parse_mode="HTML")
-
-        # Notify admin
         from services.notification_service import send_to_admin
-        await send_to_admin(
-            f"✅ <b>Nuevo pago confirmado</b>\n"
-            f"👤 Usuario: {telegram_id}\n"
-            f"📺 Plataforma: {(platform or {}).get('name', '')}\n"
-            f"💵 Monto: ${float(get_user_data(telegram_id, 'price_usd') or 0):.2f} USD\n"
-            f"🔖 Referencia: {reference}"
+        from bot.keyboards import pending_payment_keyboard
+
+        if ocr_available:
+            hora_str = f" {_html.escape(_ov('hora'))}" if ocr.get("hora") else ""
+            ocr_section = (
+                f"📋 <b>DATOS DEL COMPROBANTE (OCR)</b>\n\n"
+                f"🔖 <b>Referencia:</b> <code>{_html.escape(_ov('referencia'))}</code>\n"
+                f"📅 <b>Fecha:</b> {_html.escape(_ov('fecha'))}{hora_str}\n"
+                f"💰 <b>Monto:</b> Bs {_html.escape(_ov('monto'))}\n"
+                f"📱 <b>Celular destino:</b> {_html.escape(_ov('celular_destino'))}\n"
+                f"🪪 <b>Cédula receptor:</b> {_html.escape(_ov('cedula_receptor'))}\n"
+                f"🏦 <b>Banco emisor:</b> {_html.escape(_ov('banco_emisor'))}\n"
+                f"🏦 <b>Banco receptor:</b> {_html.escape(_ov('banco_receptor'))}\n"
+                f"📝 <b>Concepto:</b> {_html.escape(_ov('concepto'))}\n"
+                f"🔍 <b>Confianza OCR:</b> {_html.escape(_ov('confianza'))}"
+            )
+        else:
+            ocr_section = (
+                "📋 <b>COMPROBANTE RECIBIDO</b>\n\n"
+                "⚠️ OCR no disponible — revisar imagen manualmente."
+            )
+
+        admin_ticket = (
+            f"💳 <b>TICKET DE PAGO #{short_id(sub_id)}</b>\n\n"
+            f"👤 <b>Cliente:</b> {client_name} (<code>{telegram_id}</code>)\n"
+            f"📺 <b>Servicio:</b> {platform_name} — {plan_label}\n"
+            f"💵 <b>Monto esperado:</b> ${price_usd:.2f} USD / Bs {price_bs:,.2f}\n\n"
+            f"{ocr_section}\n\n"
+            f"¿Apruebas o rechazas este pago?"
         )
 
-        # Clear state
+        # ── Step 9: Notify admin (image first, then ticket with buttons) ──
+        await send_to_admin("📎 Comprobante del cliente:", photo_bytes=bytes(image_bytes))
+        await send_to_admin(admin_ticket, keyboard=pending_payment_keyboard(sub_id))
+
+        # ── Step 10: Clear state ──────────────────────────────────────────
         clear_user_state(telegram_id)
         clear_user_data(telegram_id)
 
-        await update.message.reply_text(
-            "¿Necesitas algo más? 😊",
-            reply_markup=main_menu_keyboard(),
-        )
-
     except Exception as e:
-        logger.error(f"Error in handle_payment_photo: {e}")
-        await update.message.reply_text(
-            "Error al procesar tu comprobante. Por favor intenta nuevamente o contacta a soporte.",
-            reply_markup=payment_received_keyboard(),
+        logger.error(f"Error in handle_payment_photo: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(
+                "Hubo un problema procesando tu comprobante. "
+                "Por favor contacta a soporte directamente. 📞",
+                reply_markup=payment_received_keyboard(),
+            )
+        except Exception:
+            pass
+
+
+async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Confirm cart - create pending_payment subs for all items and show payment instructions."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    telegram_id = update.effective_user.id
+
+    cart_items = get_cart(telegram_id)
+    if not cart_items:
+        await query.edit_message_text("Tu carrito está vacío. Usa el menú para agregar servicios. 📋", reply_markup=main_menu_keyboard())
+        return
+
+    user = await get_user_by_telegram_id(telegram_id)
+    if not user:
+        await query.edit_message_text("Error al obtener tu perfil. Usa /start.")
+        return
+
+    user_id = str(user["id"])
+    now = venezuela_now()
+    durations = {"monthly": 30, "express": 1, "week": 7}
+
+    sub_ids = []
+    for item in cart_items:
+        end_date = now + timedelta(days=durations.get(item["plan_type"], 30))
+        sub = await create_subscription(
+            user_id=user_id,
+            platform_id=item["platform_id"],
+            plan_type=item["plan_type"],
+            price_usd=item["price_usd"],
+            price_bs=item["price_bs"],
+            rate_used=item["rate_used"],
+            end_date=end_date,
         )
+        if sub:
+            sub_ids.append(str(sub["id"]))
+
+    if not sub_ids:
+        await query.edit_message_text("Error al crear el pedido. Intenta de nuevo.")
+        return
+
+    total_usd = sum(i["price_usd"] for i in cart_items)
+    total_bs = sum(i["price_bs"] for i in cart_items)
+
+    set_user_data(telegram_id, "cart_sub_ids", ",".join(sub_ids))
+    set_user_data(telegram_id, "cart_total_usd", str(total_usd))
+    set_user_data(telegram_id, "cart_total_bs", str(total_bs))
+    set_user_state(telegram_id, "awaiting_cart_payment")
+    clear_cart(telegram_id)
+
+    payment_cfg = await get_payment_config()
+    if not payment_cfg:
+        await query.edit_message_text("Error al obtener datos de pago. Contacta a soporte.")
+        return
+
+    plan_labels = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}
+    services_lines = "\n".join(
+        f"  {item['emoji']} {item['name']} ({plan_labels.get(item['plan_type'], item['plan_type'])}): Bs {item['price_bs']:,.0f}"
+        for item in cart_items
+    )
+    order_ref = short_id(sub_ids[0])
+
+    payment_text = (
+        f"✅ <b>¡Pedido confirmado!</b>\n\n"
+        f"<b>Servicios:</b>\n{services_lines}\n\n"
+        f"💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>\n\n"
+        f"📲 <b>Realiza el pago a:</b>\n"
+        f"🏦 {payment_cfg.get('banco', 'N/A')}\n"
+        f"📱 {payment_cfg.get('telefono', 'N/A')}\n"
+        f"🪪 {payment_cfg.get('cedula', 'N/A')}\n"
+        f"👤 {payment_cfg.get('titular', 'N/A')}\n\n"
+        f"🔖 Ref pedido: <code>#{order_ref}</code>\n\n"
+        f"📎 <b>Envía el comprobante por aquí para activar todos tus servicios.</b>"
+    )
+    await query.edit_message_text(payment_text, parse_mode="HTML")
+
+
+async def handle_cart_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear the shopping cart."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    clear_cart(update.effective_user.id)
+    await query.edit_message_text(
+        "🗑️ Carrito vaciado. ¿Qué quieres hacer?",
+        reply_markup=main_menu_keyboard(),
+    )

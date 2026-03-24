@@ -257,6 +257,46 @@ def confirm_price_keyboard(platform_id: str, price_type: str, new_price: float) 
     ])
 
 
+def clients_list_keyboard(clients: list[dict], current_page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Client list with per-client buttons and pagination."""
+    buttons = []
+    for c in clients:
+        name = c.get("name") or c.get("username") or "Sin nombre"
+        tid = c.get("telegram_id")
+        status_icon = "✅" if c.get("status") == "active" else "🚫"
+        purchases = c.get("total_purchases", 0)
+        buttons.append([InlineKeyboardButton(
+            f"{status_icon} {name}  ({purchases} compras)",
+            callback_data=f"admin:client_detail:{tid}",
+        )])
+    nav = []
+    if current_page > 1:
+        nav.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"admin:clients_page:{current_page - 1}"))
+    if current_page < total_pages:
+        nav.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"admin:clients_page:{current_page + 1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("🔙 Panel admin", callback_data="admin:back")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def client_detail_keyboard(telegram_id: int, is_blocked: bool) -> InlineKeyboardMarkup:
+    """Admin actions on a specific client."""
+    block_btn = (
+        InlineKeyboardButton("✅ Desbloquear", callback_data=f"admin:unblock:{telegram_id}")
+        if is_blocked
+        else InlineKeyboardButton("🚫 Bloquear", callback_data=f"admin:block:{telegram_id}")
+    )
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✏️ Editar nombre", callback_data=f"admin:edit_name:{telegram_id}"),
+            InlineKeyboardButton("📱 Editar teléfono", callback_data=f"admin:edit_phone:{telegram_id}"),
+        ],
+        [block_btn],
+        [InlineKeyboardButton("🔙 Lista clientes", callback_data="admin:clients")],
+    ])
+
+
 def share_contact_keyboard() -> ReplyKeyboardMarkup:
     """Keyboard asking user to share their phone number."""
     return ReplyKeyboardMarkup(
@@ -268,3 +308,12 @@ def share_contact_keyboard() -> ReplyKeyboardMarkup:
 
 def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
+
+
+def cart_keyboard() -> InlineKeyboardMarkup:
+    """Cart summary keyboard."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirmar pedido", callback_data="cart:confirm")],
+        [InlineKeyboardButton("➕ Agregar otro servicio", callback_data="menu:subscribe")],
+        [InlineKeyboardButton("🗑️ Vaciar carrito", callback_data="cart:clear")],
+    ])
