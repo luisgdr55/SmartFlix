@@ -23,9 +23,45 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────
+# PRICES CONTEXT — real prices from DB for LLM
+# ─────────────────────────────────────────────────────────────────
+async def _get_prices_context() -> str:
+    """Fetch real platform prices from DB for LLM context."""
+    try:
+        from database import get_supabase
+        from services.exchange_service import get_current_rate
+        sb = get_supabase()
+        result = sb.table("platforms").select(
+            "name, icon_emoji, monthly_price_usd, express_price_usd, week_price_usd, slug"
+        ).eq("is_active", True).order("name").execute()
+        rate_data = await get_current_rate()
+        rate = float((rate_data or {}).get("usd_binance") or 36.0)
+        lines = []
+        for p in (result.data or []):
+            icon = p.get("icon_emoji", "📺")
+            name = p.get("name", "")
+            parts = []
+            if p.get("monthly_price_usd"):
+                usd = float(p["monthly_price_usd"])
+                parts.append(f"Mensual ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if p.get("week_price_usd"):
+                usd = float(p["week_price_usd"])
+                parts.append(f"Semanal ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if p.get("express_price_usd"):
+                usd = float(p["express_price_usd"])
+                parts.append(f"Express 24h ${usd:.2f}/Bs {usd*rate:,.0f}")
+            if parts:
+                lines.append(f"{icon} {name}: {' | '.join(parts)}")
+        return "\n".join(lines) if lines else "Precios no disponibles"
+    except Exception as e:
+        logger.warning(f"_get_prices_context error: {e}")
+        return "Precios no disponibles en este momento"
+
+
+# ─────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT — service context for conversational responses
 # ─────────────────────────────────────────────────────────────────
-def _build_system_prompt(user_name: str, active_subs: list[dict]) -> str:
+def _build_system_prompt(user_name: str, active_subs: list[dict], prices_text: str = "") -> str:
     subs_text = ""
     if active_subs:
         lines = []
@@ -35,6 +71,8 @@ def _build_system_prompt(user_name: str, active_subs: list[dict]) -> str:
         subs_text = "Suscripciones activas del cliente:\n" + "\n".join(lines)
     else:
         subs_text = "El cliente no tiene suscripciones activas actualmente."
+
+    prices_section = f"\nPrecios actuales (REALES, puedes citarlos):\n{prices_text}" if prices_text else ""
 
     return f"""Eres el asistente virtual de SmartFlixVe, un servicio de streaming premium en Venezuela.
 
@@ -46,14 +84,14 @@ Información del servicio:
 
 Cliente: {user_name or "Estimado cliente"}
 {subs_text}
+{prices_section}
 
 Instrucciones:
 - Responde en español venezolano, tono amigable y cercano, como el dueño del servicio.
-- Sé conciso: máximo 4 oraciones por respuesta.
-- Si el cliente quiere suscribirse, dile que toque el botón correspondiente del menú.
-- Si el cliente tiene dudas sobre precios, dile que puede ver las opciones en el menú.
-- NO inventes precios específicos ni credenciales.
-- NO uses asteriscos ni markdown — solo texto plano con emojis si aplica.
+- Sé conciso: máximo 5 oraciones por respuesta.
+- Si el cliente pregunta precios, respóndele con los precios reales que tienes arriba.
+- Si el cliente quiere suscribirse, dile que toque el botón del menú para iniciar su pedido.
+- Usa HTML básico (<b>texto</b>) para negritas cuando sea útil.
 - Si no puedes ayudar, indica que puede contactar a soporte con el botón del menú."""
 
 
@@ -129,7 +167,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     Handle any free-text message.
     1. Detect intent via LLM.
-    2. If actionable (subscribe/express/week/support/renewal) → route with inline keyboard.
+    2. If actionable (subscribe/express/week/support/renewal/multi_order) → route with inline keyboard.
     3. Otherwise → generate conversational response.
     """
     if not update.message or not update.effective_user:
@@ -143,12 +181,14 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         chat_id=update.message.chat_id, action=ChatAction.TYPING
     )
 
-    # Load conversation history and user context in parallel
+    # Load conversation history, user context, and prices in parallel
     import asyncio
     conv_task = asyncio.create_task(asyncio.to_thread(get_conversation_context, telegram_id))
     ctx_task = asyncio.create_task(_get_user_context(telegram_id))
+    prices_task = asyncio.create_task(_get_prices_context())
     conversation = await conv_task
     user_name, active_subs = await ctx_task
+    prices_text = await prices_task
 
     # Store user message
     store_conversation_message(telegram_id, "user", text)
@@ -200,14 +240,103 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         bot_reply = "Menú de soporte mostrado."
 
-    elif intent == "info" and platform and confidence != "baja":
-        platform_display = platform.capitalize()
-        await _send_platform_menu(
-            update.message,
-            "monthly",
-            f"¡Sí! 🎬 Tenemos <b>{platform_display}</b> disponible. Elige tu plan para empezar:",
-        )
-        bot_reply = f"Disponibilidad de {platform_display} mostrada."
+    elif intent == "info" and confidence != "baja":
+        # Build price response directly from prices_text — no extra LLM call needed
+        if platform:
+            plat_cap = platform.capitalize()
+            # Filter lines for this platform
+            plat_lines = [l for l in prices_text.split("\n") if platform.lower() in l.lower() or plat_cap.lower() in l.lower()]
+            if plat_lines:
+                response = (
+                    f"🎬 Precios de <b>{plat_cap}</b>:\n\n"
+                    + "\n".join(plat_lines)
+                    + "\n\n¿Cuál plan te interesa? Selecciona abajo 👇"
+                )
+            else:
+                response = f"¡Tenemos <b>{plat_cap}</b> disponible! Elige tu plan abajo 👇"
+            from database.analytics import get_platform_availability
+            availability = await get_platform_availability()
+            await update.message.reply_text(
+                response, parse_mode="HTML",
+                reply_markup=platforms_keyboard(availability, "monthly"),
+            )
+        else:
+            if prices_text and "no disponible" not in prices_text:
+                response = f"🎬 <b>Precios actuales de SmartFlixVe:</b>\n\n{prices_text}\n\n¿Cuál plataforma te interesa?"
+            else:
+                response = "¡Tenemos varias plataformas disponibles! Selecciona abajo 👇"
+            await update.message.reply_text(
+                response, parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
+            )
+        bot_reply = f"Precios mostrados{' de ' + platform if platform else ''}."
+
+    elif intent == "multi_order" and confidence != "baja":
+        from services.gemini_service import extract_order_items
+        from services.cart_service import save_cart
+        from services.exchange_service import get_current_rate
+        from database import get_supabase
+
+        items_raw = await extract_order_items(text)
+        # Fallback: use platforms list from intent_data
+        if not items_raw:
+            platforms_list = intent_data.get("platforms") or []
+            if isinstance(platforms_list, list):
+                items_raw = [{"platform": p, "plan_type": "monthly"} for p in platforms_list if p]
+
+        if not items_raw:
+            await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
+            bot_reply = "Menú mostrado."
+        else:
+            sb = get_supabase()
+            rate_data = await get_current_rate()
+            rate = float((rate_data or {}).get("usd_binance") or 36.0)
+
+            cart_items = []
+            not_found = []
+            for raw_item in items_raw:
+                slug_q = raw_item.get("platform", "").lower().strip()
+                plan_type = raw_item.get("plan_type", "monthly")
+                # Search by slug first, then by name
+                res = sb.table("platforms").select("*").eq("is_active", True).ilike("slug", f"%{slug_q}%").execute()
+                if not res.data:
+                    res = sb.table("platforms").select("*").eq("is_active", True).ilike("name", f"%{slug_q}%").execute()
+                if not res.data:
+                    not_found.append(slug_q)
+                    continue
+                plat = res.data[0]
+                price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+                price_usd = float(plat.get(price_field) or 0)
+                cart_items.append({
+                    "platform_id": str(plat["id"]),
+                    "name": plat.get("name", ""),
+                    "emoji": plat.get("icon_emoji", "📺"),
+                    "plan_type": plan_type,
+                    "price_usd": price_usd,
+                    "price_bs": round(price_usd * rate, 2),
+                    "rate_used": rate,
+                })
+
+            if not cart_items:
+                await update.message.reply_text(
+                    "No encontré esas plataformas. Dime cuáles quieres y te ayudo 😊",
+                    reply_markup=main_menu_keyboard(),
+                )
+                bot_reply = "Plataformas no encontradas."
+            else:
+                save_cart(telegram_id, cart_items)
+                total_usd = sum(i["price_usd"] for i in cart_items)
+                total_bs = sum(i["price_bs"] for i in cart_items)
+                lines = ["🛒 <b>Tu carrito:</b>\n"]
+                for item in cart_items:
+                    plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
+                    lines.append(f"{item['emoji']} <b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
+                lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+                if not_found:
+                    lines.append(f"\n⚠️ No encontré: {', '.join(not_found)}")
+                from bot.keyboards import cart_keyboard
+                await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
+                bot_reply = f"Carrito con {len(cart_items)} servicios."
 
     elif intent in ("renewal", "cancel") and confidence != "baja":
         await update.message.reply_text(
@@ -220,12 +349,17 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     else:
         # Conversational response
-        system_prompt = _build_system_prompt(user_name, active_subs)
+        system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
         response = await _chat_response(system_prompt, conversation, text)
-        await update.message.reply_text(
-            response,
-            reply_markup=main_menu_keyboard(),
-        )
+        try:
+            await update.message.reply_text(
+                response,
+                parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            # HTML parsing failed — send as plain text
+            await update.message.reply_text(response, reply_markup=main_menu_keyboard())
         bot_reply = response
 
     # Store bot response in conversation history
