@@ -119,7 +119,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     for s in expired_subs:
                         plat = (s.get("platforms") or {}).get("name", "Plataforma")
                         icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
-                        end = (s.get("end_date") or "")[:10]
+                        _ed = (s.get("end_date") or "")[:10]
+                        end = f"{_ed[8:10]}-{_ed[5:7]}-{_ed[0:4]}" if len(_ed) >= 10 else _ed
                         alert_lines.append(
                             f"{icon} <b>{plat}</b> — vencida el {end}\n"
                             f"   🔄 Renueva para seguir disfrutando."
