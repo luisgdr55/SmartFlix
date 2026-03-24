@@ -794,7 +794,7 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")
         user_id = str(sub.get("user_id", ""))
-        durations = {"monthly": 30, "express": 1, "week": 7}
+        durations = {"monthly": 30, "express": 1}
         duration_days = durations.get(plan_type, 30)
 
         platform = await get_platform_by_id(platform_id)

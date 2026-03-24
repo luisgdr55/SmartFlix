@@ -83,7 +83,6 @@ async def handle_platform_selected(update: Update, context: ContextTypes.DEFAULT
         price_field = {
             "monthly": "monthly_price_usd",
             "express": "express_price_usd",
-            "week": "week_price_usd",
         }.get(plan_type, "monthly_price_usd")
         price_usd = float(platform.get(price_field) or 4.50)
         price_bs = await calculate_price_bs(price_usd)
@@ -98,7 +97,7 @@ async def handle_platform_selected(update: Update, context: ContextTypes.DEFAULT
         set_user_data(telegram_id, "rate_used", str(rate_value))
         set_user_state(telegram_id, f"confirm_order:{plan_type}")
 
-        plan_label = {"monthly": "Mensual (30 días)", "express": "Express (24h)", "week": "Semanal (7 días)"}.get(plan_type, plan_type)
+        plan_label = {"monthly": "Mensual (30 días)", "express": "Express (24h)"}.get(plan_type, plan_type)
 
         confirm_text = SUBSCRIPTION_CONFIRM.format(
             platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}",
@@ -149,7 +148,7 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
         else:
             # Redis data lost — recalculate from platform
             platform_tmp = await get_platform_by_id(platform_id)
-            price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+            price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd"}.get(plan_type, "monthly_price_usd")
             price_usd = float((platform_tmp or {}).get(price_field) or 4.50)
             price_bs  = await calculate_price_bs(price_usd)
             rate_obj  = await get_current_rate()
@@ -162,7 +161,7 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
 
         # Calculate end date based on plan
         now = venezuela_now()
-        durations = {"monthly": 30, "express": 1, "week": 7}
+        durations = {"monthly": 30, "express": 1}
         end_date = now + timedelta(days=durations.get(plan_type, 30))
 
         # Create pending subscription
@@ -342,7 +341,7 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         # ── Step 8: Load context and build admin ticket ───────────────────
         user = await get_user_by_telegram_id(telegram_id)
         platform = await get_platform_by_id(platform_id)
-        plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
+        plan_label = {"monthly": "Mensual", "express": "Express 24h"}.get(plan_type, plan_type)
         client_name = _html.escape((user or {}).get("name", "") or str(telegram_id))
         platform_name = _html.escape((platform or {}).get("name", "?"))
 
@@ -435,8 +434,8 @@ async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
             platform_id = item.get("platform_id")
             name = item.get("name", "?")
             emoji = item.get("emoji", "📺")
-            plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h", "week": "Semanal 7d"}.get(plan_type, plan_type)
-            plan_days = {"monthly": 30, "express": 1, "week": 7}.get(plan_type, 30)
+            plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h"}.get(plan_type, plan_type)
+            plan_days = {"monthly": 30, "express": 1}.get(plan_type, 30)
             end_date = now + timedelta(days=plan_days)
 
             sub = await create_subscription(

@@ -117,7 +117,6 @@
           <select name="profile_type" required class="form-input">
             <option value="monthly" {% if not profile or profile.get('profile_type') == 'monthly' %}selected{% endif %}>Mensual</option>
             <option value="express" {% if profile and profile.get('profile_type') == 'express' %}selected{% endif %}>⚡ Express</option>
-            <option value="week" {% if profile and profile.get('profile_type') == 'week' %}selected{% endif %}>Semanal</option>
           </select>
         </div>
         <div>

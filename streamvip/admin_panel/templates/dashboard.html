@@ -313,7 +313,6 @@
               <th class="table-header">Plataforma</th>
               <th class="table-header text-center">Mensual</th>
               <th class="table-header text-center">Express</th>
-              <th class="table-header text-center">Semanal</th>
             </tr>
           </thead>
           <tbody>
@@ -328,11 +327,6 @@
               <td class="table-cell text-center">
                 <span class="{% if p.get('express_available', 0) > 0 %}text-yellow-400{% else %}text-red-400{% endif %} font-semibold">
                   {{ p.get('express_available', 0) }}
-                </span>
-              </td>
-              <td class="table-cell text-center">
-                <span class="{% if p.get('week_available', 0) > 0 %}text-blue-400{% else %}text-red-400{% endif %} font-semibold">
-                  {{ p.get('week_available', 0) }}
                 </span>
               </td>
             </tr>
@@ -420,7 +414,7 @@ if (platformCtx) {
       data: {
         labels: avail.map(p => p.name),
         datasets: [{
-          data: avail.map(p => (p.monthly_available || 0) + (p.express_available || 0) + (p.week_available || 0)),
+          data: avail.map(p => (p.monthly_available || 0) + (p.express_available || 0)),
           backgroundColor: colors.slice(0, avail.length),
           borderColor: '#1e293b',
           borderWidth: 2,

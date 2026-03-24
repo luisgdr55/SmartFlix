@@ -37,7 +37,6 @@ def build_telegram_app() -> Application:
     from bot.handlers.menu import show_main_menu
     from bot.handlers.subscription import show_subscription_platforms, handle_platform_selected, handle_order_confirmed
     from bot.handlers.express import show_express_platforms, handle_express_platform_selected, handle_express_confirmed, handle_queue_join
-    from bot.handlers.week_pack import show_week_platforms, handle_week_platform_selected, handle_week_confirmed
     from bot.handlers.my_services import show_my_services, handle_service_detail, handle_renewal
     from bot.handlers.support import (
         show_support_menu, handle_support_credentials, handle_support_verification_code,
@@ -85,19 +84,16 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern="^menu:main$"))
     app.add_handler(CallbackQueryHandler(show_subscription_platforms, pattern="^menu:subscribe$"))
     app.add_handler(CallbackQueryHandler(show_express_platforms, pattern="^menu:express$"))
-    app.add_handler(CallbackQueryHandler(show_week_platforms, pattern="^menu:week$"))
     app.add_handler(CallbackQueryHandler(show_my_services, pattern="^menu:my_services$"))
     app.add_handler(CallbackQueryHandler(show_support_menu, pattern="^menu:support$"))
 
     # Platform selection
     app.add_handler(CallbackQueryHandler(handle_platform_selected, pattern="^platform:monthly:"))
     app.add_handler(CallbackQueryHandler(handle_express_platform_selected, pattern="^platform:express:"))
-    app.add_handler(CallbackQueryHandler(handle_week_platform_selected, pattern="^platform:week:"))
 
     # Order confirmation
     app.add_handler(CallbackQueryHandler(handle_order_confirmed, pattern="^confirm:monthly:"))
     app.add_handler(CallbackQueryHandler(handle_express_confirmed, pattern="^confirm:express:"))
-    app.add_handler(CallbackQueryHandler(handle_week_confirmed, pattern="^confirm:week:"))
 
     # My services
     app.add_handler(CallbackQueryHandler(handle_service_detail, pattern="^service:detail:"))

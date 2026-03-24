@@ -194,7 +194,6 @@ async def get_platform_availability() -> list[dict]:
         for p in platforms:
             monthly_count = await count_available_profiles(p["id"], "monthly")
             express_count = await count_available_profiles(p["id"], "express")
-            week_count = await count_available_profiles(p["id"], "week")
             availability.append({
                 "platform_id": p["id"],
                 "name": p["name"],
@@ -202,7 +201,6 @@ async def get_platform_availability() -> list[dict]:
                 "icon_emoji": p.get("icon_emoji", ""),
                 "monthly_available": monthly_count,
                 "express_available": express_count,
-                "week_available": week_count,
             })
         return availability
     except Exception as e:

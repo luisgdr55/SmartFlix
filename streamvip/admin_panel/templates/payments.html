@@ -61,7 +61,7 @@
             <p class="font-medium text-slate-200">{{ (sub.get('platforms') or {}).get('name','—') }}</p>
             <p class="text-xs text-slate-400 capitalize">
               Plan: {% set t = sub.get('plan_type','') %}
-              {% if t == 'express' %}⚡ Express{% elif t == 'week' %}Semanal{% else %}{{ t }}{% endif %}
+              {% if t == 'express' %}⚡ Express{% else %}{{ t }}{% endif %}
             </p>
           </div>
           <div class="ml-auto text-right">

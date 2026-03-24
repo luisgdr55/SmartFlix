@@ -29,7 +29,6 @@
             <th class="table-header">Slug</th>
             <th class="table-header text-right">Mensual $</th>
             <th class="table-header text-right">Express $</th>
-            <th class="table-header text-right">Semanal $</th>
             <th class="table-header text-center">Activa</th>
             <th class="table-header">Acciones</th>
           </tr>
@@ -49,9 +48,6 @@
             </td>
             <td class="table-cell text-right font-medium text-yellow-400">
               ${{ "%.2f"|format(p.get('express_price_usd') or 0) }}
-            </td>
-            <td class="table-cell text-right font-medium text-blue-400">
-              ${{ "%.2f"|format(p.get('week_price_usd') or 0) }}
             </td>
             <td class="table-cell text-center">
               {% if p.get('is_active') %}

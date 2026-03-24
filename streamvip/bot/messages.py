@@ -141,13 +141,6 @@ EXPRESS_EXPIRED = (
     "Usa el botón de abajo para renovar 👇"
 )
 
-WEEK_PACK_EXPIRY_REMINDER = (
-    "📅 <b>Tu pack semanal vence pronto</b>\n\n"
-    "Hola <b>{name}</b> 👋\n\n"
-    "Tu suscripción a <b>{platform}</b> vence el <b>{end_date}</b> "
-    "({days} días restantes).\n\n"
-    "¿Renovamos? 🎬"
-)
 
 MY_SERVICES_ACTIVE = (
     "📋 <b>Mis Servicios Activos</b>\n\n"

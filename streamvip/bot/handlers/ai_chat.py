@@ -57,8 +57,7 @@ def _detect_intent_keywords(text: str) -> dict | None:
     platforms = _find_platforms(t)
 
     is_express = any(k in t for k in ["express", "24h", "24 h", "24 hora"])
-    is_week = any(k in t for k in ["semanal", "semana", "7 día", "7 dias", "por semana"])
-    plan = "express" if is_express else ("week" if is_week else "monthly")
+    plan = "express" if is_express else "monthly"
 
     # ── multi_order: 2+ platforms ─────────────────────────────────
     if len(platforms) >= 2:
@@ -92,7 +91,7 @@ def _detect_intent_keywords(text: str) -> dict | None:
             "intent": "availability",
             "platform": platforms[0] if platforms else None,
             "platforms": None,
-            "plan_type": "express" if is_express else ("week" if is_week else None),
+            "plan_type": "express" if is_express else None,
             "confidence": "alta",
         }
 
@@ -121,6 +120,11 @@ def _detect_intent_keywords(text: str) -> dict | None:
     if any(k in t for k in support_kws):
         return {"intent": "support", "platform": None, "platforms": None, "plan_type": None, "confidence": "alta"}
 
+    # ── cart view ─────────────────────────────────────────────────
+    cart_kws = ["ver carrito", "mi carrito", "ver mi carrito", "que tengo en el carrito", "carrito"]
+    if any(k in t for k in cart_kws):
+        return {"intent": "cart_view", "platform": None, "platforms": None, "plan_type": None, "confidence": "alta"}
+
     # ── renewal ───────────────────────────────────────────────────
     renewal_kws = [
         "renovar", "renovación", "renovacion", "renueva", "vencida",
@@ -137,16 +141,6 @@ def _detect_intent_keywords(text: str) -> dict | None:
             "platform": platforms[0] if platforms else None,
             "platforms": None,
             "plan_type": "express",
-            "confidence": "alta",
-        }
-
-    # ── week (single or no platform) ─────────────────────────────
-    if is_week:
-        return {
-            "intent": "week",
-            "platform": platforms[0] if platforms else None,
-            "platforms": None,
-            "plan_type": "week",
             "confidence": "alta",
         }
 
@@ -177,7 +171,7 @@ async def _get_prices_context() -> str:
         from services.exchange_service import get_current_rate
         sb = get_supabase()
         result = sb.table("platforms").select(
-            "name, icon_emoji, monthly_price_usd, express_price_usd, week_price_usd, slug"
+            "name, icon_emoji, monthly_price_usd, express_price_usd, slug"
         ).eq("is_active", True).order("name").execute()
         rate_data = await get_current_rate()
         rate = float((rate_data or {}).get("usd_binance") or 36.0)
@@ -189,9 +183,6 @@ async def _get_prices_context() -> str:
             if p.get("monthly_price_usd"):
                 usd = float(p["monthly_price_usd"])
                 parts.append(f"Mensual ${usd:.2f}/Bs {usd*rate:,.0f}")
-            if p.get("week_price_usd"):
-                usd = float(p["week_price_usd"])
-                parts.append(f"Semanal ${usd:.2f}/Bs {usd*rate:,.0f}")
             if p.get("express_price_usd"):
                 usd = float(p["express_price_usd"])
                 parts.append(f"Express 24h ${usd:.2f}/Bs {usd*rate:,.0f}")
@@ -222,7 +213,7 @@ def _build_system_prompt(user_name: str, active_subs: list[dict], prices_text: s
 
 Información del servicio:
 - Ofrecemos acceso a Netflix, Disney+, Max, Paramount+, Amazon Prime y más plataformas.
-- Planes: Mensual (~30 días), Semanal (7 días), Express (24 horas).
+- Planes: Mensual (~30 días), Express (24 horas).
 - Precios en bolívares (Bs) según tasa Binance del día. Pago por Pago Móvil o transferencia.
 - Una vez aprobado el pago, el cliente recibe sus credenciales por este chat.
 
@@ -334,7 +325,6 @@ async def _lookup_platforms_from_items(items_raw: list[dict]) -> tuple[list[dict
         price_field = {
             "monthly": "monthly_price_usd",
             "express": "express_price_usd",
-            "week": "week_price_usd",
         }.get(item_plan, "monthly_price_usd")
         price_usd = float(plat.get(price_field) or 0)
 
@@ -404,7 +394,7 @@ async def _handle_multi_order(update, telegram_id: int, text: str, intent_data: 
 
         lines = ["🛒 <b>Tu carrito:</b>\n"]
         for item in cart_items:
-            plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(item["plan_type"], item["plan_type"])
+            plan_label = {"monthly": "Mensual", "express": "Express 24h"}.get(item["plan_type"], item["plan_type"])
             lines.append(f"<b>{item['name']}</b> — {plan_label}: ${item['price_usd']:.2f} / Bs {item['price_bs']:,.0f}")
         lines.append(f"\n<b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
         if not_found:
@@ -478,30 +468,72 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # ── subscribe ─────────────────────────────────────────────
         if intent == "subscribe" and confidence != "baja":
-            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-            await _send_platform_menu(
-                update.message, "monthly",
-                f"¡Claro! 🎬 Elige la plataforma{platform_hint} para tu suscripción mensual:",
-            )
-            bot_reply = f"Menú mensual mostrado."
+            if platform:
+                # Known platform → direct offer with confirm button
+                from database.platforms import get_platform_by_slug
+                from services.exchange_service import get_current_rate
+                plat_db = await get_platform_by_slug(platform)
+                if plat_db:
+                    rate_data = await get_current_rate()
+                    rate = float((rate_data or {}).get("usd_binance") or 36.0)
+                    price_usd = float(plat_db.get("monthly_price_usd") or 0)
+                    price_bs = round(price_usd * rate, 2)
+                    icon = plat_db.get("icon_emoji", "📺")
+                    name = plat_db.get("name", platform.capitalize())
+                    pid = str(plat_db["id"])
+                    from bot.keyboards import confirm_order_keyboard
+                    await update.message.reply_text(
+                        f"¡Perfecto! 🎬\n\n"
+                        f"{icon} <b>{name}</b> — Plan Mensual\n"
+                        f"💵 ${price_usd:.2f} / Bs {price_bs:,.0f}\n\n"
+                        f"¿Confirmamos tu pedido?",
+                        parse_mode="HTML",
+                        reply_markup=confirm_order_keyboard(pid, "monthly"),
+                    )
+                    bot_reply = f"Oferta directa {name} mensual."
+                else:
+                    await _send_platform_menu(
+                        update.message, "monthly",
+                        f"¡Claro! 🎬 Elige la plataforma para tu suscripción mensual:",
+                    )
+                    bot_reply = "Menú mensual mostrado."
+            else:
+                await _send_platform_menu(
+                    update.message, "monthly",
+                    "¡Claro! 🎬 ¿Qué plataforma quieres contratar?",
+                )
+                bot_reply = "Menú mensual mostrado."
 
         # ── express ───────────────────────────────────────────────
         elif intent == "express" and confidence != "baja":
-            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-            await _send_platform_menu(
-                update.message, "express",
-                f"⚡ ¡Express 24h!{' ' + platform_hint if platform else ''} Elige la plataforma:",
-            )
-            bot_reply = "Menú express mostrado."
-
-        # ── week ──────────────────────────────────────────────────
-        elif intent == "week" and confidence != "baja":
-            platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
-            await _send_platform_menu(
-                update.message, "week",
-                f"📅 Pack semanal{platform_hint}. Elige la plataforma:",
-            )
-            bot_reply = "Menú semanal mostrado."
+            if platform:
+                from database.platforms import get_platform_by_slug
+                from services.exchange_service import get_current_rate
+                plat_db = await get_platform_by_slug(platform)
+                if plat_db:
+                    rate_data = await get_current_rate()
+                    rate = float((rate_data or {}).get("usd_binance") or 36.0)
+                    price_usd = float(plat_db.get("express_price_usd") or 0)
+                    price_bs = round(price_usd * rate, 2)
+                    icon = plat_db.get("icon_emoji", "📺")
+                    name = plat_db.get("name", platform.capitalize())
+                    pid = str(plat_db["id"])
+                    from bot.keyboards import confirm_order_keyboard
+                    await update.message.reply_text(
+                        f"⚡ ¡Express 24h!\n\n"
+                        f"{icon} <b>{name}</b> — Express 24h\n"
+                        f"💵 ${price_usd:.2f} / Bs {price_bs:,.0f}\n\n"
+                        f"¿Confirmamos tu pedido?",
+                        parse_mode="HTML",
+                        reply_markup=confirm_order_keyboard(pid, "express"),
+                    )
+                    bot_reply = f"Oferta directa {name} express."
+                else:
+                    await _send_platform_menu(update.message, "express", "⚡ ¡Express 24h! Elige la plataforma:")
+                    bot_reply = "Menú express mostrado."
+            else:
+                await _send_platform_menu(update.message, "express", "⚡ ¡Express 24h! ¿Qué plataforma quieres?")
+                bot_reply = "Menú express mostrado."
 
         # ── support ───────────────────────────────────────────────
         elif intent == "support" and confidence != "baja":
@@ -524,7 +556,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     response = (
                         f"🎬 Precios de <b>{plat_cap}</b>:\n\n"
                         + "\n".join(plat_lines)
-                        + "\n\n¿Cuál plan te interesa? Selecciona abajo 👇"
+                        + "\n\n¿Quieres contratar? Elige tu plan 👇"
                     )
                 else:
                     response = f"¡Tenemos <b>{plat_cap}</b> disponible! Elige tu plan abajo 👇"
@@ -615,8 +647,8 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         elif intent == "availability" and confidence != "baja":
             from database.analytics import get_platform_availability
             availability = await get_platform_availability()
-            plan_labels = {"monthly": "mensual", "express": "express 24h", "week": "semanal"}
-            plan_key_map = {"monthly": "monthly_available", "express": "express_available", "week": "week_available"}
+            plan_labels = {"monthly": "mensual", "express": "express 24h"}
+            plan_key_map = {"monthly": "monthly_available", "express": "express_available"}
 
             if platform:
                 match = next(
@@ -641,9 +673,8 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     pname = match.get("name", "")
                     m = match.get("monthly_available", 0)
                     e = match.get("express_available", 0)
-                    w = match.get("week_available", 0)
                     def _slot(n): return f"<b>{n}</b> disponible{'s' if n != 1 else ''}" if n > 0 else "<b>sin stock</b>"
-                    response = f"{icon} <b>Disponibilidad de {pname}:</b>\n\n📅 Mensual: {_slot(m)}\n📆 Semanal: {_slot(w)}\n⚡ Express 24h: {_slot(e)}\n\n¿Cuál plan te interesa?"
+                    response = f"{icon} <b>Disponibilidad de {pname}:</b>\n\n📅 Mensual: {_slot(m)}\n⚡ Express 24h: {_slot(e)}\n\n¿Cuál plan te interesa?"
             else:
                 avail_lines = ["📊 <b>Disponibilidad actual:</b>\n"]
                 for p in availability:
@@ -658,6 +689,35 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 reply_markup=platforms_keyboard(availability, plan_type_hint or "monthly"),
             )
             bot_reply = f"Disponibilidad mostrada."
+
+        # ── cart_view ─────────────────────────────────────────────
+        elif intent == "cart_view":
+            from services.cart_service import get_cart
+            from bot.keyboards import cart_keyboard as _ck
+            cart = get_cart(telegram_id)
+            if cart:
+                from services.exchange_service import get_current_rate
+                rate_data = await get_current_rate()
+                rate = float((rate_data or {}).get("usd_binance") or 36.0)
+                lines = ["🛒 <b>Tu carrito actual:</b>\n"]
+                total_usd = 0.0
+                total_bs = 0.0
+                for item in cart:
+                    plan_label = {"monthly": "Mensual", "express": "Express 24h"}.get(item.get("plan_type", "monthly"), item.get("plan_type", ""))
+                    p_usd = float(item.get("price_usd") or 0)
+                    p_bs = float(item.get("price_bs") or round(p_usd * rate, 2))
+                    total_usd += p_usd
+                    total_bs += p_bs
+                    lines.append(f"{item.get('emoji','📺')} <b>{item.get('name','?')}</b> — {plan_label}: ${p_usd:.2f} / Bs {p_bs:,.0f}")
+                lines.append(f"\n<b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+                await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=_ck())
+                bot_reply = "Carrito mostrado."
+            else:
+                await update.message.reply_text(
+                    "Tu carrito está vacío.\n\n¿Quieres agregar algún servicio?",
+                    reply_markup=main_menu_keyboard(),
+                )
+                bot_reply = "Carrito vacío."
 
         # ── renewal / cancel ──────────────────────────────────────
         elif intent in ("renewal", "cancel") and confidence != "baja":

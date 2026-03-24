@@ -1157,7 +1157,7 @@ async def payment_approve(
         platform = sub.get("platforms") or {}
         telegram_id = user.get("telegram_id")
         platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
-        durations = {"monthly": 30, "express": 1, "week": 7}
+        durations = {"monthly": 30, "express": 1}
         duration_days = durations.get(plan_type, 30)
 
         # ── RENEWAL CHECK ──────────────────────────────────────────────
@@ -1342,11 +1342,9 @@ async def platform_edit_save(
     icon_emoji: str = Form(default=""),
     monthly_price_usd: float = Form(default=0.0),
     express_price_usd: float = Form(default=0.0),
-    week_price_usd: float = Form(default=0.0),
     is_active: str = Form(default="off"),
     instructions_monthly: str = Form(default=""),
     instructions_express: str = Form(default=""),
-    instructions_week: str = Form(default=""),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -1360,11 +1358,9 @@ async def platform_edit_save(
             "icon_emoji": icon_emoji,
             "monthly_price_usd": monthly_price_usd,
             "express_price_usd": express_price_usd,
-            "week_price_usd": week_price_usd,
             "is_active": is_active == "on",
             "instructions_monthly": instructions_monthly or None,
             "instructions_express": instructions_express or None,
-            "instructions_week": instructions_week or None,
         }).eq("id", platform_id).execute()
         return RedirectResponse(url="/panel/platforms?success=Plataforma+actualizada", status_code=302)
     except Exception as e:
@@ -1747,7 +1743,7 @@ async def api_debug_availability(request: Request):
             all_profiles = await get_all_profiles_for_platform(pid)
             # What the bot actually queries
             by_type = {}
-            for pt in ("monthly", "express", "week"):
+            for pt in ("monthly", "express"):
                 res = sb.table("profiles").select("id, profile_name, status, profile_type") \
                     .eq("platform_id", pid).eq("profile_type", pt).eq("status", "available").execute()
                 by_type[pt] = len(res.data or [])
@@ -1763,7 +1759,6 @@ async def api_debug_availability(request: Request):
                 "bot_sees": {
                     "monthly_available": by_type["monthly"],
                     "express_available": by_type["express"],
-                    "week_available": by_type["week"],
                 }
             })
         return JSONResponse({"platforms": result})

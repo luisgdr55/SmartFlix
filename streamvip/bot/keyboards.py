@@ -11,7 +11,6 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚡ Express 24h", callback_data="menu:express"),
         ],
         [
-            InlineKeyboardButton("📅 Pack Semanal", callback_data="menu:week"),
             InlineKeyboardButton("📋 Mis Servicios", callback_data="menu:my_services"),
         ],
         [
@@ -31,8 +30,6 @@ def platforms_keyboard(platforms_with_stock: list[dict], plan_type: str) -> Inli
             count = p.get("monthly_available", 0)
         elif plan_type == "express":
             count = p.get("express_available", 0)
-        elif plan_type == "week":
-            count = p.get("week_available", 0)
         stock_label = f"({count} disp.)" if count > 0 else "(Sin stock)"
         buttons.append([
             InlineKeyboardButton(
@@ -207,8 +204,7 @@ def prices_menu_keyboard(platforms: list[dict]) -> InlineKeyboardMarkup:
         pid = str(p.get("id", ""))
         monthly = p.get("monthly_price_usd") or 0
         express = p.get("express_price_usd") or 0
-        week = p.get("week_price_usd") or 0
-        label = f"{icon} {name}  |  M:${monthly}  E:${express}  S:${week}"
+        label = f"{icon} {name}  |  M:${monthly}  E:${express}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"prices:platform:{pid}")])
     buttons.append([
         InlineKeyboardButton("💱 Tasa Binance", callback_data="prices:tasa"),
@@ -222,7 +218,6 @@ def platform_price_edit_keyboard(platform_id: str, platform: dict) -> InlineKeyb
     """Buttons to edit each price type for a platform."""
     monthly = platform.get("monthly_price_usd") or "—"
     express = platform.get("express_price_usd") or "—"
-    week = platform.get("week_price_usd") or "—"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             f"📅 Mensual: ${monthly}",
@@ -233,11 +228,7 @@ def platform_price_edit_keyboard(platform_id: str, platform: dict) -> InlineKeyb
             callback_data=f"prices:edit:{platform_id}:express",
         )],
         [InlineKeyboardButton(
-            f"🗓 Semanal: ${week}",
-            callback_data=f"prices:edit:{platform_id}:week",
-        )],
-        [InlineKeyboardButton(
-            "💾 Guardar los 3 precios a la vez",
+            "💾 Guardar los 2 precios a la vez",
             callback_data=f"prices:edit:{platform_id}:all",
         )],
         [InlineKeyboardButton("🔙 Ver todas las plataformas", callback_data="prices:menu")],

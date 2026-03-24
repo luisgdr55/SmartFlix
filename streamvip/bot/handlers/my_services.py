@@ -62,7 +62,7 @@ async def show_my_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             icon = platform.get("icon_emoji", "📺")
             platform_name = platform.get("name", "?")
             plan_type = sub.get("plan_type", "monthly")
-            plan_labels = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}
+            plan_labels = {"monthly": "Mensual", "express": "Express 24h"}
             plan_label = plan_labels.get(plan_type, plan_type)
             profile_name = profile.get("profile_name", "N/A")
 
@@ -144,7 +144,7 @@ async def handle_service_detail(update: Update, context: ContextTypes.DEFAULT_TY
         days_left = days_remaining(end_dt) if end_dt else 0
         end_date_formatted = format_datetime_vzla(end_dt) if end_dt else "N/A"
 
-        plan_labels = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}
+        plan_labels = {"monthly": "Mensual", "express": "Express 24h"}
         plan_label = plan_labels.get(sub.get("plan_type", "monthly"), "Mensual")
 
         detail_text = (
@@ -211,7 +211,7 @@ async def handle_service_confirm_renewal(
             await query.edit_message_text("Plataforma no encontrada.")
             return
 
-        price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(plan_type, "monthly_price_usd")
+        price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd"}.get(plan_type, "monthly_price_usd")
         price_usd = float(platform.get(price_field) or 4.50)
         price_bs = await calculate_price_bs(price_usd)
         rate = await get_current_rate()
@@ -223,7 +223,7 @@ async def handle_service_confirm_renewal(
         set_user_data(telegram_id, "price_bs", str(price_bs))
         set_user_data(telegram_id, "rate_used", str(rate_value))
 
-        plan_labels = {"monthly": "Mensual (30 días)", "express": "Express (24h)", "week": "Semanal (7 días)"}
+        plan_labels = {"monthly": "Mensual (30 días)", "express": "Express (24h)"}
         plan_label = plan_labels.get(plan_type, plan_type)
 
         confirm_text = (

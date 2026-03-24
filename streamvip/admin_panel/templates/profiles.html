@@ -38,7 +38,6 @@
       <option value="">Todos los tipos</option>
       <option value="monthly" {% if tipo_filter == 'monthly' %}selected{% endif %}>Mensual</option>
       <option value="express" {% if tipo_filter == 'express' %}selected{% endif %}>Express</option>
-      <option value="week" {% if tipo_filter == 'week' %}selected{% endif %}>Semanal</option>
     </select>
     <select name="estado" class="form-input w-auto min-w-[150px] text-sm py-2">
       <option value="">Todos los estados</option>
@@ -91,7 +90,6 @@
               {% set t = p.get('profile_type', '') %}
               {% if t == 'monthly' %}<span class="text-xs bg-indigo-600/20 text-indigo-300 px-2 py-0.5 rounded-full">Mensual</span>
               {% elif t == 'express' %}<span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">⚡ Express</span>
-              {% elif t == 'week' %}<span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">Semanal</span>
               {% else %}<span class="text-xs text-slate-400">{{ t }}</span>{% endif %}
             </td>
             <td class="table-cell">

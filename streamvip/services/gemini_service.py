@@ -267,7 +267,6 @@ async def interpret_user_intent(
                         "Intenciones posibles:\n"
                         "- subscribe: quiere contratar acceso mensual (~30 días) a una plataforma\n"
                         "- express: quiere acceso rápido de 24 horas\n"
-                        "- week: quiere acceso por una semana (7 días)\n"
                         "- multi_order: quiere contratar MÚLTIPLES servicios a la vez (menciona 2 o más plataformas)\n"
                         "- credentials: quiere ver sus credenciales/datos de acceso/usuario y contraseña\n"
                         "- availability: pregunta si hay disponibilidad o cuántos slots/pantallas hay\n"
@@ -277,7 +276,7 @@ async def interpret_user_intent(
                         "- info: pregunta sobre precios, cómo funciona, qué plataformas hay\n"
                         "- other: saludo, conversación general, o no relacionado con el servicio\n\n"
                         "Plataformas: netflix, disney, max, paramount, prime, apple, crunchyroll (null si no se menciona)\n"
-                        "Plan: monthly, express, week (null si no se menciona)\n\n"
+                        "Plan: monthly, express (null si no se menciona)\n\n"
                         "Ejemplos:\n"
                         "'quiero ver pelis' → subscribe\n"
                         "'me salió error de contraseña' → support\n"
@@ -290,7 +289,7 @@ async def interpret_user_intent(
                         "'cuántas pantallas netflix tienen?' → availability, platform=netflix\n\n"
                         "Para multi_order: platforms como lista [\"netflix\",\"max\"]. Para otros: platforms=null.\n\n"
                         "Responde ÚNICAMENTE con JSON válido:\n"
-                        '{"intent":"...","platform":"...o null","plan_type":"monthly/express/week/null","platforms":null,"confidence":"alta/media/baja"}'
+                        '{"intent":"...","platform":"...o null","plan_type":"monthly/express/null","platforms":null,"confidence":"alta/media/baja"}'
                     ),
                 },
                 {
@@ -329,7 +328,7 @@ async def extract_order_items(message_text: str) -> list[dict]:
                     "Analiza el mensaje y extrae los servicios de streaming que quiere comprar.\n\n"
                     "Plataformas: netflix, disney, max, hbomax, paramount, prime, apple, crunchyroll\n"
                     "(hbomax y max son la misma: usa 'max'. disney+ es 'disney')\n"
-                    "Planes: monthly (mensual, default si no se especifica), express (24h), week (semanal)\n\n"
+                    "Planes: monthly (mensual, default si no se especifica), express (24h)\n\n"
                     "Devuelve ÚNICAMENTE JSON array válido:\n"
                     '[{"platform":"netflix","plan_type":"monthly"},{"platform":"max","plan_type":"monthly"}]\n\n'
                     "Si no hay servicios claros, devuelve []\n\n"

@@ -146,7 +146,6 @@
                 <td class="table-cell" x-show="!editing">
                   {% set t = sub.get('plan_type','') %}
                   {% if t == 'express' %}<span class="text-xs text-yellow-400">⚡ Express</span>
-                  {% elif t == 'week' %}<span class="text-xs text-blue-400">Semanal</span>
                   {% else %}<span class="text-xs text-slate-300 capitalize">{{ t }}</span>{% endif %}
                 </td>
                 <td class="table-cell text-sm" x-show="!editing">
@@ -205,7 +204,6 @@
                         <select name="plan_type" class="form-input text-sm py-1.5">
                           {% set pt = sub.get('plan_type','') %}
                           <option value="monthly" {% if pt == 'monthly' %}selected{% endif %}>Mensual</option>
-                          <option value="week" {% if pt == 'week' %}selected{% endif %}>Semanal</option>
                           <option value="express" {% if pt == 'express' %}selected{% endif %}>Express</option>
                         </select>
                       </div>
@@ -274,7 +272,6 @@
                 <label class="form-label text-xs">Plan</label>
                 <select name="plan_type" class="form-input text-sm py-2">
                   <option value="monthly">Mensual</option>
-                  <option value="week">Semanal</option>
                   <option value="express">Express</option>
                 </select>
               </div>
@@ -337,7 +334,6 @@
                   <label class="form-label text-xs">Tipo de perfil</label>
                   <select name="new_profile_type" class="form-input text-sm py-2">
                     <option value="monthly">Mensual</option>
-                    <option value="week">Semanal</option>
                     <option value="express">Express</option>
                   </select>
                 </div>
