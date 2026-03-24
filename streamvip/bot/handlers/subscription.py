@@ -181,7 +181,14 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         sub_id = str(sub["id"])
+        # Refresh all session data so handle_payment_photo always has what it needs,
+        # even if the user takes time before sending the comprobante.
         set_user_data(telegram_id, "current_sub_id", sub_id)
+        set_user_data(telegram_id, "selected_platform_id", platform_id)
+        set_user_data(telegram_id, "selected_plan_type", plan_type)
+        set_user_data(telegram_id, "price_usd", str(price_usd))
+        set_user_data(telegram_id, "price_bs", str(price_bs))
+        set_user_data(telegram_id, "rate_used", str(rate_used))
         set_user_state(telegram_id, "awaiting_payment")
 
         # Get payment config
