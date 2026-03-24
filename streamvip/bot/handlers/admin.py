@@ -821,6 +821,9 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
             new_end_date = base + timedelta(days=duration_days)
 
             await confirm_renewal_subscription(sub_id, profile_id, "MANUAL-ADMIN", new_end_date)
+            # Expire the old subscription so dashboard alerts clear
+            from database.subscriptions import expire_subscription
+            await expire_subscription(str(existing_sub["id"]))
             await log_admin_action(telegram_id, "approve_renewal", {"sub_id": sub_id})
 
             if user_tid:

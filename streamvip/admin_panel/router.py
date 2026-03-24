@@ -1157,6 +1157,9 @@ async def payment_approve(
 
             ok = await confirm_renewal_subscription(sub_id, existing_profile_id, payment_reference, new_end_date)
             if ok:
+                # Expire the old subscription so dashboard alerts clear
+                from database.subscriptions import expire_subscription
+                await expire_subscription(str(existing_sub["id"]))
                 if telegram_id:
                     await increment_user_purchases(telegram_id)
                     try:
