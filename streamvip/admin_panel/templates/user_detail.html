@@ -168,7 +168,16 @@
                   {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
                 </td>
                 <td class="table-cell" x-show="!editing">
-                  <button @click="editing = true" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">✏️ Editar</button>
+                  <div class="flex items-center gap-2">
+                    <button @click="editing = true" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">✏️ Editar</button>
+                    {% set s = sub.get('status','') %}
+                    {% if s in ('expired', 'cancelled') %}
+                    <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
+                      onsubmit="return confirm('¿Eliminar esta suscripción {{ s }}? No se puede deshacer.')">
+                      <button type="submit" class="text-xs text-red-400 hover:text-red-300 font-medium transition-colors">🗑️</button>
+                    </form>
+                    {% endif %}
+                  </div>
                 </td>
 
                 <!-- Edit mode (spans all columns) -->

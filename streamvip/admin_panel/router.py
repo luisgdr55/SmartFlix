@@ -218,11 +218,13 @@ async def accounts_list(request: Request):
         logger.error(f"Accounts list error: {e}")
         accounts = []
         platforms = []
+    from utils.helpers import venezuela_now as _ve_now
     return templates.TemplateResponse("accounts.html", {
         "request": request,
         "page": "accounts",
         "accounts": accounts,
         "platforms": platforms,
+        "today_str": _ve_now().strftime("%Y-%m-%d"),
         "success": request.query_params.get("success"),
         "error": request.query_params.get("error"),
     })
@@ -347,6 +349,25 @@ async def account_delete(request: Request, account_id: str):
         return RedirectResponse(url="/panel/accounts?success=Cuenta+eliminada", status_code=302)
     except Exception as e:
         logger.error(f"Account delete error: {e}")
+        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+
+
+@panel_router.post("/accounts/{account_id}/set-status")
+async def account_set_status(request: Request, account_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        form = await request.form()
+        status = (form.get("status") or "").strip()
+        if status not in ("active", "suspended", "expired"):
+            return RedirectResponse(url="/panel/accounts?error=Estado+invalido", status_code=302)
+        sb = get_supabase()
+        sb.table("accounts").update({"status": status}).eq("id", account_id).execute()
+        return RedirectResponse(url=request.headers.get("referer", "/panel/accounts"), status_code=302)
+    except Exception as e:
+        logger.error(f"Account set-status error: {e}")
         return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
 
 
@@ -1035,7 +1056,8 @@ async def subscription_delete(request: Request, sub_id: str):
     try:
         from database.subscriptions import delete_subscription
         await delete_subscription(sub_id)
-        return RedirectResponse(url="/panel/subscriptions?success=Suscripcion+eliminada+correctamente", status_code=302)
+        referer = request.headers.get("referer", "/panel/subscriptions")
+        return RedirectResponse(url=referer, status_code=302)
     except Exception as e:
         return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
 

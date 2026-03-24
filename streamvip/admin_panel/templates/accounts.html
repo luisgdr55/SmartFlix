@@ -56,11 +56,33 @@
             </td>
             <td class="table-cell font-mono text-sm text-slate-300">{{ acc.get('email', '—') }}</td>
             <td class="table-cell">
-              {% if acc.get('status') == 'active' %}<span class="badge-active">Activa</span>
-              {% elif acc.get('status') == 'suspended' %}<span class="badge-expired">Suspendida</span>
-              {% else %}<span class="badge-expired">{{ acc.get('status', '—') }}</span>{% endif %}
+              {% set st = acc.get('status', '') %}
+              {% set bd = (acc.get('billing_date') or '')[:10] %}
+              {% set billing_overdue = bd and bd <= today_str %}
+              <form action="/panel/accounts/{{ acc['id'] }}/set-status" method="POST">
+                <select name="status" onchange="this.form.submit()"
+                  class="text-xs rounded-lg px-2 py-1 border font-medium cursor-pointer focus:outline-none
+                  {% if st == 'active' and not billing_overdue %}bg-emerald-500/15 border-emerald-500/40 text-emerald-300
+                  {% elif st == 'active' and billing_overdue %}bg-amber-500/15 border-amber-500/40 text-amber-300
+                  {% else %}bg-red-500/15 border-red-500/40 text-red-300{% endif %}">
+                  <option value="active" {% if st == 'active' %}selected{% endif %}>
+                    {% if billing_overdue %}⚠️ Activa (vencida){% else %}🟢 Activa{% endif %}
+                  </option>
+                  <option value="suspended" {% if st == 'suspended' %}selected{% endif %}>🔴 Suspendida</option>
+                  <option value="expired" {% if st == 'expired' %}selected{% endif %}>⚪ Vencida</option>
+                </select>
+              </form>
             </td>
-            <td class="table-cell text-slate-400 text-sm">{{ acc.get('billing_date', '—') or '—' }}</td>
+            <td class="table-cell text-sm">
+              {% set bd = (acc.get('billing_date') or '')[:10] %}
+              {% if bd %}
+                {% if bd <= today_str %}
+                  <span class="text-red-400 font-medium">{{ bd }}</span>
+                {% else %}
+                  <span class="text-slate-400">{{ bd }}</span>
+                {% endif %}
+              {% else %}—{% endif %}
+            </td>
             <td class="table-cell text-center">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full {% if acc.get('profile_count', 0) > 0 %}bg-indigo-600/30 text-indigo-300{% else %}bg-slate-700 text-slate-500{% endif %} text-xs font-bold">
                 {{ acc.get('profile_count', 0) }}
