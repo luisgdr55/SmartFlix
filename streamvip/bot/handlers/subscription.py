@@ -396,3 +396,216 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         except Exception:
             pass
+
+
+async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Create pending_payment subscriptions for all cart items and show payment instructions."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+
+    telegram_id = update.effective_user.id
+
+    try:
+        from services.cart_service import get_cart, clear_cart
+        from services.payment_service import get_payment_config
+
+        cart = get_cart(telegram_id)
+        if not cart:
+            await query.edit_message_text(
+                "Tu carrito está vacío. Usa el menú para agregar servicios.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+
+        user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            await query.edit_message_text("No encontramos tu cuenta. Usa /start.")
+            return
+
+        now = venezuela_now()
+        sub_ids = []
+        lines = ["📋 <b>Pedido confirmado:</b>\n"]
+
+        for item in cart:
+            plan_type = item.get("plan_type", "monthly")
+            price_usd = float(item.get("price_usd") or 0)
+            price_bs = float(item.get("price_bs") or 0)
+            platform_id = item.get("platform_id")
+            name = item.get("name", "?")
+            emoji = item.get("emoji", "📺")
+            plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h", "week": "Semanal 7d"}.get(plan_type, plan_type)
+
+            sub = await create_subscription(
+                user_id=str(user["id"]),
+                platform_id=platform_id,
+                plan_type=plan_type,
+                price_usd=price_usd,
+                price_bs=price_bs,
+                rate_used=float(item.get("rate_used") or 36),
+            )
+            if sub:
+                sub_ids.append(str(sub["id"]))
+                lines.append(f"{emoji} <b>{name}</b> — {plan_label}: Bs {price_bs:,.0f}")
+
+        if not sub_ids:
+            await query.edit_message_text(
+                "Error al crear los pedidos. Intenta de nuevo o contacta soporte.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+
+        total_bs = sum(float(i.get("price_bs") or 0) for i in cart)
+        total_usd = sum(float(i.get("price_usd") or 0) for i in cart)
+        lines.append(f"\n💰 <b>Total a pagar: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+
+        payment_cfg = await get_payment_config()
+
+        payment_text = (
+            "\n".join(lines) + "\n\n"
+            "📲 <b>Instrucciones de pago:</b>\n\n"
+            f"🏦 Banco: <b>{payment_cfg.get('banco', 'N/A')}</b>\n"
+            f"📱 Teléfono: <b>{payment_cfg.get('telefono', 'N/A')}</b>\n"
+            f"🪪 Cédula: <b>{payment_cfg.get('cedula', 'N/A')}</b>\n"
+            f"👤 Titular: <b>{payment_cfg.get('titular', 'N/A')}</b>\n\n"
+            f"💵 Monto exacto: <b>Bs {total_bs:,.2f}</b>\n\n"
+            "📸 Envía el comprobante aquí y el equipo lo revisará enseguida. ¡Gracias! 🙏"
+        )
+
+        # Store cart sub IDs and total in state for payment photo routing
+        set_user_state(telegram_id, "awaiting_cart_payment")
+        set_user_data(telegram_id, "cart_sub_ids", ",".join(sub_ids))
+        set_user_data(telegram_id, "cart_total_bs", str(total_bs))
+        set_user_data(telegram_id, "cart_total_usd", str(total_usd))
+
+        clear_cart(telegram_id)
+
+        await query.edit_message_text(payment_text, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"handle_cart_confirm error: {e}", exc_info=True)
+        await query.edit_message_text(
+            "Error al procesar el pedido. Intenta de nuevo.",
+            reply_markup=main_menu_keyboard(),
+        )
+
+
+async def handle_cart_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear the shopping cart and show main menu."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer("Carrito vaciado")
+
+    from services.cart_service import clear_cart
+    clear_cart(update.effective_user.id)
+
+    await query.edit_message_text(
+        "🗑️ Carrito vaciado. ¿Qué deseas hacer?",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def handle_cart_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process payment comprobante for a multi-service cart order."""
+    if not update.message or not update.effective_user:
+        return
+
+    import hashlib
+    import html as _html
+
+    telegram_id = update.effective_user.id
+
+    try:
+        sub_ids_str = get_user_data(telegram_id, "cart_sub_ids") or ""
+        total_bs_str = get_user_data(telegram_id, "cart_total_bs") or "0"
+        total_usd_str = get_user_data(telegram_id, "cart_total_usd") or "0"
+        sub_ids = [s for s in sub_ids_str.split(",") if s]
+
+        if not sub_ids:
+            await update.message.reply_text(
+                "No encontramos pedidos pendientes. Usa /start para iniciar. 📋"
+            )
+            clear_user_state(telegram_id)
+            return
+
+        total_bs = float(total_bs_str)
+        total_usd = float(total_usd_str)
+
+        photo = update.message.photo[-1]
+        photo_file = await photo.get_file()
+        image_bytes = await photo_file.download_as_bytearray()
+
+        await update.message.reply_text(
+            "⏳ <b>Comprobante recibido</b>\n\nEstamos verificando tu pago. En breve recibirás confirmación. 🙏",
+            parse_mode="HTML",
+        )
+
+        # Anti-fraud hash check
+        img_hash = hashlib.sha256(bytes(image_bytes)).hexdigest()
+        try:
+            from services.payment_service import _check_image_hash_duplicate, _store_image_hash
+            if await _check_image_hash_duplicate(img_hash):
+                await update.message.reply_text(
+                    "❌ Este comprobante ya fue enviado anteriormente.",
+                    reply_markup=payment_received_keyboard(),
+                )
+                return
+        except Exception:
+            pass
+
+        # OCR
+        ocr: dict = {}
+        try:
+            from services.gemini_service import validate_payment_image
+            ocr = await validate_payment_image(bytes(image_bytes))
+        except Exception as e:
+            logger.warning(f"OCR failed in cart payment: {e}")
+
+        reference = ocr.get("referencia") or "SIN-REF"
+        ocr_text = (
+            f"Referencia: {ocr.get('referencia','—')}\nFecha: {ocr.get('fecha','—')}\n"
+            f"Monto: Bs {ocr.get('monto','—')}\nBanco emisor: {ocr.get('banco_emisor','—')}"
+        ) if ocr.get("is_comprobante_valido") else f"OCR no disponible | file_id:{photo.file_id}"
+
+        # Save proof to all sub IDs
+        from database.subscriptions import save_payment_proof
+        for sid in sub_ids:
+            await save_payment_proof(sid, reference, ocr_text)
+
+        try:
+            from services.payment_service import _store_image_hash
+            await _store_image_hash(img_hash)
+        except Exception:
+            pass
+
+        user = await get_user_by_telegram_id(telegram_id)
+        client_name = _html.escape((user or {}).get("name", "") or str(telegram_id))
+
+        from services.notification_service import send_to_admin
+        from bot.keyboards import pending_payment_keyboard
+
+        await send_to_admin("📎 Comprobante (pedido múltiple):", photo_bytes=bytes(image_bytes))
+
+        # Send one approve button per sub
+        for sid in sub_ids:
+            await send_to_admin(
+                f"💳 <b>PAGO MÚLTIPLE</b>\n👤 {client_name} (<code>{telegram_id}</code>)\n"
+                f"💵 Total: ${total_usd:.2f} / Bs {total_bs:,.0f}\n"
+                f"🔖 Sub: <code>{short_id(sid)}</code>\n\n¿Apruebas este servicio?",
+                keyboard=pending_payment_keyboard(sid),
+            )
+
+        clear_user_state(telegram_id)
+        clear_user_data(telegram_id)
+
+    except Exception as e:
+        logger.error(f"handle_cart_payment_photo error: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(
+                "Hubo un problema procesando tu comprobante. Contacta a soporte. 📞",
+                reply_markup=payment_received_keyboard(),
+            )
+        except Exception:
+            pass

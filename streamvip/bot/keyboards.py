@@ -308,3 +308,12 @@ def share_contact_keyboard() -> ReplyKeyboardMarkup:
 
 def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
+
+
+def cart_keyboard() -> InlineKeyboardMarkup:
+    """Cart confirmation keyboard."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirmar pedido", callback_data="cart:confirm")],
+        [InlineKeyboardButton("➕ Agregar otro servicio", callback_data="menu:subscribe")],
+        [InlineKeyboardButton("🗑️ Vaciar carrito", callback_data="cart:clear")],
+    ])

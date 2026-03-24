@@ -26,6 +26,11 @@ async def handle_payment_image(update: Update, context: ContextTypes.DEFAULT_TYP
         await handle_payment_photo(update, context)
         return
 
+    if state == "awaiting_cart_payment":
+        from bot.handlers.subscription import handle_cart_payment_photo
+        await handle_cart_payment_photo(update, context)
+        return
+
     # State missing or expired — check DB for a pending_payment subscription
     try:
         from database.users import get_user_by_telegram_id
