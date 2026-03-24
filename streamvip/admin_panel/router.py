@@ -1148,26 +1148,45 @@ async def payment_reject(
     if guard:
         return guard
     try:
-        from database.subscriptions import get_subscription_by_id, delete_subscription
+        from database.subscriptions import get_subscription_by_id, delete_subscription, get_user_active_subscriptions
         sub = await get_subscription_by_id(sub_id)
         await delete_subscription(sub_id)
-        # Notify user
-        try:
-            if sub:
+
+        if sub:
+            # Delete user if they have no other subscriptions (no failed attempts accumulate)
+            user_id = sub.get("user_id")
+            if user_id:
+                try:
+                    remaining = await get_user_active_subscriptions(str(user_id))
+                    if not remaining:
+                        from database.users import delete_user
+                        await delete_user(str(user_id))
+                        logger.info(f"Deleted user {user_id} after web panel payment rejection")
+                except Exception as del_err:
+                    logger.warning(f"Could not delete user after reject: {del_err}")
+
+            # Notify user via Telegram
+            try:
                 user = sub.get("users") or {}
                 platform = sub.get("platforms") or {}
                 telegram_id = user.get("telegram_id")
                 if telegram_id:
                     from services.notification_service import send_to_user
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    restart_kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Iniciar nuevo pedido", callback_data="menu:subscribe")
+                    ]])
                     msg = (
-                        f"❌ <b>Pago rechazado</b>\n\n"
-                        f"Tu pago para <b>{platform.get('icon_emoji','')} {platform.get('name','')}</b> fue rechazado.\n\n"
+                        f"❌ <b>Comprobante no aprobado</b>\n\n"
+                        f"Tu pago para <b>{platform.get('icon_emoji','')} {platform.get('name','')}</b> "
+                        f"no pudo ser verificado.\n\n"
                         f"Motivo: {reason}\n\n"
-                        f"Contáctanos si crees que es un error."
+                        f"Inicia un nuevo pedido y envía el comprobante correcto."
                     )
-                    await send_to_user(telegram_id, msg)
-        except Exception as notify_err:
-            logger.warning(f"Could not notify user after reject: {notify_err}")
+                    await send_to_user(telegram_id, msg, keyboard=restart_kb)
+            except Exception as notify_err:
+                logger.warning(f"Could not notify user after reject: {notify_err}")
+
         return RedirectResponse(url="/panel/payments?success=Pago+rechazado", status_code=302)
     except Exception as e:
         logger.error(f"Payment reject error: {e}")

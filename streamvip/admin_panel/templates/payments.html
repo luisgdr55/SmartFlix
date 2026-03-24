@@ -70,18 +70,22 @@
           </div>
         </div>
 
-        <!-- Payment image -->
+        <!-- OCR payment data -->
         {% if sub.get('payment_image_url') %}
-        <div class="mb-4">
-          <a href="{{ sub['payment_image_url'] }}" target="_blank" class="block">
-            <img src="{{ sub['payment_image_url'] }}" alt="Comprobante"
-              class="w-full h-32 object-cover rounded-xl border border-slate-700 hover:border-indigo-500/50 transition-colors cursor-zoom-in" />
-          </a>
-          <p class="text-xs text-slate-500 mt-1 text-center">📎 Click para ver comprobante completo</p>
+        <div class="mb-4 bg-slate-900/50 border border-slate-600/40 rounded-xl p-3">
+          <p class="text-xs text-slate-400 font-semibold mb-2">📋 Datos del comprobante (OCR):</p>
+          <pre class="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{{ sub['payment_image_url'] }}</pre>
         </div>
         {% else %}
-        <div class="mb-4 h-20 bg-slate-700/30 rounded-xl border border-dashed border-slate-600 flex items-center justify-center">
-          <p class="text-xs text-slate-500">Sin imagen de comprobante</p>
+        <div class="mb-4 h-16 bg-slate-700/30 rounded-xl border border-dashed border-slate-600 flex items-center justify-center">
+          <p class="text-xs text-slate-500">Sin datos de comprobante</p>
+        </div>
+        {% endif %}
+
+        <!-- Reference -->
+        {% if sub.get('payment_reference') and sub.get('payment_reference') != 'SIN-REF' %}
+        <div class="mb-3 text-xs text-slate-400">
+          🔖 <span class="text-slate-300">Ref:</span> <span class="font-mono text-emerald-400">{{ sub['payment_reference'] }}</span>
         </div>
         {% endif %}
 

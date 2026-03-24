@@ -231,34 +231,56 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     telegram_id = update.effective_user.id
 
     try:
+        # ── Step 1: Resolve subscription data (Redis primary, DB fallback) ──
         sub_id = get_user_data(telegram_id, "current_sub_id")
         price_bs_str = get_user_data(telegram_id, "price_bs")
         platform_id = get_user_data(telegram_id, "selected_platform_id")
         plan_type = get_user_data(telegram_id, "selected_plan_type") or "monthly"
+        price_usd_str = get_user_data(telegram_id, "price_usd") or "0"
 
+        # If ANY critical key is missing, recover directly from DB
+        # (covers: Redis down, TTL expired, state lost between requests)
         if not sub_id or not price_bs_str or not platform_id:
-            await update.message.reply_text("Sesión expirada. Usa /start para iniciar un nuevo pedido.")
-            clear_user_state(telegram_id)
-            return
+            logger.info(f"Redis session incomplete for {telegram_id}, falling back to DB")
+            user_db = await get_user_by_telegram_id(telegram_id)
+            if user_db:
+                from database.subscriptions import get_user_pending_subscription
+                pending = await get_user_pending_subscription(str(user_db["id"]))
+                if pending:
+                    sub_id = str(pending["id"])
+                    platform_id = str(pending.get("platform_id") or "")
+                    plan_type = pending.get("plan_type") or "monthly"
+                    price_bs_str = str(pending.get("price_bs") or "0")
+                    price_usd_str = str(pending.get("price_usd") or "0")
+                else:
+                    await update.message.reply_text(
+                        "No encontramos un pedido pendiente. "
+                        "Usa /start para iniciar un nuevo pedido. 📋"
+                    )
+                    clear_user_state(telegram_id)
+                    return
+            else:
+                await update.message.reply_text(
+                    "No encontramos tu cuenta. Usa /start para comenzar. 📋"
+                )
+                return
 
         price_bs = float(price_bs_str)
-        price_usd = float(get_user_data(telegram_id, "price_usd") or 0)
+        price_usd = float(price_usd_str)
 
-        # Download photo — also grab the real HTTPS URL for dashboard
+        # ── Step 2: Download photo ────────────────────────────────────────
         photo = update.message.photo[-1]
         photo_file = await photo.get_file()
         image_bytes = await photo_file.download_as_bytearray()
-        # file_path in PTB v20 is the full Telegram CDN URL
-        payment_image_url = photo_file.file_path or f"tg://photo/{photo.file_id}"
 
-        # Immediately acknowledge to client — no matter what happens next
+        # ── Step 3: Immediate client acknowledgment ───────────────────────
         await update.message.reply_text(
             "⏳ <b>Comprobante recibido</b>\n\n"
             "Estamos verificando tu pago. En breve recibirás confirmación. 🙏",
             parse_mode="HTML",
         )
 
-        # ── Anti-fraud: duplicate image check (fast, no LLM needed) ──────
+        # ── Step 4: Anti-fraud duplicate check ───────────────────────────
         img_hash = hashlib.sha256(bytes(image_bytes)).hexdigest()
         try:
             from services.payment_service import _check_image_hash_duplicate, _store_image_hash
@@ -272,7 +294,7 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass  # Don't let anti-fraud block the flow
 
-        # ── OCR via LLM (best-effort, never blocks) ──────────────────────
+        # ── Step 5: OCR via LLM (best-effort, never blocks) ──────────────
         ocr: dict = {}
         ocr_available = False
         try:
@@ -282,11 +304,33 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.warning(f"OCR failed (non-blocking): {e}")
 
-        reference = ocr.get("referencia") or "N/A"
+        reference = ocr.get("referencia") or "SIN-REF"
 
-        # ── Save proof to DB ─────────────────────────────────────────────
+        # ── Step 6: Build OCR text for dashboard storage ──────────────────
+        def _ov(key: str, default: str = "—") -> str:
+            val = ocr.get(key)
+            return str(val).strip() if val else default
+
+        if ocr_available:
+            hora_part = f" {_ov('hora')}" if ocr.get("hora") else ""
+            ocr_text_for_db = (
+                f"Referencia: {_ov('referencia')}\n"
+                f"Fecha: {_ov('fecha')}{hora_part}\n"
+                f"Monto: Bs {_ov('monto')}\n"
+                f"Celular destino: {_ov('celular_destino')}\n"
+                f"Cédula receptor: {_ov('cedula_receptor')}\n"
+                f"Banco emisor: {_ov('banco_emisor')}\n"
+                f"Banco receptor: {_ov('banco_receptor')}\n"
+                f"Concepto: {_ov('concepto')}\n"
+                f"Confianza OCR: {_ov('confianza')}"
+            )
+            reference = ocr.get("referencia") or reference
+        else:
+            ocr_text_for_db = f"OCR no disponible | file_id:{photo.file_id}"
+
+        # ── Step 7: Save to DB (reference + OCR text as payment_image_url) ─
         from database.subscriptions import save_payment_proof
-        await save_payment_proof(sub_id, reference, payment_image_url)
+        await save_payment_proof(sub_id, reference, ocr_text_for_db)
 
         # Store image hash to prevent duplicates
         try:
@@ -295,37 +339,30 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
-        # ── Load context for ticket ──────────────────────────────────────
+        # ── Step 8: Load context and build admin ticket ───────────────────
         user = await get_user_by_telegram_id(telegram_id)
         platform = await get_platform_by_id(platform_id)
         plan_label = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal"}.get(plan_type, plan_type)
-        # Escape HTML to prevent Telegram parse errors when names contain special chars
         client_name = _html.escape((user or {}).get("name", "") or str(telegram_id))
         platform_name = _html.escape((platform or {}).get("name", "?"))
 
-        # ── Build admin ticket ───────────────────────────────────────────
         from services.notification_service import send_to_admin
         from bot.keyboards import pending_payment_keyboard
 
         if ocr_available:
-            def _v(key: str, default: str = "—") -> str:
-                val = ocr.get(key)
-                return _html.escape(str(val).strip()) if val else default
-
-            hora_str = f" {_v('hora', '')}" if ocr.get("hora") else ""
+            hora_str = f" {_html.escape(_ov('hora'))}" if ocr.get("hora") else ""
             ocr_section = (
                 f"📋 <b>DATOS DEL COMPROBANTE (OCR)</b>\n\n"
-                f"🔖 <b>Referencia:</b> <code>{_v('referencia')}</code>\n"
-                f"📅 <b>Fecha:</b> {_v('fecha')}{hora_str}\n"
-                f"💰 <b>Monto:</b> Bs {_v('monto')}\n"
-                f"📱 <b>Celular destino:</b> {_v('celular_destino')}\n"
-                f"🪪 <b>Cédula receptor:</b> {_v('cedula_receptor')}\n"
-                f"🏦 <b>Banco emisor:</b> {_v('banco_emisor')}\n"
-                f"🏦 <b>Banco receptor:</b> {_v('banco_receptor')}\n"
-                f"📝 <b>Concepto:</b> {_v('concepto')}\n"
-                f"🔍 <b>Confianza OCR:</b> {_v('confianza')}"
+                f"🔖 <b>Referencia:</b> <code>{_html.escape(_ov('referencia'))}</code>\n"
+                f"📅 <b>Fecha:</b> {_html.escape(_ov('fecha'))}{hora_str}\n"
+                f"💰 <b>Monto:</b> Bs {_html.escape(_ov('monto'))}\n"
+                f"📱 <b>Celular destino:</b> {_html.escape(_ov('celular_destino'))}\n"
+                f"🪪 <b>Cédula receptor:</b> {_html.escape(_ov('cedula_receptor'))}\n"
+                f"🏦 <b>Banco emisor:</b> {_html.escape(_ov('banco_emisor'))}\n"
+                f"🏦 <b>Banco receptor:</b> {_html.escape(_ov('banco_receptor'))}\n"
+                f"📝 <b>Concepto:</b> {_html.escape(_ov('concepto'))}\n"
+                f"🔍 <b>Confianza OCR:</b> {_html.escape(_ov('confianza'))}"
             )
-            reference = ocr.get("referencia") or reference
         else:
             ocr_section = (
                 "📋 <b>COMPROBANTE RECIBIDO</b>\n\n"
@@ -341,12 +378,11 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             f"¿Apruebas o rechazas este pago?"
         )
 
-        # Send image first so admin can see the comprobante
-        await send_to_admin("📎 Comprobante adjunto:", photo_bytes=bytes(image_bytes))
-        # Then send ticket with Approve/Reject buttons
+        # ── Step 9: Notify admin (image first, then ticket with buttons) ──
+        await send_to_admin("📎 Comprobante del cliente:", photo_bytes=bytes(image_bytes))
         await send_to_admin(admin_ticket, keyboard=pending_payment_keyboard(sub_id))
 
-        # Clear state
+        # ── Step 10: Clear state ──────────────────────────────────────────
         clear_user_state(telegram_id)
         clear_user_data(telegram_id)
 
