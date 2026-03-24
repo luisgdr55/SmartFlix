@@ -1157,11 +1157,11 @@ async def payment_approve(
                 base = now
             new_end_date = base + timedelta(days=duration_days)
 
-            ok = await confirm_renewal_subscription(sub_id, existing_profile_id, payment_reference, new_end_date)
+            ok = await confirm_renewal_subscription(str(existing_sub["id"]), existing_profile_id, payment_reference, new_end_date)
             if ok:
-                # Expire the old subscription so dashboard alerts clear
-                from database.subscriptions import expire_subscription
-                await expire_subscription(str(existing_sub["id"]))
+                # Cancel the new pending sub (it's a duplicate — the existing one was updated)
+                from database.subscriptions import cancel_subscription
+                await cancel_subscription(sub_id)
                 if telegram_id:
                     await increment_user_purchases(telegram_id)
                     try:
