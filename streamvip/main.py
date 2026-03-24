@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from telegram import Update, Bot
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    filters
+    filters, Defaults
 )
 
 from config import settings
@@ -53,7 +53,7 @@ def build_telegram_app() -> Application:
     )
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
 
     # =====================================================
     # COMMAND HANDLERS
