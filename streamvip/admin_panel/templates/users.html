@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Clientes — StreamVip Admin{% endblock %}
+{% block header_title %}Clientes{% endblock %}
+
+{% block content %}
+<div>
+
+  {% if success %}
+  <div class="mb-4 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>
+  {% endif %}
+
+  <!-- Header + Search -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div>
+      <h2 class="text-xl font-bold text-white">👥 Clientes</h2>
+      <p class="text-sm text-slate-400 mt-0.5">{{ total }} cliente(s) registrado(s)</p>
+    </div>
+    <form method="GET" action="/panel/users" class="flex gap-2">
+      <input type="search" name="q" value="{{ search }}"
+        placeholder="Buscar por nombre o @usuario..."
+        class="form-input w-72 text-sm py-2" />
+      <button type="submit" class="btn-secondary py-2">🔍</button>
+      {% if search %}
+      <a href="/panel/users" class="btn-secondary py-2 text-red-400">✕</a>
+      {% endif %}
+    </form>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/30">
+            <th class="table-header">Nombre</th>
+            <th class="table-header">@Usuario</th>
+            <th class="table-header">Telegram ID</th>
+            <th class="table-header">Registro</th>
+            <th class="table-header">Última vez</th>
+            <th class="table-header text-center">Compras</th>
+            <th class="table-header">Estado</th>
+            <th class="table-header">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr class="table-row cursor-pointer" onclick="window.location='/panel/users/{{ u['id'] }}'">
+            <td class="table-cell font-medium text-slate-200">{{ u.get('name') or 'Sin nombre' }}</td>
+            <td class="table-cell text-slate-400">{% if u.get('username') %}@{{ u['username'] }}{% else %}—{% endif %}</td>
+            <td class="table-cell font-mono text-xs text-slate-500">{{ u.get('telegram_id', '—') }}</td>
+            <td class="table-cell text-slate-400 text-sm">{{ u.get('created_at', '—')[:10] if u.get('created_at') else '—' }}</td>
+            <td class="table-cell text-slate-400 text-sm">{{ u.get('last_seen', '—')[:16] if u.get('last_seen') else '—' }}</td>
+            <td class="table-cell text-center">
+              <span class="inline-flex items-center justify-center w-7 h-7 rounded-full {% if (u.get('total_purchases') or 0) > 0 %}bg-indigo-600/30 text-indigo-300{% else %}bg-slate-700 text-slate-500{% endif %} text-xs font-bold">
+                {{ u.get('total_purchases') or 0 }}
+              </span>
+            </td>
+            <td class="table-cell" onclick="event.stopPropagation()">
+              {% if u.get('status') == 'active' %}<span class="badge-active">Activo</span>
+              {% elif u.get('status') == 'blocked' %}<span class="badge-blocked">Bloqueado</span>
+              {% else %}<span class="badge-expired">{{ u.get('status','—') }}</span>{% endif %}
+            </td>
+            <td class="table-cell" onclick="event.stopPropagation()">
+              <div class="flex items-center gap-2">
+                <a href="/panel/users/{{ u['id'] }}" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">Ver</a>
+                {% if u.get('status') == 'blocked' %}
+                <form action="/panel/users/{{ u['id'] }}/unblock" method="POST">
+                  <button type="submit" class="text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 px-3 py-1.5 rounded-lg transition-colors">Desbloquear</button>
+                </form>
+                {% else %}
+                <form action="/panel/users/{{ u['id'] }}/block" method="POST">
+                  <button type="submit" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">Bloquear</button>
+                </form>
+                {% endif %}
+                <form action="/panel/users/{{ u['id'] }}/delete" method="POST" onsubmit="return confirm('¿Eliminar a {{ u.get('name','este cliente') }} y todas sus suscripciones? Esta acción no se puede deshacer.')">
+                  <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="table-cell text-center text-slate-500 py-16">
+              <div class="flex flex-col items-center gap-3">
+                <span class="text-4xl opacity-30">👥</span>
+                <p>{% if search %}No se encontraron clientes con "{{ search }}"{% else %}Sin clientes registrados{% endif %}</p>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="px-6 py-4 border-t border-slate-700/50 flex items-center justify-between">
+      <p class="text-sm text-slate-400">
+        Página {{ current_page }} de {{ total_pages }} — {{ total }} clientes
+      </p>
+      <div class="flex items-center gap-2">
+        {% if current_page > 1 %}
+        <a href="?page={{ current_page - 1 }}{% if search %}&q={{ search }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
+        {% endif %}
+        {% if current_page < total_pages %}
+        <a href="?page={{ current_page + 1 }}{% if search %}&q={{ search }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

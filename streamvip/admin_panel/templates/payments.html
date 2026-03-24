@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Pagos Pendientes — StreamVip Admin{% endblock %}
+{% block header_title %}Pagos Pendientes{% endblock %}
+
+{% block content %}
+<div x-data="paymentsApp()" x-init="init()">
+
+  {% if success %}
+  <div class="mb-4 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>
+  {% endif %}
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-xl font-bold text-white">⏳ Pagos Pendientes</h2>
+      <p class="text-sm text-slate-400 mt-0.5">
+        <span x-text="pendingCount">{{ pending|length }}</span> pago(s) esperando revisión
+        <span class="ml-2 text-xs text-slate-600">· Auto-actualiza cada 30s</span>
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+        Auto-refresh activo
+      </div>
+      <button @click="manualRefresh()" class="btn-secondary text-sm py-2">🔄 Actualizar</button>
+    </div>
+  </div>
+
+  <!-- Pending cards -->
+  {% if pending %}
+  <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5" id="payments-grid">
+    {% for sub in pending %}
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden hover:border-indigo-500/30 transition-colors" id="payment-{{ sub['id'] }}">
+
+      <!-- Card header -->
+      <div class="px-5 py-4 border-b border-slate-700/50 bg-slate-900/30 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-lg font-bold text-indigo-300">
+            {{ ((sub.get('users') or {}).get('name') or 'U')[0].upper() }}
+          </div>
+          <div>
+            <p class="font-semibold text-white text-sm">{{ (sub.get('users') or {}).get('name') or 'Sin nombre' }}</p>
+            <p class="text-xs text-slate-400">
+              {% if (sub.get('users') or {}).get('username') %}@{{ sub['users']['username'] }}{% else %}Sin @usuario{% endif %}
+            </p>
+          </div>
+        </div>
+        <span class="badge-pending text-xs">Pendiente</span>
+      </div>
+
+      <!-- Card body -->
+      <div class="p-5">
+        <!-- Platform + plan -->
+        <div class="flex items-center gap-3 mb-4">
+          <span class="text-2xl">{{ (sub.get('platforms') or {}).get('icon_emoji','📺') }}</span>
+          <div>
+            <p class="font-medium text-slate-200">{{ (sub.get('platforms') or {}).get('name','—') }}</p>
+            <p class="text-xs text-slate-400 capitalize">
+              Plan: {% set t = sub.get('plan_type','') %}
+              {% if t == 'express' %}⚡ Express{% elif t == 'week' %}Semanal{% else %}{{ t }}{% endif %}
+            </p>
+          </div>
+          <div class="ml-auto text-right">
+            <p class="font-bold text-emerald-400">${{ "%.2f"|format(sub.get('price_usd') or 0) }}</p>
+            <p class="text-xs text-slate-500">Bs {{ "{:,.0f}".format(sub.get('price_bs') or 0) }}</p>
+          </div>
+        </div>
+
+        <!-- OCR payment data -->
+        {% if sub.get('payment_image_url') %}
+        <div class="mb-4 bg-slate-900/50 border border-slate-600/40 rounded-xl p-3">
+          <p class="text-xs text-slate-400 font-semibold mb-2">📋 Datos del comprobante (OCR):</p>
+          <pre class="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{{ sub['payment_image_url'] }}</pre>
+        </div>
+        {% else %}
+        <div class="mb-4 h-16 bg-slate-700/30 rounded-xl border border-dashed border-slate-600 flex items-center justify-center">
+          <p class="text-xs text-slate-500">Sin datos de comprobante</p>
+        </div>
+        {% endif %}
+
+        <!-- Reference -->
+        {% if sub.get('payment_reference') and sub.get('payment_reference') != 'SIN-REF' %}
+        <div class="mb-3 text-xs text-slate-400">
+          🔖 <span class="text-slate-300">Ref:</span> <span class="font-mono text-emerald-400">{{ sub['payment_reference'] }}</span>
+        </div>
+        {% endif %}
+
+        <!-- Subscription details -->
+        <div class="text-xs text-slate-500 mb-4 space-y-1">
+          <p>📅 Solicitado: {{ sub.get('created_at','—')[:16] if sub.get('created_at') else '—' }}</p>
+          <p>🔖 ID: <span class="font-mono text-slate-400">{{ sub['id'][:8] }}...</span></p>
+        </div>
+
+        <!-- Approve form -->
+        {% set pid = sub.get('platform_id','') %}
+        {% set profiles = profiles_map.get(pid, []) %}
+        {% set is_renewal = renewal_map.get(sub['id'], False) %}
+        <form action="/panel/payments/{{ sub['id'] }}/approve" method="POST" class="space-y-3">
+          {% if is_renewal %}
+          <div class="bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs text-indigo-300">
+            🔄 <b>Renovación</b> — el cliente ya tiene perfil asignado. Se extenderá la fecha de corte automáticamente.
+          </div>
+          {% else %}
+          <div>
+            <label class="form-label text-xs">Asignar perfil *</label>
+            <select name="profile_id" required class="form-input text-sm py-2">
+              <option value="">Selecciona un perfil disponible...</option>
+              {% for prof in profiles %}
+              <option value="{{ prof['id'] }}">{{ prof.get('profile_name','') }} ({{ prof.get('profile_type','') }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div>
+            <label class="form-label text-xs">Referencia de pago</label>
+            <input type="text" name="payment_reference" placeholder="Ref. o nota" value="PANEL-APROBADO" class="form-input text-sm py-2" />
+          </div>
+          <div class="flex gap-2 pt-1">
+            <button type="submit" class="btn-success flex-1 justify-center text-sm py-2.5">
+              ✅ {% if is_renewal %}Aprobar Renovación{% else %}Aprobar{% endif %}
+            </button>
+            <button type="button"
+              @click="rejectSub('{{ sub['id'] }}')"
+              class="btn-danger flex-1 justify-center text-sm py-2.5">
+              ❌ Rechazar
+            </button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-16 text-center">
+    <div class="flex flex-col items-center gap-4">
+      <span class="text-6xl opacity-30">✅</span>
+      <h3 class="text-xl font-semibold text-white">Sin pagos pendientes</h3>
+      <p class="text-slate-400 text-sm">Todos los pagos han sido procesados.</p>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Expired subscriptions -->
+  {% if expired %}
+  <div class="mt-10">
+    <div class="flex items-center gap-3 mb-4">
+      <h2 class="text-lg font-bold text-white">🔴 Suscripciones Vencidas</h2>
+      <span class="bg-red-500/20 text-red-400 text-xs font-semibold px-2.5 py-1 rounded-full border border-red-500/30">{{ expired|length }}</span>
+    </div>
+    <p class="text-sm text-slate-400 mb-4">Estas suscripciones siguen como "activas" en la base de datos pero su fecha de vencimiento ya pasó. Requieren atención.</p>
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/20">
+            <th class="table-header">Cliente</th>
+            <th class="table-header">Plataforma</th>
+            <th class="table-header">Plan</th>
+            <th class="table-header">Venció</th>
+            <th class="table-header">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sub in expired %}
+          <tr class="table-row">
+            <td class="table-cell">
+              <div>
+                <p class="font-medium text-sm text-white">{{ (sub.get('users') or {}).get('name') or 'Sin nombre' }}</p>
+                <p class="text-xs text-slate-400">{% if (sub.get('users') or {}).get('username') %}@{{ sub['users']['username'] }}{% endif %}</p>
+              </div>
+            </td>
+            <td class="table-cell">
+              {{ (sub.get('platforms') or {}).get('icon_emoji','📺') }}
+              {{ (sub.get('platforms') or {}).get('name','—') }}
+            </td>
+            <td class="table-cell text-xs capitalize text-slate-300">{{ sub.get('plan_type','—') }}</td>
+            <td class="table-cell text-sm text-red-400 font-medium">
+              {{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}
+            </td>
+            <td class="table-cell">
+              {% set uid = (sub.get('users') or {}).get('id') %}
+              {% if uid %}
+              <a href="/panel/users/{{ uid }}" class="btn-secondary text-xs py-1.5 px-3">Ver cliente</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Reject modal -->
+  <div x-show="showRejectModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+      <h3 class="text-lg font-semibold text-white mb-2">❌ Rechazar pago</h3>
+      <p class="text-slate-400 text-sm mb-4">El cliente será notificado por Telegram.</p>
+      <form :action="'/panel/payments/' + rejectId + '/reject'" method="POST">
+        <div class="mb-4">
+          <label class="form-label text-sm">Motivo del rechazo</label>
+          <textarea name="reason" rows="3" class="form-input resize-none text-sm" placeholder="Ej: Comprobante ilegible, monto incorrecto...">Pago rechazado por el administrador</textarea>
+        </div>
+        <div class="flex gap-3">
+          <button type="button" @click="showRejectModal = false" class="btn-secondary flex-1 justify-center">Cancelar</button>
+          <button type="submit" class="btn-danger flex-1 justify-center">Rechazar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function paymentsApp() {
+  return {
+    pendingCount: {{ pending|length }},
+    showRejectModal: false,
+    rejectId: null,
+    init() {
+      setInterval(() => this.autoRefreshCount(), 30000);
+    },
+    rejectSub(id) {
+      this.rejectId = id;
+      this.showRejectModal = true;
+    },
+    async autoRefreshCount() {
+      try {
+        const res = await fetch('/panel/api/payments/pending');
+        if (!res.ok) return;
+        const data = await res.json();
+        const newCount = data.count || 0;
+        if (newCount !== this.pendingCount) {
+          this.pendingCount = newCount;
+          // Reload page if count changed
+          location.reload();
+        }
+      } catch(e) {}
+    },
+    manualRefresh() {
+      location.reload();
+    }
+  }
+}
+</script>
+{% endblock %}

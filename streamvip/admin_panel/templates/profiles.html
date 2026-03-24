@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Perfiles — StreamVip Admin{% endblock %}
+{% block header_title %}Gestión de Perfiles{% endblock %}
+
+{% block content %}
+<div x-data="{ deleteId: null, showDeleteModal: false }">
+
+  {% if success %}
+  <div class="mb-4 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 flex items-center gap-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>
+  {% endif %}
+
+  <!-- Header + Filters -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div>
+      <h2 class="text-xl font-bold text-white">👤 Perfiles</h2>
+      <p class="text-sm text-slate-400 mt-0.5">{{ profiles|length }} perfil(es)</p>
+    </div>
+    <a href="/panel/profiles/new" class="btn-primary self-start sm:self-auto">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nuevo Perfil
+    </a>
+  </div>
+
+  <!-- Filter bar -->
+  <form method="GET" action="/panel/profiles" class="flex flex-wrap gap-3 mb-6">
+    <select name="platform" class="form-input w-auto min-w-[180px] text-sm py-2">
+      <option value="">Todas las plataformas</option>
+      {% for p in platforms %}
+      <option value="{{ p['id'] }}" {% if platform_filter == p['id'] %}selected{% endif %}>{{ p.get('icon_emoji','') }} {{ p['name'] }}</option>
+      {% endfor %}
+    </select>
+    <select name="tipo" class="form-input w-auto min-w-[150px] text-sm py-2">
+      <option value="">Todos los tipos</option>
+      <option value="monthly" {% if tipo_filter == 'monthly' %}selected{% endif %}>Mensual</option>
+      <option value="express" {% if tipo_filter == 'express' %}selected{% endif %}>Express</option>
+      <option value="week" {% if tipo_filter == 'week' %}selected{% endif %}>Semanal</option>
+    </select>
+    <select name="estado" class="form-input w-auto min-w-[150px] text-sm py-2">
+      <option value="">Todos los estados</option>
+      <option value="available" {% if estado_filter == 'available' %}selected{% endif %}>Disponible</option>
+      <option value="occupied" {% if estado_filter == 'occupied' %}selected{% endif %}>Ocupado</option>
+      <option value="maintenance" {% if estado_filter == 'maintenance' %}selected{% endif %}>Mantenimiento</option>
+    </select>
+    <button type="submit" class="btn-secondary py-2">Filtrar</button>
+    {% if platform_filter or tipo_filter or estado_filter %}
+    <a href="/panel/profiles" class="btn-secondary py-2 text-red-400 hover:text-red-300">✕ Limpiar</a>
+    {% endif %}
+  </form>
+
+  <!-- Table -->
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/30">
+            <th class="table-header">Cuenta</th>
+            <th class="table-header">Perfil</th>
+            <th class="table-header">PIN</th>
+            <th class="table-header">Tipo</th>
+            <th class="table-header">Estado</th>
+            <th class="table-header">Cliente</th>
+            <th class="table-header">Fecha de corte</th>
+            <th class="table-header">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in profiles %}
+          <tr class="table-row">
+            <td class="table-cell text-sm text-slate-400 font-mono">
+              {{ (p.get('accounts') or {}).get('email', '—') }}
+            </td>
+            <td class="table-cell font-medium text-slate-200">
+              {{ p.get('profile_name', '—') }}
+              {% if p.get('is_extra_member') %}
+              <span class="ml-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full">🏠 Extra</span>
+              {% endif %}
+            </td>
+            <td class="table-cell font-mono text-slate-300 text-sm">
+              {% if p.get('is_extra_member') %}
+                <span class="text-xs text-amber-400">{{ p.get('extra_email') or '—' }}</span>
+              {% else %}
+                {{ p.get('pin') or '—' }}
+              {% endif %}
+            </td>
+            <td class="table-cell">
+              {% set t = p.get('profile_type', '') %}
+              {% if t == 'monthly' %}<span class="text-xs bg-indigo-600/20 text-indigo-300 px-2 py-0.5 rounded-full">Mensual</span>
+              {% elif t == 'express' %}<span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">⚡ Express</span>
+              {% elif t == 'week' %}<span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">Semanal</span>
+              {% else %}<span class="text-xs text-slate-400">{{ t }}</span>{% endif %}
+            </td>
+            <td class="table-cell">
+              {% set s = p.get('status', '') %}
+              <form action="/panel/profiles/{{ p['id'] }}/set-status" method="POST">
+                <select name="status" onchange="this.form.submit()"
+                  class="text-xs rounded-lg px-2 py-1 border font-medium cursor-pointer focus:outline-none
+                  {% if s == 'available' %}bg-emerald-500/15 border-emerald-500/40 text-emerald-300
+                  {% elif s == 'occupied' %}bg-red-500/15 border-red-500/40 text-red-300
+                  {% else %}bg-slate-600/30 border-slate-500/40 text-slate-400{% endif %}">
+                  <option value="available" {% if s == 'available' %}selected{% endif %}>🟢 Disponible</option>
+                  <option value="occupied"  {% if s == 'occupied'  %}selected{% endif %}>🔴 Ocupado</option>
+                  <option value="maintenance" {% if s == 'maintenance' %}selected{% endif %}>🔧 Mantenimiento</option>
+                </select>
+              </form>
+            </td>
+            <td class="table-cell text-sm">
+              {% set sub = p.get('_active_sub') %}
+              {% if sub %}
+                {% set u = sub.get('users') or {} %}
+                <span class="text-slate-200">{{ u.get('name') or u.get('username') or '—' }}</span>
+              {% else %}
+                <span class="text-slate-600">—</span>
+              {% endif %}
+            </td>
+            <td class="table-cell text-sm">
+              {% set sub = p.get('_active_sub') %}
+              {% if sub and sub.get('end_date') %}
+                {% set ed = sub['end_date'][:10] %}
+                <span class="font-mono text-amber-300">{{ ed }}</span>
+              {% else %}
+                <span class="text-slate-600">—</span>
+              {% endif %}
+            </td>
+            <td class="table-cell">
+              <div class="flex items-center gap-2">
+                <a href="/panel/profiles/{{ p['id'] }}/edit" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">✏️ Editar</a>
+                <button @click="deleteId = '{{ p['id'] }}'; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="table-cell text-center text-slate-500 py-16">
+              <div class="flex flex-col items-center gap-3">
+                <span class="text-4xl opacity-30">👤</span>
+                <p>No hay perfiles con los filtros seleccionados.</p>
+                <a href="/panel/profiles/new" class="btn-primary text-xs">Crear primer perfil</a>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Delete modal -->
+  <div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+      <h3 class="text-lg font-semibold text-white mb-2">¿Eliminar perfil?</h3>
+      <p class="text-slate-400 text-sm mb-6">Esta acción no se puede deshacer.</p>
+      <div class="flex gap-3">
+        <button @click="showDeleteModal = false" class="btn-secondary flex-1 justify-center">Cancelar</button>
+        <form :action="'/panel/profiles/' + deleteId + '/delete'" method="POST" class="flex-1">
+          <button type="submit" class="btn-danger w-full justify-center">Eliminar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

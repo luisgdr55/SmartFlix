@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Suscripciones — StreamVip Admin{% endblock %}
+{% block header_title %}Suscripciones{% endblock %}
+
+{% block content %}
+<div>
+
+  <!-- Header + Filters -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div>
+      <h2 class="text-xl font-bold text-white">📋 Suscripciones</h2>
+      <p class="text-sm text-slate-400 mt-0.5">{{ total }} suscripción(es)</p>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <form method="GET" action="/panel/subscriptions" class="flex flex-wrap gap-3 mb-6">
+    <select name="status" class="form-input w-auto min-w-[160px] text-sm py-2">
+      <option value="">Todos los estados</option>
+      <option value="active" {% if status_filter == 'active' %}selected{% endif %}>✅ Activas</option>
+      <option value="pending_payment" {% if status_filter == 'pending_payment' %}selected{% endif %}>⏳ Pendientes</option>
+      <option value="expired" {% if status_filter == 'expired' %}selected{% endif %}>❌ Expiradas</option>
+      <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>🚫 Canceladas</option>
+    </select>
+    <select name="platform" class="form-input w-auto min-w-[180px] text-sm py-2">
+      <option value="">Todas las plataformas</option>
+      {% for p in platforms %}
+      <option value="{{ p['id'] }}" {% if platform_filter == p['id'] %}selected{% endif %}>{{ p.get('icon_emoji','') }} {{ p['name'] }}</option>
+      {% endfor %}
+    </select>
+    <select name="plan" class="form-input w-auto min-w-[150px] text-sm py-2">
+      <option value="">Todos los planes</option>
+      <option value="monthly" {% if plan_filter == 'monthly' %}selected{% endif %}>Mensual</option>
+      <option value="express" {% if plan_filter == 'express' %}selected{% endif %}>⚡ Express</option>
+      <option value="week" {% if plan_filter == 'week' %}selected{% endif %}>Semanal</option>
+    </select>
+    <button type="submit" class="btn-secondary py-2">Filtrar</button>
+    {% if status_filter or platform_filter or plan_filter %}
+    <a href="/panel/subscriptions" class="btn-secondary py-2 text-red-400">✕ Limpiar</a>
+    {% endif %}
+  </form>
+
+  <!-- Table -->
+  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/30">
+            <th class="table-header">Cliente</th>
+            <th class="table-header">Plataforma</th>
+            <th class="table-header">Plan</th>
+            <th class="table-header">Inicio</th>
+            <th class="table-header">Vence</th>
+            <th class="table-header">Precio USD</th>
+            <th class="table-header">Estado</th>
+            <th class="table-header">Pago</th>
+            <th class="table-header"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sub in subscriptions %}
+          <tr class="table-row">
+            <td class="table-cell">
+              <div>
+                <p class="font-medium text-slate-200">{{ (sub.get('users') or {}).get('name') or 'Sin nombre' }}</p>
+                {% if (sub.get('users') or {}).get('username') %}
+                <p class="text-xs text-slate-500">@{{ sub['users']['username'] }}</p>
+                {% endif %}
+              </div>
+            </td>
+            <td class="table-cell">
+              {{ (sub.get('platforms') or {}).get('icon_emoji','') }}
+              {{ (sub.get('platforms') or {}).get('name','—') }}
+            </td>
+            <td class="table-cell">
+              {% set t = sub.get('plan_type','') %}
+              {% if t == 'express' %}<span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">⚡ Express</span>
+              {% elif t == 'week' %}<span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">Semanal</span>
+              {% else %}<span class="text-xs bg-indigo-600/20 text-indigo-300 px-2 py-0.5 rounded-full capitalize">{{ t }}</span>{% endif %}
+            </td>
+            <td class="table-cell text-sm text-slate-400">{{ sub.get('start_date','—')[:10] if sub.get('start_date') else '—' }}</td>
+            <td class="table-cell text-sm text-slate-400">{{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}</td>
+            <td class="table-cell font-medium text-emerald-400">${{ "%.2f"|format(sub.get('price_usd') or 0) }}</td>
+            <td class="table-cell">
+              {% set s = sub.get('status','') %}
+              {% if s == 'active' %}<span class="badge-active">Activa</span>
+              {% elif s == 'pending_payment' %}<span class="badge-pending">Pendiente</span>
+              {% elif s == 'expired' %}<span class="badge-expired">Expirada</span>
+              {% elif s == 'cancelled' %}<span class="badge-cancelled">Cancelada</span>
+              {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
+            </td>
+            <td class="table-cell text-sm">
+              {% if sub.get('payment_reference') %}
+              <span class="font-mono text-xs text-slate-400">{{ sub['payment_reference'][:12] }}...</span>
+              {% elif sub.get('status') == 'pending_payment' %}
+              <a href="/panel/payments" class="text-xs text-amber-400 hover:text-amber-300 underline">Revisar →</a>
+              {% else %}
+              <span class="text-slate-600">—</span>
+              {% endif %}
+            </td>
+            <td class="table-cell">
+              <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
+                onsubmit="return confirm('¿Eliminar esta suscripción permanentemente?')">
+                <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-2 py-1 rounded-lg transition-colors">🗑️</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="table-cell text-center text-slate-500 py-16">
+              <div class="flex flex-col items-center gap-3">
+                <span class="text-4xl opacity-30">📋</span>
+                <p>No hay suscripciones con los filtros seleccionados.</p>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="px-6 py-4 border-t border-slate-700/50 flex items-center justify-between">
+      <p class="text-sm text-slate-400">Página {{ current_page }} de {{ total_pages }} — {{ total }} registros</p>
+      <div class="flex items-center gap-2">
+        {% if current_page > 1 %}
+        <a href="?page={{ current_page - 1 }}&status={{ status_filter }}&platform={{ platform_filter }}&plan={{ plan_filter }}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
+        {% endif %}
+        {% if current_page < total_pages %}
+        <a href="?page={{ current_page + 1 }}&status={{ status_filter }}&platform={{ platform_filter }}&plan={{ plan_filter }}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
