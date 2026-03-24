@@ -91,8 +91,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         if user_id:
             try:
+                import html as _html
                 from database.subscriptions import get_user_active_subscriptions
-                from database.users import get_user_by_telegram_id as _get_user
                 from utils.helpers import venezuela_now as _vn
                 subs = await get_user_active_subscriptions(user_id)
                 now = _vn()
@@ -106,18 +106,22 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]
 
                 if pending_subs or expired_subs:
-                    alert_lines = [f"⚠️ <b>Hola {name}, hay cosas que necesitan tu atención:</b>\n"]
+                    safe_name = _html.escape(name)
+                    alert_lines = [f"⚠️ <b>Hola {safe_name}, hay cosas que necesitan tu atención:</b>\n"]
                     for s in pending_subs:
-                        plat = (s.get("platforms") or {}).get("name", "Plataforma")
+                        plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
                         icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
-                        price_bs = s.get("price_bs") or 0
+                        try:
+                            price_bs = float(s.get("price_bs") or 0)
+                        except (TypeError, ValueError):
+                            price_bs = 0.0
                         alert_lines.append(
                             f"{icon} <b>{plat}</b> — pago pendiente\n"
                             f"   💰 Monto: Bs {price_bs:,.0f}\n"
                             f"   📌 Envía tu comprobante de pago para activar."
                         )
                     for s in expired_subs:
-                        plat = (s.get("platforms") or {}).get("name", "Plataforma")
+                        plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
                         icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
                         _ed = (s.get("end_date") or "")[:10]
                         end = f"{_ed[8:10]}-{_ed[5:7]}-{_ed[0:4]}" if len(_ed) >= 10 else _ed
@@ -138,7 +142,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     )
                     return
             except Exception as alert_err:
-                logger.warning(f"Could not check debt/expiry for {telegram_id}: {alert_err}")
+                logger.error(f"Debt/expiry alert failed for {telegram_id}: {alert_err}", exc_info=True)
 
         # Normal menu
         greeting = random.choice(RETURNING_GREETINGS).format(name=name)
