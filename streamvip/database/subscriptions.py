@@ -59,6 +59,36 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
         return []
 
 
+async def get_user_attention_subscriptions(user_id: str) -> dict:
+    """Return subs that need user attention: unpaid debt or expired/vencidas.
+    Covers all statuses (pending_payment, expired_payment, active-past-end, expired).
+    Returns {'pending': [...], 'expired': [...]}
+    """
+    try:
+        sb = get_supabase()
+        now = venezuela_now()
+        today = now.strftime("%Y-%m-%d")
+        result = (
+            sb.table("subscriptions")
+            .select("*, platforms(name, slug, icon_emoji)")
+            .eq("user_id", user_id)
+            .not_.in_("status", ["cancelled"])
+            .execute()
+        )
+        subs = result.data or []
+        pending = [s for s in subs if s.get("status") in ("pending_payment", "expired_payment")]
+        expired = [
+            s for s in subs
+            if s.get("status") in ("active", "expired")
+            and s.get("end_date")
+            and s["end_date"][:10] < today
+        ]
+        return {"pending": pending, "expired": expired}
+    except Exception as e:
+        logger.error(f"Error in get_user_attention_subscriptions: {e}")
+        return {"pending": [], "expired": []}
+
+
 async def get_user_pending_subscription(user_id: str) -> Optional[dict]:
     """Return the most recent pending_payment subscription for a user."""
     try:

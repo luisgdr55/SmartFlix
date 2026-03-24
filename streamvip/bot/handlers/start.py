@@ -92,18 +92,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if user_id:
             try:
                 import html as _html
-                from database.subscriptions import get_user_active_subscriptions
-                from utils.helpers import venezuela_now as _vn
-                subs = await get_user_active_subscriptions(user_id)
-                now = _vn()
-
-                pending_subs = [s for s in subs if s.get("status") == "pending_payment"]
-                expired_subs = [
-                    s for s in subs
-                    if s.get("status") == "active"
-                    and s.get("end_date")
-                    and s["end_date"][:10] < now.strftime("%Y-%m-%d")
-                ]
+                from database.subscriptions import get_user_attention_subscriptions
+                attention = await get_user_attention_subscriptions(user_id)
+                pending_subs = attention["pending"]
+                expired_subs = attention["expired"]
 
                 if pending_subs or expired_subs:
                     safe_name = _html.escape(name)
