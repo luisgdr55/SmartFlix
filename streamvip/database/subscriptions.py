@@ -81,7 +81,7 @@ async def get_user_attention_subscriptions(user_id: str) -> dict:
             s for s in subs
             if s.get("status") in ("active", "expired")
             and s.get("end_date")
-            and s["end_date"][:10] < today
+            and s["end_date"][:10] <= today
         ]
         return {"pending": pending, "expired": expired}
     except Exception as e:
