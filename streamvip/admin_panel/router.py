@@ -385,9 +385,11 @@ async def profiles_list(request: Request):
         if occupied_ids:
             subs_res = sb.table("subscriptions").select(
                 "profile_id, end_date, plan_type, users(name, username)"
-            ).in_("profile_id", occupied_ids).eq("status", "active").execute()
+            ).in_("profile_id", occupied_ids).eq("status", "active").order("end_date", desc=True).execute()
             for s in (subs_res.data or []):
-                subs_map[s["profile_id"]] = s
+                # Only set once per profile: first result has the newest end_date (desc order)
+                if s["profile_id"] not in subs_map:
+                    subs_map[s["profile_id"]] = s
         for p in profiles:
             p["_active_sub"] = subs_map.get(p["id"])
     except Exception as e:
@@ -1147,8 +1149,8 @@ async def payment_approve(
             today_str = now.strftime("%Y-%m-%d")
             if existing_end_str > today_str:
                 try:
-                    base = datetime.fromisoformat(existing_sub["end_date"].replace("Z", "+00:00"))
-                    base = base.replace(tzinfo=now.tzinfo)
+                    y, m, d = map(int, existing_end_str.split("-"))
+                    base = now.replace(year=y, month=m, day=d, hour=23, minute=59, second=59, microsecond=0)
                 except Exception:
                     base = now
             else:

@@ -812,8 +812,8 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
             today_str = now.strftime("%Y-%m-%d")
             if existing_end_str > today_str:
                 try:
-                    base = datetime.fromisoformat(existing_sub["end_date"].replace("Z", "+00:00"))
-                    base = base.replace(tzinfo=now.tzinfo)
+                    y, m, d = map(int, existing_end_str.split("-"))
+                    base = now.replace(year=y, month=m, day=d, hour=23, minute=59, second=59, microsecond=0)
                 except Exception:
                     base = now
             else:
