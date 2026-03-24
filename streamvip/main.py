@@ -118,6 +118,10 @@ def build_telegram_app() -> Application:
     # Price management callbacks (prices:*)
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))
 
+    # Admin natural-language action callbacks (admin_nl:*)
+    from bot.handlers.ai_admin import handle_admin_nl_callback
+    app.add_handler(CallbackQueryHandler(handle_admin_nl_callback, pattern="^admin_nl:"))
+
     # Shopping cart callbacks
     from bot.handlers.subscription import handle_cart_confirm, handle_cart_clear, handle_cart_add
 
@@ -183,9 +187,13 @@ async def _text_message_router(update: Update, context) -> None:
     elif state and state.startswith("admin:edit_client:"):
         await _handle_admin_edit_client_flow(update, context, state)
     else:
-        # AI-powered free-text handler — understands any message by intent
-        from bot.handlers.ai_chat import handle_free_text
-        await handle_free_text(update, context)
+        from utils.validators import is_admin as _is_admin
+        if _is_admin(telegram_id, __import__("config").settings.ADMIN_TELEGRAM_IDS):
+            from bot.handlers.ai_admin import handle_admin_free_text
+            await handle_admin_free_text(update, context)
+        else:
+            from bot.handlers.ai_chat import handle_free_text
+            await handle_free_text(update, context)
 
 
 async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> None:
