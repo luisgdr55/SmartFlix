@@ -249,7 +249,7 @@ async def interpret_user_intent(
 ) -> dict:
     """
     Detecta la intención del usuario por CONTEXTO Y SEMÁNTICA, no por palabras clave.
-    Retorna JSON con intent, platform, confidence.
+    Retorna JSON con intent, platform, platforms, confidence.
     """
     try:
         context_str = "\n".join(
@@ -268,21 +268,29 @@ async def interpret_user_intent(
                         "- subscribe: quiere contratar acceso mensual (~30 días) a una plataforma\n"
                         "- express: quiere acceso rápido de 24 horas\n"
                         "- week: quiere acceso por una semana (7 días)\n"
+                        "- multi_order: quiere contratar MÚLTIPLES servicios a la vez (menciona 2 o más plataformas)\n"
+                        "- credentials: quiere ver sus credenciales/datos de acceso/usuario y contraseña\n"
+                        "- availability: pregunta si hay disponibilidad o cuántos slots/pantallas hay\n"
                         "- support: tiene un problema técnico, no le funciona algo, perdió acceso\n"
                         "- renewal: quiere renovar o preguntar sobre su suscripción actual\n"
                         "- cancel: quiere cancelar o pausar\n"
                         "- info: pregunta sobre precios, cómo funciona, qué plataformas hay\n"
                         "- other: saludo, conversación general, o no relacionado con el servicio\n\n"
-                        "Plataformas reconocibles (pon null si no se menciona ninguna):\n"
-                        "netflix, disney, max, paramount, prime, apple, crunchyroll\n\n"
-                        "IMPORTANTE: Razona por intención. Ejemplos:\n"
-                        "'quiero ver pelis' → subscribe (quiere acceso a streaming)\n"
+                        "Plataformas: netflix, disney, max, paramount, prime, apple, crunchyroll (null si no se menciona)\n"
+                        "Plan: monthly, express, week (null si no se menciona)\n\n"
+                        "Ejemplos:\n"
+                        "'quiero ver pelis' → subscribe\n"
                         "'me salió error de contraseña' → support\n"
                         "'cuánto está la mensualidad' → info\n"
                         "'se me acabó' → renewal\n"
-                        "'hola' → other\n\n"
-                        "Responde ÚNICAMENTE con JSON válido, sin explicaciones:\n"
-                        '{"intent":"...","platform":"...o null","confidence":"alta/media/baja"}'
+                        "'hola' → other\n"
+                        "'quiero netflix y hbomax' → multi_order\n"
+                        "'dime mis datos de cuenta' → credentials\n"
+                        "'hay express de paramount?' → availability, platform=paramount, plan_type=express\n"
+                        "'cuántas pantallas netflix tienen?' → availability, platform=netflix\n\n"
+                        "Para multi_order: platforms como lista [\"netflix\",\"max\"]. Para otros: platforms=null.\n\n"
+                        "Responde ÚNICAMENTE con JSON válido:\n"
+                        '{"intent":"...","platform":"...o null","plan_type":"monthly/express/week/null","platforms":null,"confidence":"alta/media/baja"}'
                     ),
                 },
                 {
@@ -294,17 +302,49 @@ async def interpret_user_intent(
                 },
             ],
             temperature=0.1,
-            max_tokens=80,
+            max_tokens=120,
         )
         text = result.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
-        # Normalize platform null strings
         if data.get("platform") in ("null", "none", "", "None"):
             data["platform"] = None
+        if data.get("platforms") in ("null", "none", "", "None", None):
+            data["platforms"] = None
+        if data.get("plan_type") in ("null", "none", "", "None"):
+            data["plan_type"] = None
         return data
     except Exception as e:
         logger.error(f"Error in interpret_user_intent: {e}")
-        return {"intent": "other", "platform": None, "confidence": "baja"}
+        return {"intent": "other", "platform": None, "platforms": None, "confidence": "baja"}
+
+
+async def extract_order_items(message_text: str) -> list[dict]:
+    """Extract list of {platform, plan_type} from a message about ordering."""
+    try:
+        result = await _call(
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Eres un extractor de pedidos para SmartFlixVe Venezuela.\n"
+                    "Analiza el mensaje y extrae los servicios de streaming que quiere comprar.\n\n"
+                    "Plataformas: netflix, disney, max, hbomax, paramount, prime, apple, crunchyroll\n"
+                    "(hbomax y max son la misma: usa 'max'. disney+ es 'disney')\n"
+                    "Planes: monthly (mensual, default si no se especifica), express (24h), week (semanal)\n\n"
+                    "Devuelve ÚNICAMENTE JSON array válido:\n"
+                    '[{"platform":"netflix","plan_type":"monthly"},{"platform":"max","plan_type":"monthly"}]\n\n'
+                    "Si no hay servicios claros, devuelve []\n\n"
+                    f"Mensaje: {message_text}"
+                ),
+            }],
+            temperature=0.1,
+            max_tokens=200,
+        )
+        text = result.replace("```json", "").replace("```", "").strip()
+        data = json.loads(text)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        logger.error(f"Error in extract_order_items: {e}")
+        return []
 
 
 async def generate_troubleshooting_response(

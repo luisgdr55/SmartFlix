@@ -196,7 +196,8 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Detect intent
     intent_data = await interpret_user_intent(text, conversation)
     intent = intent_data.get("intent", "other")
-    platform = intent_data.get("platform")  # e.g. "netflix", "disney", or None
+    platform = intent_data.get("platform")
+    plan_type_hint = intent_data.get("plan_type")  # may be None
     confidence = intent_data.get("confidence", "baja")
 
     logger.info(f"AI intent [{telegram_id}]: {intent} | platform: {platform} | conf: {confidence}")
@@ -337,6 +338,151 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 from bot.keyboards import cart_keyboard
                 await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
                 bot_reply = f"Carrito con {len(cart_items)} servicios."
+
+    elif intent == "credentials" and confidence != "baja":
+        # Show the user's active credentials directly
+        try:
+            from database.users import get_user_by_telegram_id
+            from database.subscriptions import get_user_active_subscriptions
+            from database.accounts import get_account_by_id
+            from database import get_supabase
+
+            user = await get_user_by_telegram_id(telegram_id)
+            subs = await get_user_active_subscriptions(str(user["id"])) if user else []
+            active = [s for s in subs if s.get("status") == "active"]
+
+            if not active:
+                response = (
+                    f"Hola {user_name or 'amigo/a'}! 👋 No tienes suscripciones activas en este momento.\n\n"
+                    "¿Quieres contratar un servicio? Usa el menú abajo 👇"
+                )
+                await update.message.reply_text(response, reply_markup=main_menu_keyboard())
+            else:
+                sb = get_supabase()
+                lines = [f"🔐 <b>Tus datos de acceso, {user_name or 'amigo/a'}:</b>\n"]
+                for sub in active:
+                    plat = sub.get("platforms") or {}
+                    icon = plat.get("icon_emoji", "📺")
+                    name = plat.get("name", "?")
+                    end_raw = (sub.get("end_date") or "")[:10]
+                    profile_id = sub.get("profile_id")
+                    email, password, pin, profile_name = "—", "—", None, None
+
+                    if profile_id:
+                        prof_res = sb.table("profiles").select(
+                            "profile_name, pin, account_id"
+                        ).eq("id", profile_id).limit(1).execute()
+                        if prof_res.data:
+                            prof = prof_res.data[0]
+                            profile_name = prof.get("profile_name")
+                            pin = prof.get("pin")
+                            acc_id = prof.get("account_id")
+                            if acc_id:
+                                acc = await get_account_by_id(str(acc_id))
+                                if acc:
+                                    email = acc.get("email", "—")
+                                    password = acc.get("password", "—")
+
+                    block = [f"\n{icon} <b>{name}</b>"]
+                    block.append(f"📧 Email: <code>{email}</code>")
+                    block.append(f"🔑 Contraseña: <code>{password}</code>")
+                    if profile_name:
+                        block.append(f"👤 Perfil: <b>{profile_name}</b>")
+                    if pin:
+                        block.append(f"🔢 PIN: <code>{pin}</code>")
+                    if end_raw:
+                        block.append(f"📅 Vence: {end_raw[8:10]}-{end_raw[5:7]}-{end_raw[0:4]}")
+                    lines.append("\n".join(block))
+
+                lines.append("\n\n⚠️ <i>No compartas estos datos con nadie.</i>")
+                await update.message.reply_text(
+                    "\n".join(lines),
+                    parse_mode="HTML",
+                    reply_markup=main_menu_keyboard(),
+                )
+            bot_reply = "Credenciales mostradas."
+        except Exception as e:
+            logger.error(f"credentials handler error: {e}")
+            await update.message.reply_text(
+                "Hubo un error al cargar tus datos. Intenta de nuevo o contacta soporte.",
+                reply_markup=main_menu_keyboard(),
+            )
+            bot_reply = "Error credenciales."
+
+    elif intent == "availability" and confidence != "baja":
+        # Show real availability counts for the requested platform/plan
+        try:
+            from database.analytics import get_platform_availability
+            availability = await get_platform_availability()
+
+            plan_labels = {"monthly": "mensual", "express": "express 24h", "week": "semanal"}
+            plan_key_map = {"monthly": "monthly_available", "express": "express_available", "week": "week_available"}
+
+            if platform:
+                # Filter to the requested platform
+                match = next(
+                    (p for p in availability if platform.lower() in p.get("name", "").lower() or platform.lower() in p.get("slug", "").lower()),
+                    None
+                )
+                if not match:
+                    response = f"No encontré la plataforma <b>{platform.capitalize()}</b>. ¿Quizás quisiste decir otra?"
+                elif plan_type_hint and plan_type_hint in plan_key_map:
+                    count = match.get(plan_key_map[plan_type_hint], 0)
+                    label = plan_labels[plan_type_hint]
+                    icon = match.get("icon_emoji", "📺")
+                    name = match.get("name", "")
+                    if count > 0:
+                        response = (
+                            f"{icon} <b>{name}</b> — plan {label}:\n\n"
+                            f"✅ Hay <b>{count} pantalla{'s' if count != 1 else ''} disponible{'s' if count != 1 else ''}</b>.\n\n"
+                            f"¿Te animas? Elige tu plan abajo 👇"
+                        )
+                    else:
+                        response = (
+                            f"{icon} <b>{name}</b> — plan {label}:\n\n"
+                            f"😔 Por el momento <b>no hay disponibilidad</b> en ese plan.\n"
+                            f"Puedes unirte a la lista de espera o revisar otros planes."
+                        )
+                else:
+                    # Show all plans for that platform
+                    icon = match.get("icon_emoji", "📺")
+                    name = match.get("name", "")
+                    m = match.get("monthly_available", 0)
+                    e = match.get("express_available", 0)
+                    w = match.get("week_available", 0)
+                    def _slot(n): return f"<b>{n}</b> disponible{'s' if n != 1 else ''}" if n > 0 else "<b>sin stock</b>"
+                    response = (
+                        f"{icon} <b>Disponibilidad de {name}:</b>\n\n"
+                        f"📅 Mensual: {_slot(m)}\n"
+                        f"📆 Semanal: {_slot(w)}\n"
+                        f"⚡ Express 24h: {_slot(e)}\n\n"
+                        f"¿Cuál plan te interesa?"
+                    )
+            else:
+                # General availability summary
+                lines = ["📊 <b>Disponibilidad actual:</b>\n"]
+                for p in availability:
+                    icon = p.get("icon_emoji", "📺")
+                    name = p.get("name", "")
+                    m = p.get("monthly_available", 0)
+                    e = p.get("express_available", 0)
+                    status = "✅" if (m + e) > 0 else "❌"
+                    lines.append(f"{status} {icon} <b>{name}</b>: {m} mensual | {e} express")
+                response = "\n".join(lines)
+
+            await update.message.reply_text(
+                response,
+                parse_mode="HTML",
+                reply_markup=platforms_keyboard(availability, plan_type_hint or "monthly"),
+            )
+            bot_reply = f"Disponibilidad mostrada{' de ' + platform if platform else ''}."
+        except Exception as e:
+            logger.error(f"availability handler error: {e}")
+            await update.message.reply_text(
+                "Hubo un error al consultar disponibilidad. Intenta de nuevo.",
+                reply_markup=main_menu_keyboard(),
+            )
+            bot_reply = "Error disponibilidad."
 
     elif intent in ("renewal", "cancel") and confidence != "baja":
         await update.message.reply_text(
