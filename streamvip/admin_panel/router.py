@@ -1110,6 +1110,14 @@ async def payment_approve(
         ok = await confirm_subscription(sub_id, profile_id, payment_reference, image_url)
         if ok:
             await assign_profile(profile_id)
+            # Increment purchase counter
+            try:
+                from database.users import increment_user_purchases
+                user_tg = (sub.get("users") or {}).get("telegram_id")
+                if user_tg:
+                    await increment_user_purchases(user_tg)
+            except Exception as inc_err:
+                logger.warning(f"Could not increment purchases: {inc_err}")
             # Notify user via Telegram
             try:
                 user = sub.get("users") or {}

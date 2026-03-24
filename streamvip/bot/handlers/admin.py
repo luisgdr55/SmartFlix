@@ -799,9 +799,14 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         await log_admin_action(telegram_id, "approve_payment", {"sub_id": sub_id})
 
-        # Notify user
+        # Increment purchase counter
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")
+        if user_tid:
+            from database.users import increment_user_purchases
+            await increment_user_purchases(user_tid)
+
+        # Notify user
         if user_tid:
             from services.notification_service import send_to_user
             from database.platforms import get_platform_by_id
