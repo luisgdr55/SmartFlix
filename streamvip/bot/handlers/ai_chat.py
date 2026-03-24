@@ -1,7 +1,8 @@
 """
 AI-powered free-text message handler.
-Uses OpenRouter (Gemini) to understand user intent and route to the correct flow,
-or generate a conversational response when the intent is informational.
+Primary: keyword-based intent detection (always works, no API needed).
+Secondary: LLM intent classification for ambiguous messages.
+Conversational: LLM generates response for "other" intent.
 """
 from __future__ import annotations
 
@@ -20,6 +21,150 @@ from services.gemini_service import (
 from bot.keyboards import main_menu_keyboard, platforms_keyboard, support_keyboard
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────
+# KEYWORD-BASED INTENT DETECTION — fast, reliable, no API needed
+# ─────────────────────────────────────────────────────────────────
+
+_PLATFORM_KEYWORDS: dict[str, str] = {
+    "netflix": "netflix", "nf": "netflix",
+    "disney": "disney", "disney+": "disney", "disneyplus": "disney",
+    "max": "max", "hbo max": "max", "hbomax": "max", "hbo": "max",
+    "paramount": "paramount", "paramount+": "paramount",
+    "prime": "prime", "amazon prime": "prime", "amazon": "prime",
+    "apple": "apple", "apple tv": "apple", "appletv": "apple",
+    "crunchyroll": "crunchyroll", "crunchy": "crunchyroll",
+}
+
+
+def _find_platforms(text: str) -> list[str]:
+    t = text.lower()
+    found: list[str] = []
+    # Sort by length descending so "hbo max" matches before "hbo"
+    for kw in sorted(_PLATFORM_KEYWORDS, key=len, reverse=True):
+        if kw in t and _PLATFORM_KEYWORDS[kw] not in found:
+            found.append(_PLATFORM_KEYWORDS[kw])
+    return found
+
+
+def _detect_intent_keywords(text: str) -> dict | None:
+    """
+    Fast keyword detection. Returns intent dict or None if no clear match.
+    Called BEFORE the LLM to handle common cases reliably.
+    """
+    t = text.lower()
+    platforms = _find_platforms(t)
+
+    is_express = any(k in t for k in ["express", "24h", "24 h", "24 hora"])
+    is_week = any(k in t for k in ["semanal", "semana", "7 día", "7 dias", "por semana"])
+    plan = "express" if is_express else ("week" if is_week else "monthly")
+
+    # ── multi_order: 2+ platforms ─────────────────────────────────
+    if len(platforms) >= 2:
+        return {
+            "intent": "multi_order",
+            "platform": None,
+            "platforms": platforms,
+            "plan_type": plan,
+            "confidence": "alta",
+        }
+
+    # ── credentials ───────────────────────────────────────────────
+    cred_kws = [
+        "mis datos", "mi datos", "credencial", "usuario y contraseña",
+        "mi contraseña", "mis credencial", "datos de acceso",
+        "datos de mi cuenta", "mi clave", "mi usuario", "mis claves",
+        "mis accesos", "ver mis datos", "dime mis datos",
+    ]
+    if any(k in t for k in cred_kws):
+        return {"intent": "credentials", "platform": None, "platforms": None, "plan_type": None, "confidence": "alta"}
+
+    # ── availability ──────────────────────────────────────────────
+    avail_kws = [
+        "hay ", "disponible", "disponibilidad", "tienen pantalla",
+        "cuantas pantalla", "cuántas pantalla", "pantalla disponible",
+        "hay express", "hay stock", "tienen stock", "tienen express",
+        "cuantos", "cuántos",
+    ]
+    if any(k in t for k in avail_kws):
+        return {
+            "intent": "availability",
+            "platform": platforms[0] if platforms else None,
+            "platforms": None,
+            "plan_type": "express" if is_express else ("week" if is_week else None),
+            "confidence": "alta",
+        }
+
+    # ── info / prices ─────────────────────────────────────────────
+    info_kws = [
+        "precio", "precios", "cuánto cuesta", "cuanto cuesta",
+        "cuánto vale", "cuanto vale", "tarifa", "planes", "costo",
+        "cuanto es", "cuánto es", "cuanto cobran", "cuánto cobran",
+        "cuanto me sale", "información", "informacion",
+    ]
+    if any(k in t for k in info_kws):
+        return {
+            "intent": "info",
+            "platform": platforms[0] if platforms else None,
+            "platforms": None,
+            "plan_type": None,
+            "confidence": "alta",
+        }
+
+    # ── support ───────────────────────────────────────────────────
+    support_kws = [
+        "no funciona", "problema", "no puedo", "no me deja",
+        "no carga", "no entra", "no conecta", "falla", "error",
+        "soporte", "ayuda", "necesito ayuda",
+    ]
+    if any(k in t for k in support_kws):
+        return {"intent": "support", "platform": None, "platforms": None, "plan_type": None, "confidence": "alta"}
+
+    # ── renewal ───────────────────────────────────────────────────
+    renewal_kws = [
+        "renovar", "renovación", "renovacion", "renueva", "vencida",
+        "vencido", "vencer", "venció", "vencio", "caducó", "caducado",
+        "se me acabó", "se me acabo", "mis servicios",
+    ]
+    if any(k in t for k in renewal_kws):
+        return {"intent": "renewal", "platform": None, "platforms": None, "plan_type": None, "confidence": "alta"}
+
+    # ── express (single or no platform) ──────────────────────────
+    if is_express:
+        return {
+            "intent": "express",
+            "platform": platforms[0] if platforms else None,
+            "platforms": None,
+            "plan_type": "express",
+            "confidence": "alta",
+        }
+
+    # ── week (single or no platform) ─────────────────────────────
+    if is_week:
+        return {
+            "intent": "week",
+            "platform": platforms[0] if platforms else None,
+            "platforms": None,
+            "plan_type": "week",
+            "confidence": "alta",
+        }
+
+    # ── subscribe / single platform order ────────────────────────
+    order_kws = [
+        "quiero", "necesito", "dame", "contratar", "suscrib",
+        "tomar", "pedir", "ordenar", "comprar", "me interesa",
+    ]
+    if platforms and any(k in t for k in order_kws):
+        return {
+            "intent": "subscribe",
+            "platform": platforms[0],
+            "platforms": None,
+            "plan_type": "monthly",
+            "confidence": "alta",
+        }
+
+    return None  # No keyword match → fall through to LLM
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -59,10 +204,9 @@ async def _get_prices_context() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────
-# SYSTEM PROMPT — service context for conversational responses
+# SYSTEM PROMPT
 # ─────────────────────────────────────────────────────────────────
 def _build_system_prompt(user_name: str, active_subs: list[dict], prices_text: str = "") -> str:
-    subs_text = ""
     if active_subs:
         lines = []
         for s in active_subs:
@@ -78,25 +222,24 @@ def _build_system_prompt(user_name: str, active_subs: list[dict], prices_text: s
 
 Información del servicio:
 - Ofrecemos acceso a Netflix, Disney+, Max, Paramount+, Amazon Prime y más plataformas.
-- Planes disponibles: Mensual (~30 días), Semanal (7 días), Express (24 horas).
-- Precios en bolívares (Bs) según tasa del día. El cliente paga por Pago Móvil o transferencia.
-- Una vez confirmado el pago, el cliente recibe sus credenciales por este mismo chat.
+- Planes: Mensual (~30 días), Semanal (7 días), Express (24 horas).
+- Precios en bolívares (Bs) según tasa Binance del día. Pago por Pago Móvil o transferencia.
+- Una vez aprobado el pago, el cliente recibe sus credenciales por este chat.
 
 Cliente: {user_name or "Estimado cliente"}
 {subs_text}
 {prices_section}
 
 Instrucciones:
-- Responde en español venezolano, tono amigable y cercano, como el dueño del servicio.
-- Sé conciso: máximo 5 oraciones por respuesta.
-- Si el cliente pregunta precios, respóndele con los precios reales que tienes arriba.
-- Si el cliente quiere suscribirse, dile que toque el botón del menú para iniciar su pedido.
+- Responde en español venezolano, tono amigable y cercano.
+- Sé conciso: máximo 5 oraciones.
+- Si preguntan precios, cita los precios reales de arriba.
 - Usa HTML básico (<b>texto</b>) para negritas cuando sea útil.
-- Si no puedes ayudar, indica que puede contactar a soporte con el botón del menú."""
+- Si no puedes ayudar, indica que puede usar el menú de abajo."""
 
 
 async def _get_user_context(telegram_id: int) -> tuple[str, list[dict]]:
-    """Return (user_name, active_subscriptions) for the given telegram_id."""
+    """Return (user_name, active_subscriptions)."""
     try:
         from database.users import get_user_by_telegram_id
         from database.subscriptions import get_user_active_subscriptions
@@ -129,9 +272,8 @@ async def _get_user_context(telegram_id: int) -> tuple[str, list[dict]]:
 
 
 async def _chat_response(system_prompt: str, conversation: list[dict], user_message: str) -> str:
-    """Generate a full conversational response."""
+    """Generate a conversational response via LLM."""
     messages = [{"role": "system", "content": system_prompt}]
-    # Include last 6 turns of conversation history
     for m in conversation[-6:]:
         messages.append(m)
     messages.append({"role": "user", "content": user_message})
@@ -143,21 +285,66 @@ async def _chat_response(system_prompt: str, conversation: list[dict], user_mess
 
 
 async def _send_platform_menu(message, plan_type: str, intro: str) -> None:
-    """Send platform selection keyboard for a given plan type."""
+    """Send platform selection keyboard."""
     from database.analytics import get_platform_availability
     try:
         availability = await get_platform_availability()
-        await message.reply_text(
-            intro,
-            parse_mode="HTML",
-            reply_markup=platforms_keyboard(availability, plan_type),
-        )
+        await message.reply_text(intro, parse_mode="HTML", reply_markup=platforms_keyboard(availability, plan_type))
     except Exception as e:
         logger.error(f"Error sending platform menu: {e}")
-        await message.reply_text(
-            "Usa el menú para elegir tu plataforma 👇",
-            reply_markup=main_menu_keyboard(),
+        await message.reply_text("Usa el menú para elegir tu plataforma 👇", reply_markup=main_menu_keyboard())
+
+
+async def _lookup_platforms_from_items(items_raw: list[dict]) -> tuple[list[dict], list[str]]:
+    """
+    Match platform slugs/names from items_raw against DB platforms.
+    Returns (cart_item_list, not_found_list).
+    Uses Python-based matching — no ilike needed.
+    """
+    from database.platforms import get_active_platforms
+    from services.exchange_service import get_current_rate
+
+    platforms_db = await get_active_platforms()
+    rate_data = await get_current_rate()
+    rate = float((rate_data or {}).get("usd_binance") or 36.0)
+
+    cart_items: list[dict] = []
+    not_found: list[str] = []
+
+    for raw_item in items_raw:
+        slug_q = raw_item.get("platform", "").lower().strip()
+        item_plan = raw_item.get("plan_type", "monthly")
+
+        # Python-based matching: slug contains, name contains, or reverse
+        plat = next(
+            (p for p in platforms_db
+             if slug_q in p.get("slug", "").lower()
+             or slug_q in p.get("name", "").lower()
+             or p.get("slug", "").lower() in slug_q),
+            None,
         )
+        if not plat:
+            not_found.append(slug_q)
+            continue
+
+        price_field = {
+            "monthly": "monthly_price_usd",
+            "express": "express_price_usd",
+            "week": "week_price_usd",
+        }.get(item_plan, "monthly_price_usd")
+        price_usd = float(plat.get(price_field) or 0)
+
+        cart_items.append({
+            "platform_id": str(plat["id"]),
+            "name": plat.get("name", ""),
+            "emoji": plat.get("icon_emoji", "📺"),
+            "plan_type": item_plan,
+            "price_usd": price_usd,
+            "price_bs": round(price_usd * rate, 2),
+            "rate_used": rate,
+        })
+
+    return cart_items, not_found
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -166,9 +353,9 @@ async def _send_platform_menu(message, plan_type: str, intro: str) -> None:
 async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle any free-text message.
-    1. Detect intent via LLM.
-    2. If actionable → route to correct handler.
-    3. Otherwise → generate conversational response.
+    1. Try keyword-based intent detection (fast, always works).
+    2. If no keyword match, use LLM intent detection.
+    3. Route to correct handler or generate conversational response.
     """
     if not update.message or not update.effective_user:
         return
@@ -177,12 +364,11 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     text = update.message.text.strip()
 
     try:
-        await context.bot.send_chat_action(
-            chat_id=update.message.chat_id, action=ChatAction.TYPING
-        )
+        await context.bot.send_chat_action(chat_id=update.message.chat_id, action=ChatAction.TYPING)
     except Exception:
         pass
 
+    # Load context in parallel
     try:
         import asyncio
         conv_task = asyncio.create_task(asyncio.to_thread(get_conversation_context, telegram_id))
@@ -197,53 +383,60 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     store_conversation_message(telegram_id, "user", text)
 
-    intent_data = await interpret_user_intent(text, conversation)
+    # ── 1. Keyword detection (primary, no API) ────────────────────
+    intent_data = _detect_intent_keywords(text)
+
+    # ── 2. LLM detection (secondary, for ambiguous messages) ──────
+    if intent_data is None:
+        intent_data = await interpret_user_intent(text, conversation)
+
     intent = intent_data.get("intent", "other")
     platform = intent_data.get("platform")
     plan_type_hint = intent_data.get("plan_type")
     confidence = intent_data.get("confidence", "baja")
 
-    logger.info(f"AI intent [{telegram_id}]: {intent} | platform: {platform} | conf: {confidence}")
+    logger.info(f"AI intent [{telegram_id}]: {intent} | platform={platform} | plan={plan_type_hint} | conf={confidence}")
 
     bot_reply = None
 
     try:
+        # ── subscribe ─────────────────────────────────────────────
         if intent == "subscribe" and confidence != "baja":
             platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
             await _send_platform_menu(
-                update.message,
-                "monthly",
+                update.message, "monthly",
                 f"¡Claro! 🎬 Elige la plataforma{platform_hint} para tu suscripción mensual:",
             )
-            bot_reply = f"Menú mensual mostrado{' (' + platform + ')' if platform else ''}."
+            bot_reply = f"Menú mensual mostrado."
 
+        # ── express ───────────────────────────────────────────────
         elif intent == "express" and confidence != "baja":
             platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
             await _send_platform_menu(
-                update.message,
-                "express",
+                update.message, "express",
                 f"⚡ ¡Express 24h!{' ' + platform_hint if platform else ''} Elige la plataforma:",
             )
             bot_reply = "Menú express mostrado."
 
+        # ── week ──────────────────────────────────────────────────
         elif intent == "week" and confidence != "baja":
             platform_hint = f" de <b>{platform.capitalize()}</b>" if platform else ""
             await _send_platform_menu(
-                update.message,
-                "week",
+                update.message, "week",
                 f"📅 Pack semanal{platform_hint}. Elige la plataforma:",
             )
             bot_reply = "Menú semanal mostrado."
 
+        # ── support ───────────────────────────────────────────────
         elif intent == "support" and confidence != "baja":
             from bot.keyboards import support_keyboard as sk
             await update.message.reply_text(
                 "🆘 <b>Soporte SmartFlixVe</b>\n\n¿Con qué te puedo ayudar?",
-                parse_mode="HTML",
-                reply_markup=sk(),
+                parse_mode="HTML", reply_markup=sk(),
             )
             bot_reply = "Menú soporte mostrado."
 
+        # ── info / prices ─────────────────────────────────────────
         elif intent == "info" and confidence != "baja":
             if platform:
                 plat_cap = platform.capitalize()
@@ -270,56 +463,31 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     response = f"🎬 <b>Precios actuales de SmartFlixVe:</b>\n\n{prices_text}\n\n¿Cuál plataforma te interesa?"
                 else:
                     response = "¡Tenemos varias plataformas disponibles! Selecciona abajo 👇"
-                await update.message.reply_text(
-                    response, parse_mode="HTML",
-                    reply_markup=main_menu_keyboard(),
-                )
+                await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
             bot_reply = f"Precios mostrados{' de ' + platform if platform else ''}."
 
+        # ── multi_order ───────────────────────────────────────────
         elif intent == "multi_order" and confidence != "baja":
             from services.gemini_service import extract_order_items
             from services.cart_service import save_cart
-            from services.exchange_service import get_current_rate
-            from database import get_supabase
             from bot.keyboards import cart_keyboard
 
+            # Try LLM extraction for per-platform plan types
             items_raw = await extract_order_items(text)
+
+            # Fallback: use detected platforms list (all same plan)
             if not items_raw:
                 platforms_list = intent_data.get("platforms") or []
-                if isinstance(platforms_list, list):
-                    items_raw = [{"platform": p, "plan_type": plan_type_hint or "monthly"} for p in platforms_list if p]
+                items_raw = [
+                    {"platform": p, "plan_type": plan_type_hint or "monthly"}
+                    for p in platforms_list if p
+                ]
 
             if not items_raw:
                 await _send_platform_menu(update.message, "monthly", "¡Claro! ¿Qué plataformas quieres contratar?")
                 bot_reply = "Menú mostrado."
             else:
-                sb = get_supabase()
-                rate_data = await get_current_rate()
-                rate = float((rate_data or {}).get("usd_binance") or 36.0)
-
-                cart_items = []
-                not_found = []
-                for raw_item in items_raw:
-                    slug_q = raw_item.get("platform", "").lower().strip()
-                    item_plan = raw_item.get("plan_type", "monthly")
-                    res = sb.table("platforms").select("*").eq("is_active", True).ilike("slug", f"%{slug_q}%").execute()
-                    if not res.data:
-                        res = sb.table("platforms").select("*").eq("is_active", True).ilike("name", f"%{slug_q}%").execute()
-                    if not res.data:
-                        not_found.append(slug_q)
-                        continue
-                    plat = res.data[0]
-                    price_field = {"monthly": "monthly_price_usd", "express": "express_price_usd", "week": "week_price_usd"}.get(item_plan, "monthly_price_usd")
-                    price_usd = float(plat.get(price_field) or 0)
-                    cart_items.append({
-                        "platform_id": str(plat["id"]),
-                        "name": plat.get("name", ""),
-                        "emoji": plat.get("icon_emoji", "📺"),
-                        "plan_type": item_plan,
-                        "price_usd": price_usd,
-                        "price_bs": round(price_usd * rate, 2),
-                        "rate_used": rate,
-                    })
+                cart_items, not_found = await _lookup_platforms_from_items(items_raw)
 
                 if not cart_items:
                     await update.message.reply_text(
@@ -341,6 +509,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=cart_keyboard())
                     bot_reply = f"Carrito con {len(cart_items)} servicios."
 
+        # ── credentials ───────────────────────────────────────────
         elif intent == "credentials" and confidence != "baja":
             from database.users import get_user_by_telegram_id
             from database.subscriptions import get_user_active_subscriptions
@@ -363,7 +532,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 for sub in active:
                     plat = sub.get("platforms") or {}
                     icon = plat.get("icon_emoji", "📺")
-                    name = plat.get("name", "?")
+                    pname = plat.get("name", "?")
                     end_raw = (sub.get("end_date") or "")[:10]
                     profile_id = sub.get("profile_id")
                     email, password, pin, profile_name = "—", "—", None, None
@@ -379,7 +548,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                                 if acc:
                                     email = acc.get("email", "—")
                                     password = acc.get("password", "—")
-                    block = [f"\n{icon} <b>{name}</b>"]
+                    block = [f"\n{icon} <b>{pname}</b>"]
                     block.append(f"📧 Email: <code>{email}</code>")
                     block.append(f"🔑 Contraseña: <code>{password}</code>")
                     if profile_name:
@@ -393,6 +562,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=main_menu_keyboard())
             bot_reply = "Credenciales mostradas."
 
+        # ── availability ──────────────────────────────────────────
         elif intent == "availability" and confidence != "baja":
             from database.analytics import get_platform_availability
             availability = await get_platform_availability()
@@ -401,7 +571,9 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
             if platform:
                 match = next(
-                    (p for p in availability if platform.lower() in p.get("name", "").lower() or platform.lower() in p.get("slug", "").lower()),
+                    (p for p in availability
+                     if platform.lower() in p.get("name", "").lower()
+                     or platform.lower() in p.get("slug", "").lower()),
                     None,
                 )
                 if not match:
@@ -414,7 +586,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     if count > 0:
                         response = f"{icon} <b>{pname}</b> — plan {label}:\n\n✅ Hay <b>{count} pantalla{'s' if count != 1 else ''} disponible{'s' if count != 1 else ''}</b>.\n\n¿Te animas? Elige tu plan abajo 👇"
                     else:
-                        response = f"{icon} <b>{pname}</b> — plan {label}:\n\n😔 Por el momento <b>no hay disponibilidad</b> en ese plan.\nPuedes revisar otros planes abajo."
+                        response = f"{icon} <b>{pname}</b> — plan {label}:\n\n😔 Por el momento <b>no hay disponibilidad</b>.\nPuedes revisar otros planes abajo."
                 else:
                     icon = match.get("icon_emoji", "📺")
                     pname = match.get("name", "")
@@ -436,8 +608,9 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 response, parse_mode="HTML",
                 reply_markup=platforms_keyboard(availability, plan_type_hint or "monthly"),
             )
-            bot_reply = f"Disponibilidad mostrada{' de ' + platform if platform else ''}."
+            bot_reply = f"Disponibilidad mostrada."
 
+        # ── renewal / cancel ──────────────────────────────────────
         elif intent in ("renewal", "cancel") and confidence != "baja":
             await update.message.reply_text(
                 "📋 Aquí puedes ver y renovar tus servicios activos:",
@@ -447,6 +620,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             bot_reply = "Menú servicios mostrado."
 
+        # ── conversational (other / low confidence) ───────────────
         else:
             system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
             response = await _chat_response(system_prompt, conversation, text)
@@ -457,14 +631,20 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             bot_reply = response
 
     except Exception as e:
-        logger.error(f"handle_free_text routing error [{telegram_id}] intent={intent}: {e}", exc_info=True)
+        logger.error(f"handle_free_text error [{telegram_id}] intent={intent}: {e}", exc_info=True)
         try:
+            system_prompt = _build_system_prompt(user_name, active_subs, prices_text)
+            response = await _chat_response(system_prompt, conversation, text)
+            try:
+                await update.message.reply_text(response, parse_mode="HTML", reply_markup=main_menu_keyboard())
+            except Exception:
+                await update.message.reply_text(response, reply_markup=main_menu_keyboard())
+            bot_reply = response
+        except Exception:
             await update.message.reply_text(
-                "Disculpa, tuve un problema procesando tu mensaje. ¿En qué te puedo ayudar?",
+                "Disculpa, tuve un problema. ¿En qué te puedo ayudar?",
                 reply_markup=main_menu_keyboard(),
             )
-        except Exception:
-            pass
 
     if bot_reply:
         store_conversation_message(telegram_id, "assistant", bot_reply)
