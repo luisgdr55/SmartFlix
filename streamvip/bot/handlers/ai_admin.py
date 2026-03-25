@@ -365,35 +365,38 @@ async def _handle_client_detail_nl(message, name_query: str) -> None:
                                  reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
         return
 
-    # Single match — show full detail
+    # Single match — show full detail using UUID (works even without telegram_id)
     c = clients[0]
     tid = c.get("telegram_id")
-    if not tid:
-        name = c.get("name") or "Sin nombre"
-        await message.reply_text(
-            f"👤 <b>{name}</b>\n"
-            f"👤 @{c.get('username') or 'N/A'}\n"
-            f"🛒 Compras: {c.get('total_purchases') or 0}\n"
-            f"⚠️ Sin Telegram ID registrado — no se puede mostrar detalle completo.",
-            parse_mode="HTML",
-        )
-        return
+    uid = c.get("id")  # internal UUID, always present
 
-    from database.analytics import get_client_detail
+    from database import get_supabase
     from bot.keyboards import client_detail_keyboard
-    data = await get_client_detail(tid)
-    if not data:
-        await message.reply_text(f"❌ No se pudo cargar el detalle del cliente.")
-        return
-    user = data["user"]
-    subs = data.get("subscriptions", [])
+    sb = get_supabase()
+
+    # Fetch full user row by UUID
+    user_res = sb.table("users").select("*").eq("id", uid).limit(1).execute()
+    user = user_res.data[0] if user_res.data else c
+
+    # Fetch all subscriptions for this user
+    subs_res = (
+        sb.table("subscriptions")
+        .select("*, platforms(name, icon_emoji)")
+        .eq("user_id", uid)
+        .order("created_at", desc=True)
+        .limit(10)
+        .execute()
+    )
+    subs = subs_res.data or []
+
     is_blocked = user.get("status") == "blocked"
     status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+    tid_display = f"<code>{tid}</code>" if tid else "<i>sin ID Telegram</i>"
     text = (
         f"👤 <b>Detalle del Cliente</b>\n\n"
         f"📝 Nombre: {user.get('name') or 'N/A'}\n"
         f"👤 Username: @{user.get('username') or 'N/A'}\n"
-        f"🆔 Telegram ID: <code>{tid}</code>\n"
+        f"🆔 Telegram ID: {tid_display}\n"
         f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
         f"🛒 Compras: {user.get('total_purchases', 0)}\n"
         f"📊 Estado: {status_icon}\n\n"
@@ -406,8 +409,10 @@ async def _handle_client_detail_nl(message, name_query: str) -> None:
         _ed = (sub.get("end_date") or "")[:10]
         end_fmt = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else "—"
         text += f"  • {platform} ({plan}) — {sub_status} — {end_fmt}\n"
-    await message.reply_text(text, parse_mode="HTML",
-                             reply_markup=client_detail_keyboard(tid, is_blocked))
+
+    # Buttons only work if tid is available
+    markup = client_detail_keyboard(tid, is_blocked) if tid else None
+    await message.reply_text(text, parse_mode="HTML", reply_markup=markup)
 
 
 async def _handle_find_client(message, name_query: str) -> None:
