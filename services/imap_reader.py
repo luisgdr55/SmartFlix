@@ -43,6 +43,11 @@ CODE_PATTERNS: dict[str, str] = {
 POLL_INTERVAL_SECONDS = 15
 FALLBACK_TIMEOUT_SECONDS = 240  # 4 minutes → escalate to admin
 
+# Look back up to this many seconds before the request was made.
+# Covers cases where the client triggered the code on the platform
+# before pressing the button in the bot.
+LOOKBACK_SECONDS = 900  # 15 minutes
+
 
 def _get_code_pattern(platform_slug: str) -> str:
     return CODE_PATTERNS.get(platform_slug, CODE_PATTERNS["default"])
@@ -58,9 +63,10 @@ def _imap_search_once(
 ) -> Optional[str]:
     """
     Blocking IMAP call — always run via asyncio.to_thread().
-    Connects to the central inbox and looks for the most recent
-    verification email for the given platform received after since_ts.
-    Returns the code string or None.
+    Scans the central inbox for the most recent verification code email
+    for the given platform. Considers emails received up to LOOKBACK_SECONDS
+    before the request (so codes triggered just before pressing the button
+    are still found). Always returns the newest matching code.
     """
     if not imap_email or not imap_password:
         logger.warning("IMAP credentials not configured — skipping search")
@@ -80,11 +86,14 @@ def _imap_search_once(
         if not msg_ids:
             return None
 
-        # Check up to the 40 most recent messages, newest first
-        recent = list(reversed(msg_ids[-40:]))
+        # Scan the 100 most recent messages, newest first.
+        # 100 covers accumulated codes over time without being too slow.
+        recent = list(reversed(msg_ids[-100:]))
 
         senders = PLATFORM_SENDERS.get(platform_slug, [])
         pattern = _get_code_pattern(platform_slug)
+        # Oldest acceptable email: LOOKBACK_SECONDS before the request
+        oldest_acceptable = since_ts - LOOKBACK_SECONDS
 
         for msg_id in recent:
             try:
@@ -94,13 +103,15 @@ def _imap_search_once(
 
                 msg = email.message_from_bytes(msg_data[0][1])
 
-                # Must be a recent email (received after the request was made)
+                # Filter by time: must be within the lookback window
                 date_str = msg.get("Date", "")
                 if date_str:
                     try:
                         msg_ts = email.utils.parsedate_to_datetime(date_str).timestamp()
-                        if msg_ts < since_ts - 60:  # 60 s grace for clock drift
-                            continue
+                        if msg_ts < oldest_acceptable:
+                            # Emails are newest-first; once we pass the window
+                            # all remaining are older — stop searching
+                            break
                     except Exception:
                         pass  # if date parse fails, still try the email
 
@@ -114,9 +125,12 @@ def _imap_search_once(
                 if not body:
                     continue
 
-                # Extract the verification code
+                # Extract the verification code — first (newest) match wins
                 match = re.search(pattern, body)
                 if match:
+                    logger.info(
+                        f"Code found for '{platform_slug}' in msg {msg_id}: {match.group(1)}"
+                    )
                     return match.group(1)
 
             except Exception as e:
