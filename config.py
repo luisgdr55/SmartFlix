@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     GMAIL_CLIENT_ID: str = ""
     GMAIL_CLIENT_SECRET: str = ""
     GMAIL_REDIRECT_URI: str = ""
+    # Central inbox for verification code forwarding (IMAP)
+    IMAP_EMAIL: str = ""
+    IMAP_PASSWORD: str = ""
+    IMAP_HOST: str = "imap.gmail.com"
+    IMAP_PORT: int = 993
     APP_URL: str
     WEBHOOK_SECRET: str = "streamvip_secret"
     DEBUG: bool = False

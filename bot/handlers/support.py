@@ -14,7 +14,6 @@ from database.users import get_user_by_telegram_id
 from database.subscriptions import get_user_active_subscriptions
 from database.profiles import get_profile_by_id
 from database.accounts import get_account_by_id
-from services.gmail_service import get_verification_code
 from services.gemini_service import generate_troubleshooting_response
 
 logger = logging.getLogger(__name__)
@@ -55,8 +54,24 @@ async def handle_support_credentials(update: Update, context: ContextTypes.DEFAU
             await query.edit_message_text("Error al obtener tu perfil. Usa /start.")
             return
 
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
         subs = await get_user_active_subscriptions(str(user["id"]))
-        active_subs = [s for s in subs if s.get("status") == "active" and s.get("profile_id")]
+        active_subs = []
+        for s in subs:
+            if s.get("status") != "active" or not s.get("profile_id"):
+                continue
+            # Double-check end_date regardless of status field
+            end_raw = s.get("end_date")
+            if end_raw:
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt < now:
+                        continue  # expired but scheduler hasn't updated yet
+                except Exception:
+                    pass
+            active_subs.append(s)
 
         if not active_subs:
             await query.edit_message_text(
@@ -145,8 +160,23 @@ async def handle_support_verification_code(update: Update, context: ContextTypes
             await query.edit_message_text("Error de usuario. Usa /start.")
             return
 
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
         subs = await get_user_active_subscriptions(str(user["id"]))
-        active_subs = [s for s in subs if s.get("status") == "active" and s.get("profile_id")]
+        active_subs = []
+        for s in subs:
+            if s.get("status") != "active" or not s.get("profile_id"):
+                continue
+            end_raw = s.get("end_date")
+            if end_raw:
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    if end_dt < now:
+                        continue
+                except Exception:
+                    pass
+            active_subs.append(s)
 
         if not active_subs:
             await query.edit_message_text(
@@ -165,7 +195,7 @@ async def handle_support_verification_code(update: Update, context: ContextTypes
             set_user_state(telegram_id, "support:verification_code")
             return
 
-        await _fetch_verification_code(query, active_subs[0])
+        await _fetch_verification_code(query, active_subs[0], telegram_id)
     except Exception as e:
         logger.error(f"Error in handle_support_verification_code: {e}")
         await query.edit_message_text("Error al procesar. Intenta de nuevo.")
@@ -194,7 +224,7 @@ async def handle_support_platform_selected(update: Update, context: ContextTypes
             return
 
         if state == "support:verification_code":
-            await _fetch_verification_code(query, sub)
+            await _fetch_verification_code(query, sub, update.effective_user.id)
         else:
             await _send_credentials(query, sub)
     except Exception as e:
@@ -207,55 +237,107 @@ def from_middleware_get_state(telegram_id: int):
     return get_user_state(telegram_id)
 
 
-async def _fetch_verification_code(query, sub: dict) -> None:
-    """Fetch verification code from Gmail for subscription account."""
+async def _fetch_verification_code(query, sub: dict, telegram_id: int) -> None:
+    """
+    Start an async verification code fetch for the given subscription.
+
+    - Shows an immediate "searching..." message to the client.
+    - Polls the central IMAP inbox every 15 s for up to 4 minutes.
+    - If code found → sends it to the client automatically.
+    - If not found → notifies admin with a one-click "Send code" button.
+    """
+    import asyncio
+    import time
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    from database.verification import (
+        create_verification_request,
+        mark_request_sent,
+        mark_request_pending_admin,
+    )
+    from services.imap_reader import poll_for_code
+    from services.notification_service import send_to_admin, send_to_user
+
+    platform = sub.get("platforms") or {}
+    platform_name = platform.get("name", "la plataforma")
+    platform_emoji = platform.get("icon_emoji", "📺")
+    platform_slug = platform.get("slug", "")
+    sub_id = str(sub.get("id", ""))
+
     try:
-        platform = sub.get("platforms") or {}
-        profile_id = sub.get("profile_id")
+        user = await get_user_by_telegram_id(telegram_id)
+        user_id = str(user["id"]) if user else ""
+        client_name = (user or {}).get("name", "Cliente")
+    except Exception:
+        user_id = ""
+        client_name = "Cliente"
 
-        if not profile_id:
-            await query.edit_message_text("No hay perfil asignado.")
-            return
+    # Create DB request record for audit trail and admin fallback
+    request = await create_verification_request(
+        user_id=user_id,
+        client_telegram_id=telegram_id,
+        subscription_id=sub_id,
+        platform_name=platform_name,
+        platform_emoji=platform_emoji,
+        platform_slug=platform_slug,
+        client_name=client_name,
+    )
+    request_id = str(request["id"]) if request else "unknown"
+    since_ts = time.time()
 
-        profile = await get_profile_by_id(str(profile_id))
-        account = await get_account_by_id(str((profile or {}).get("account_id", "")))
+    # Acknowledge immediately so the client isn't left waiting
+    await query.edit_message_text(
+        f"🔍 <b>Buscando tu código de verificación...</b>\n\n"
+        f"{platform_emoji} {platform_name}\n\n"
+        f"⏳ Puede tardar hasta 4 minutos si el correo aún no llegó.\n"
+        f"Te lo enviamos en cuanto lo tengamos. <b>No necesitas hacer nada más.</b>",
+        parse_mode="HTML",
+    )
 
-        if not account:
-            await query.edit_message_text("No se encontró la cuenta.")
-            return
-
-        platform_name = platform.get("name", "")
-        platform_slug = platform.get("slug", "")
-
-        await query.edit_message_text(
-            SUPPORT_VERIFICATION_CODE.format(platform=platform_name),
-            parse_mode="HTML",
-        )
-
-        # Try Gmail API if enabled
-        code = None
-        if account.get("gmail_api_enabled") and account.get("gmail_credentials"):
-            code = await get_verification_code(
-                account_email=account.get("email", ""),
-                platform=platform_slug,
-                credentials_json=account.get("gmail_credentials", {}),
-            )
+    # Background task: poll IMAP then notify client or escalate to admin
+    async def _bg_task():
+        code = await poll_for_code(platform_slug, since_ts, timeout=240)
 
         if code:
-            await query.edit_message_text(
-                SUPPORT_CODE_FOUND.format(platform=platform_name, code=code),
-                parse_mode="HTML",
-                reply_markup=support_keyboard(),
+            await send_to_user(
+                telegram_id,
+                f"🔑 <b>Tu código de verificación</b>\n\n"
+                f"{platform_emoji} <b>{platform_name}</b>\n\n"
+                f"<code>{code}</code>\n\n"
+                f"⚠️ Úsalo de inmediato, expira pronto.\n"
+                f"¿Más problemas? Regresa a Soporte y solicita un nuevo código.",
             )
+            if request:
+                await mark_request_sent(request_id, code)
         else:
-            await query.edit_message_text(
-                SUPPORT_CODE_NOT_FOUND.format(platform=platform_name),
-                parse_mode="HTML",
-                reply_markup=support_keyboard(),
+            # Escalate: notify admin and keep client informed
+            if request:
+                await mark_request_pending_admin(request_id)
+
+            await send_to_user(
+                telegram_id,
+                f"⏳ <b>Código en camino</b>\n\n"
+                f"No pudimos obtenerlo automáticamente esta vez.\n"
+                f"Nuestro equipo lo está revisando y te lo enviará en breve.\n\n"
+                f"{platform_emoji} <b>{platform_name}</b>",
             )
-    except Exception as e:
-        logger.error(f"Error in _fetch_verification_code: {e}")
-        await query.edit_message_text("Error al obtener el código. Contacta a soporte.")
+
+            await send_to_admin(
+                f"🔑 <b>Solicitud de código de verificación</b>\n\n"
+                f"👤 Cliente: <b>{client_name}</b>\n"
+                f"📺 Plataforma: {platform_emoji} {platform_name}\n"
+                f"🆔 Request: <code>{request_id}</code>\n\n"
+                f"El sistema no encontró el código en 4 min.\n"
+                f"Revisa el correo reenviado y usa el botón:",
+                keyboard=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "✉️ Ingresar y enviar código",
+                        callback_data=f"verif:send:{request_id}:{telegram_id}",
+                    )
+                ]]),
+            )
+
+    asyncio.create_task(_bg_task())
 
 
 async def handle_support_troubleshooting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -381,11 +463,18 @@ async def handle_contact_admin(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         from services.notification_service import send_to_admin
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        username = update.effective_user.username
+        tg_link = f"https://t.me/{username}" if username else f"tg://user?id={telegram_id}"
+        link_label = f"@{username}" if username else f"ID {telegram_id}"
         await send_to_admin(
             f"🆘 <b>Usuario solicita soporte</b>\n\n"
-            f"👤 Usuario: @{update.effective_user.username or 'sin username'}\n"
-            f"🆔 ID: {telegram_id}\n"
-            f"📝 Nombre: {update.effective_user.full_name}"
+            f"👤 Nombre: {update.effective_user.full_name}\n"
+            f"🔗 Contacto: {tg_link}\n"
+            f"🆔 ID: <code>{telegram_id}</code>",
+            keyboard=InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"💬 Abrir chat con {link_label}", url=tg_link)
+            ]])
         )
 
         await query.edit_message_text(
