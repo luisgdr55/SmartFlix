@@ -41,14 +41,13 @@ async def get_platform_by_id(platform_id: str) -> Optional[dict]:
         return None
 
 
-async def update_platform_prices(platform_id: str, monthly: float, express: float, week: float) -> bool:
+async def update_platform_prices(platform_id: str, monthly: float, express: float) -> bool:
     """Update platform pricing."""
     try:
         sb = get_supabase()
         sb.table("platforms").update({
             "monthly_price_usd": monthly,
             "express_price_usd": express,
-            "week_price_usd": week,
         }).eq("id", platform_id).execute()
         return True
     except Exception as e:

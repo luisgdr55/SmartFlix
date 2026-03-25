@@ -15,9 +15,16 @@ logger = logging.getLogger(__name__)
 _bot: Optional[Bot] = None
 
 
+def init_notification_bot(bot: Bot) -> None:
+    """Register the application's already-initialized bot instance."""
+    global _bot
+    _bot = bot
+
+
 def get_bot() -> Bot:
     global _bot
     if _bot is None:
+        # Fallback: create bare instance (may not work in all ptb versions)
         _bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     return _bot
 
@@ -279,4 +286,59 @@ async def send_express_expired(subscription_id: str) -> bool:
         return await send_to_user(telegram_id, message, keyboard)
     except Exception as e:
         logger.error(f"Error in send_express_expired: {e}")
+        return False
+
+
+async def send_soft_cut_notification(subscription_id: str) -> bool:
+    """Notify user that their PIN was changed (soft cut)."""
+    from database.subscriptions import get_subscription_by_id
+    from bot.messages import SOFT_CUT_NOTIFICATION
+
+    try:
+        sub = await get_subscription_by_id(subscription_id)
+        if not sub:
+            return False
+        user = sub.get("users") or {}
+        platform = sub.get("platforms") or {}
+        telegram_id = user.get("telegram_id")
+        if not telegram_id:
+            return False
+        _ed = (sub.get("end_date") or "")[:10]
+        end_fmt = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else _ed
+        message = SOFT_CUT_NOTIFICATION.format(
+            name=user.get("name", ""),
+            platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}",
+            end_date=end_fmt,
+        )
+        from bot.keyboards import renewal_keyboard
+        keyboard = renewal_keyboard(sub.get("platform_id", ""), sub.get("plan_type", "monthly"))
+        return await send_to_user(telegram_id, message, keyboard)
+    except Exception as e:
+        logger.error(f"Error in send_soft_cut_notification: {e}")
+        return False
+
+
+async def send_profile_released_notification(subscription_id: str) -> bool:
+    """Notify user that their profile was released (hard cut)."""
+    from database.subscriptions import get_subscription_by_id
+    from bot.messages import PROFILE_RELEASED_NOTIFICATION
+
+    try:
+        sub = await get_subscription_by_id(subscription_id)
+        if not sub:
+            return False
+        user = sub.get("users") or {}
+        platform = sub.get("platforms") or {}
+        telegram_id = user.get("telegram_id")
+        if not telegram_id:
+            return False
+        message = PROFILE_RELEASED_NOTIFICATION.format(
+            name=user.get("name", ""),
+            platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}",
+        )
+        from bot.keyboards import renewal_keyboard
+        keyboard = renewal_keyboard(sub.get("platform_id", ""), sub.get("plan_type", "monthly"))
+        return await send_to_user(telegram_id, message, keyboard)
+    except Exception as e:
+        logger.error(f"Error in send_profile_released_notification: {e}")
         return False

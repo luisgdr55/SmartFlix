@@ -56,11 +56,22 @@
             </td>
             <td class="table-cell font-mono text-sm text-slate-300">{{ acc.get('email', '—') }}</td>
             <td class="table-cell">
-              {% if acc.get('status') == 'active' %}<span class="badge-active">Activa</span>
-              {% elif acc.get('status') == 'suspended' %}<span class="badge-expired">Suspendida</span>
-              {% else %}<span class="badge-expired">{{ acc.get('status', '—') }}</span>{% endif %}
+              {% set bd = (acc.get('billing_date') or '')[:10] %}
+              {% if bd and bd <= today_str %}
+                <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400">🔴 Vencida</span>
+              {% else %}
+                <span class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">🟢 Activa</span>
+              {% endif %}
             </td>
-            <td class="table-cell text-slate-400 text-sm">{{ acc.get('billing_date', '—') or '—' }}</td>
+            <td class="table-cell text-sm">
+              {% if acc.get('billing_date') %}
+                {% if (acc.get('billing_date') or '')[:10] <= today_str %}
+                  <span class="text-red-400 font-medium">{{ acc.get('billing_date') | fmt_date }}</span>
+                {% else %}
+                  <span class="text-slate-400">{{ acc.get('billing_date') | fmt_date }}</span>
+                {% endif %}
+              {% else %}—{% endif %}
+            </td>
             <td class="table-cell text-center">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full {% if acc.get('profile_count', 0) > 0 %}bg-indigo-600/30 text-indigo-300{% else %}bg-slate-700 text-slate-500{% endif %} text-xs font-bold">
                 {{ acc.get('profile_count', 0) }}

@@ -61,7 +61,7 @@
             <p class="font-medium text-slate-200">{{ (sub.get('platforms') or {}).get('name','—') }}</p>
             <p class="text-xs text-slate-400 capitalize">
               Plan: {% set t = sub.get('plan_type','') %}
-              {% if t == 'express' %}⚡ Express{% elif t == 'week' %}Semanal{% else %}{{ t }}{% endif %}
+              {% if t == 'express' %}⚡ Express{% else %}{{ t }}{% endif %}
             </p>
           </div>
           <div class="ml-auto text-right">
@@ -70,31 +70,41 @@
           </div>
         </div>
 
-        <!-- Payment image -->
+        <!-- OCR payment data -->
         {% if sub.get('payment_image_url') %}
-        <div class="mb-4">
-          <a href="{{ sub['payment_image_url'] }}" target="_blank" class="block">
-            <img src="{{ sub['payment_image_url'] }}" alt="Comprobante"
-              class="w-full h-32 object-cover rounded-xl border border-slate-700 hover:border-indigo-500/50 transition-colors cursor-zoom-in" />
-          </a>
-          <p class="text-xs text-slate-500 mt-1 text-center">📎 Click para ver comprobante completo</p>
+        <div class="mb-4 bg-slate-900/50 border border-slate-600/40 rounded-xl p-3">
+          <p class="text-xs text-slate-400 font-semibold mb-2">📋 Datos del comprobante (OCR):</p>
+          <pre class="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{{ sub['payment_image_url'] }}</pre>
         </div>
         {% else %}
-        <div class="mb-4 h-20 bg-slate-700/30 rounded-xl border border-dashed border-slate-600 flex items-center justify-center">
-          <p class="text-xs text-slate-500">Sin imagen de comprobante</p>
+        <div class="mb-4 h-16 bg-slate-700/30 rounded-xl border border-dashed border-slate-600 flex items-center justify-center">
+          <p class="text-xs text-slate-500">Sin datos de comprobante</p>
+        </div>
+        {% endif %}
+
+        <!-- Reference -->
+        {% if sub.get('payment_reference') and sub.get('payment_reference') != 'SIN-REF' %}
+        <div class="mb-3 text-xs text-slate-400">
+          🔖 <span class="text-slate-300">Ref:</span> <span class="font-mono text-emerald-400">{{ sub['payment_reference'] }}</span>
         </div>
         {% endif %}
 
         <!-- Subscription details -->
         <div class="text-xs text-slate-500 mb-4 space-y-1">
-          <p>📅 Solicitado: {{ sub.get('created_at','—')[:16] if sub.get('created_at') else '—' }}</p>
+          <p>📅 Solicitado: {{ sub.get('created_at') | fmt_dt }}</p>
           <p>🔖 ID: <span class="font-mono text-slate-400">{{ sub['id'][:8] }}...</span></p>
         </div>
 
         <!-- Approve form -->
         {% set pid = sub.get('platform_id','') %}
         {% set profiles = profiles_map.get(pid, []) %}
+        {% set is_renewal = renewal_map.get(sub['id'], False) %}
         <form action="/panel/payments/{{ sub['id'] }}/approve" method="POST" class="space-y-3">
+          {% if is_renewal %}
+          <div class="bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs text-indigo-300">
+            🔄 <b>Renovación</b> — el cliente ya tiene perfil asignado. Se extenderá la fecha de corte automáticamente.
+          </div>
+          {% else %}
           <div>
             <label class="form-label text-xs">Asignar perfil *</label>
             <select name="profile_id" required class="form-input text-sm py-2">
@@ -104,15 +114,15 @@
               {% endfor %}
             </select>
           </div>
+          {% endif %}
           <div>
             <label class="form-label text-xs">Referencia de pago</label>
             <input type="text" name="payment_reference" placeholder="Ref. o nota" value="PANEL-APROBADO" class="form-input text-sm py-2" />
           </div>
           <div class="flex gap-2 pt-1">
             <button type="submit" class="btn-success flex-1 justify-center text-sm py-2.5">
-              ✅ Aprobar
+              ✅ {% if is_renewal %}Aprobar Renovación{% else %}Aprobar{% endif %}
             </button>
-            <!-- Reject inline -->
             <button type="button"
               @click="rejectSub('{{ sub['id'] }}')"
               class="btn-danger flex-1 justify-center text-sm py-2.5">
@@ -132,6 +142,56 @@
       <span class="text-6xl opacity-30">✅</span>
       <h3 class="text-xl font-semibold text-white">Sin pagos pendientes</h3>
       <p class="text-slate-400 text-sm">Todos los pagos han sido procesados.</p>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Expired subscriptions -->
+  {% if expired %}
+  <div class="mt-10">
+    <div class="flex items-center gap-3 mb-4">
+      <h2 class="text-lg font-bold text-white">🔴 Suscripciones Vencidas</h2>
+      <span class="bg-red-500/20 text-red-400 text-xs font-semibold px-2.5 py-1 rounded-full border border-red-500/30">{{ expired|length }}</span>
+    </div>
+    <p class="text-sm text-slate-400 mb-4">Estas suscripciones siguen como "activas" en la base de datos pero su fecha de vencimiento ya pasó. Requieren atención.</p>
+    <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl overflow-hidden">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-700/50 bg-slate-900/20">
+            <th class="table-header">Cliente</th>
+            <th class="table-header">Plataforma</th>
+            <th class="table-header">Plan</th>
+            <th class="table-header">Venció</th>
+            <th class="table-header">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sub in expired %}
+          <tr class="table-row">
+            <td class="table-cell">
+              <div>
+                <p class="font-medium text-sm text-white">{{ (sub.get('users') or {}).get('name') or 'Sin nombre' }}</p>
+                <p class="text-xs text-slate-400">{% if (sub.get('users') or {}).get('username') %}@{{ sub['users']['username'] }}{% endif %}</p>
+              </div>
+            </td>
+            <td class="table-cell">
+              {{ (sub.get('platforms') or {}).get('icon_emoji','📺') }}
+              {{ (sub.get('platforms') or {}).get('name','—') }}
+            </td>
+            <td class="table-cell text-xs capitalize text-slate-300">{{ sub.get('plan_type','—') }}</td>
+            <td class="table-cell text-sm text-red-400 font-medium">
+              {{ sub.get('end_date') | fmt_date }}
+            </td>
+            <td class="table-cell">
+              {% set uid = (sub.get('users') or {}).get('id') %}
+              {% if uid %}
+              <a href="/panel/users/{{ uid }}" class="btn-secondary text-xs py-1.5 px-3">Ver cliente</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
   {% endif %}

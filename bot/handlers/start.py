@@ -85,8 +85,58 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await update.message.reply_text(WELCOME_NEW_USER, parse_mode="HTML")
             return
 
-        # Returning user - show menu with rotating greeting
+        # Returning user - check for debt or expired subscriptions before showing menu
         name = user.get("name", full_name or "amigo/a")
+        user_id = str(user.get("id", ""))
+
+        if user_id:
+            try:
+                import html as _html
+                from database.subscriptions import get_user_attention_subscriptions
+                attention = await get_user_attention_subscriptions(user_id)
+                pending_subs = attention["pending"]
+                expired_subs = attention["expired"]
+
+                if pending_subs or expired_subs:
+                    safe_name = _html.escape(name)
+                    alert_lines = [f"⚠️ <b>Hola {safe_name}, hay cosas que necesitan tu atención:</b>\n"]
+                    for s in pending_subs:
+                        plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
+                        icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
+                        try:
+                            price_bs = float(s.get("price_bs") or 0)
+                        except (TypeError, ValueError):
+                            price_bs = 0.0
+                        alert_lines.append(
+                            f"{icon} <b>{plat}</b> — pago pendiente\n"
+                            f"   💰 Monto: Bs {price_bs:,.0f}\n"
+                            f"   📌 Envía tu comprobante de pago para activar."
+                        )
+                    for s in expired_subs:
+                        plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
+                        icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
+                        _ed = (s.get("end_date") or "")[:10]
+                        end = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) >= 10 else _ed
+                        alert_lines.append(
+                            f"{icon} <b>{plat}</b> — vencida el {end}\n"
+                            f"   🔄 Renueva para seguir disfrutando."
+                        )
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    alert_keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💳 Renovar / Pagar ahora", callback_data="menu:subscribe")],
+                        [InlineKeyboardButton("📋 Mis servicios", callback_data="menu:my_services")],
+                        [InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")],
+                    ])
+                    await update.message.reply_text(
+                        "\n\n".join(alert_lines),
+                        parse_mode="HTML",
+                        reply_markup=alert_keyboard,
+                    )
+                    return
+            except Exception as alert_err:
+                logger.error(f"Debt/expiry alert failed for {telegram_id}: {alert_err}", exc_info=True)
+
+        # Normal menu
         greeting = random.choice(RETURNING_GREETINGS).format(name=name)
         availability = await _build_availability_text()
         menu_text = greeting + "\n\n" + MAIN_MENU.format(name=name, availability=availability)

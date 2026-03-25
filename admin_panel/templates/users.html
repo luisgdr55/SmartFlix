@@ -51,8 +51,8 @@
             <td class="table-cell font-medium text-slate-200">{{ u.get('name') or 'Sin nombre' }}</td>
             <td class="table-cell text-slate-400">{% if u.get('username') %}@{{ u['username'] }}{% else %}—{% endif %}</td>
             <td class="table-cell font-mono text-xs text-slate-500">{{ u.get('telegram_id', '—') }}</td>
-            <td class="table-cell text-slate-400 text-sm">{{ u.get('created_at', '—')[:10] if u.get('created_at') else '—' }}</td>
-            <td class="table-cell text-slate-400 text-sm">{{ u.get('last_seen', '—')[:16] if u.get('last_seen') else '—' }}</td>
+            <td class="table-cell text-slate-400 text-sm">{{ u.get('created_at') | fmt_date }}</td>
+            <td class="table-cell text-slate-400 text-sm">{{ u.get('last_seen') | fmt_dt }}</td>
             <td class="table-cell text-center">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full {% if (u.get('total_purchases') or 0) > 0 %}bg-indigo-600/30 text-indigo-300{% else %}bg-slate-700 text-slate-500{% endif %} text-xs font-bold">
                 {{ u.get('total_purchases') or 0 }}
@@ -75,6 +75,9 @@
                   <button type="submit" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">Bloquear</button>
                 </form>
                 {% endif %}
+                <form action="/panel/users/{{ u['id'] }}/delete" method="POST" onsubmit="return confirm('¿Eliminar a {{ u.get('name','este cliente') }} y todas sus suscripciones? Esta acción no se puede deshacer.')">
+                  <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+                </form>
               </div>
             </td>
           </tr>

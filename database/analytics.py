@@ -16,8 +16,8 @@ async def get_dashboard_stats() -> dict:
         sb = get_supabase()
         now = venezuela_now()
 
-        # Total users
-        users_result = sb.table("users").select("id", count="exact").execute()
+        # Total paying clients (exclude zero-purchase prospects)
+        users_result = sb.table("users").select("id", count="exact").gt("total_purchases", 0).execute()
         total_users = users_result.count or 0
 
         # Active subscriptions
@@ -127,17 +127,18 @@ async def get_income_report(period: str = "month") -> dict:
 
 
 async def get_clients_list(page: int = 1, per_page: int = 10) -> dict:
-    """Get paginated clients list."""
+    """Get paginated clients list (paying clients only)."""
     try:
         sb = get_supabase()
         offset = (page - 1) * per_page
 
-        count_result = sb.table("users").select("id", count="exact").execute()
+        count_result = sb.table("users").select("id", count="exact").gt("total_purchases", 0).execute()
         total = count_result.count or 0
 
         result = (
             sb.table("users")
-            .select("telegram_id, name, username, status, total_purchases, created_at, last_seen")
+            .select("id, telegram_id, name, username, status, total_purchases, created_at, last_seen")
+            .gt("total_purchases", 0)
             .order("created_at", desc=True)
             .range(offset, offset + per_page - 1)
             .execute()
@@ -163,7 +164,7 @@ async def get_client_detail(telegram_id: int) -> Optional[dict]:
         if not user_result.data:
             return None
 
-        user = user_result.data
+        user = user_result.data[0]
 
         subs_result = (
             sb.table("subscriptions")
@@ -194,7 +195,6 @@ async def get_platform_availability() -> list[dict]:
         for p in platforms:
             monthly_count = await count_available_profiles(p["id"], "monthly")
             express_count = await count_available_profiles(p["id"], "express")
-            week_count = await count_available_profiles(p["id"], "week")
             availability.append({
                 "platform_id": p["id"],
                 "name": p["name"],
@@ -202,7 +202,6 @@ async def get_platform_availability() -> list[dict]:
                 "icon_emoji": p.get("icon_emoji", ""),
                 "monthly_available": monthly_count,
                 "express_available": express_count,
-                "week_available": week_count,
             })
         return availability
     except Exception as e:

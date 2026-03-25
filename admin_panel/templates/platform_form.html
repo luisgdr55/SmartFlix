@@ -67,15 +67,6 @@
               class="form-input pl-7" />
           </div>
         </div>
-        <div>
-          <label class="form-label">Semanal $</label>
-          <div class="relative">
-            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-            <input type="number" name="week_price_usd" step="0.01" min="0"
-              value="{{ "%.2f"|format(platform.get('week_price_usd') or 0) }}"
-              class="form-input pl-7" />
-          </div>
-        </div>
       </div>
     </div>
 
@@ -92,11 +83,6 @@
           <label class="form-label">Instrucciones para plan Express</label>
           <textarea name="instructions_express" rows="4" class="form-input resize-none text-sm"
             placeholder="Instrucciones para plan express...">{{ platform.get('instructions_express','') or '' }}</textarea>
-        </div>
-        <div>
-          <label class="form-label">Instrucciones para plan Semanal</label>
-          <textarea name="instructions_week" rows="4" class="form-input resize-none text-sm"
-            placeholder="Instrucciones para plan semanal...">{{ platform.get('instructions_week','') or '' }}</textarea>
         </div>
       </div>
     </div>

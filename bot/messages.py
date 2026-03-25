@@ -69,7 +69,8 @@ ACCESS_DELIVERED = (
     "{pin_line}"
     "\n"
     "📋 <b>Instrucciones:</b>\n{instructions}\n\n"
-    "⚠️ <i>No compartas estos datos. Si tienes problemas usa /soporte</i>"
+    "⚠️ <i>No compartas estos datos. Si tienes problemas usa /soporte</i>\n\n"
+    "🎬 <b>¡Gracias por elegirnos! Disfruta del mejor contenido. 🙌✨</b>"
 )
 
 PIN_LINE = "🔢 <b>PIN del perfil:</b> <code>{pin}</code>\n"
@@ -140,13 +141,6 @@ EXPRESS_EXPIRED = (
     "Usa el botón de abajo para renovar 👇"
 )
 
-WEEK_PACK_EXPIRY_REMINDER = (
-    "📅 <b>Tu pack semanal vence pronto</b>\n\n"
-    "Hola <b>{name}</b> 👋\n\n"
-    "Tu suscripción a <b>{platform}</b> vence el <b>{end_date}</b> "
-    "({days} días restantes).\n\n"
-    "¿Renovamos? 🎬"
-)
 
 MY_SERVICES_ACTIVE = (
     "📋 <b>Mis Servicios Activos</b>\n\n"
@@ -209,6 +203,23 @@ EXPIRY_NOTIFICATION = (
     "Hola <b>{name}</b>, tu acceso a <b>{platform}</b> ha expirado.\n\n"
     "¡Pero tranquilo/a! Puedes renovar ahora mismo y seguir disfrutando 🎬\n\n"
     "Presiona el botón para renovar 👇"
+)
+
+SOFT_CUT_NOTIFICATION = (
+    "🔒 <b>Acceso suspendido temporalmente</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> venció el <b>{end_date}</b> "
+    "y tu acceso ha sido suspendido.\n\n"
+    "Si deseas renovar y recuperar el acceso, usa el botón de abajo 👇\n\n"
+    "<i>Si ya realizaste el pago, contáctanos por soporte.</i>"
+)
+
+PROFILE_RELEASED_NOTIFICATION = (
+    "📤 <b>Suscripción finalizada</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> ha finalizado "
+    "y tu perfil ha sido liberado.\n\n"
+    "¡Esperamos haberte brindado un excelente servicio! 🎬\n\n"
+    "Cuando quieras volver, aquí estaremos 😊\n"
+    "Usa el botón de abajo para contratar un nuevo plan 👇"
 )
 
 PAYMENT_EXPIRED = (

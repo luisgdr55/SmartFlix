@@ -8,6 +8,129 @@
   ⚠️ Error cargando estadísticas: {{ error }}
 </div>
 {% endif %}
+
+{% if accounts_due %}
+<div class="mx-6 mt-4 bg-red-500/10 border border-red-500/30 rounded-2xl overflow-hidden">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-red-500/20">
+    <span class="text-lg">💳</span>
+    <p class="text-sm font-semibold text-red-300">
+      {{ accounts_due | length }} cuenta(s) con fecha de renovación vencida o próxima
+    </p>
+    <a href="/panel/accounts" class="ml-auto text-xs text-red-400 hover:text-red-300 underline">Ver cuentas →</a>
+  </div>
+  <div class="divide-y divide-red-500/10">
+    {% for acc in accounts_due %}
+    {% set bd = acc.get('billing_date','')[:10] %}
+    {% set platform = acc.get('platforms') or {} %}
+    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-red-500/5 transition-colors">
+      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
+      <div class="flex-1 min-w-0">
+        <span class="text-sm text-slate-200 font-medium font-mono">{{ acc.get('email', '—') }}</span>
+        <span class="text-slate-500 mx-1">·</span>
+        <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
+      </div>
+      {% if bd <= today_str %}
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">🔴 VENCIDA</span>
+      {% else %}
+      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ acc.get('billing_date') | fmt_date }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if expiring_alert %}
+<div class="mx-6 mt-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl overflow-hidden">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-amber-500/20">
+    <span class="text-lg">🔔</span>
+    <p class="text-sm font-semibold text-amber-300">
+      {{ expiring_alert | length }} cliente(s) vencen hoy o en los próximos 3 días
+    </p>
+    <a href="/panel/subscriptions" class="ml-auto text-xs text-amber-400 hover:text-amber-300 underline">Ver todas →</a>
+  </div>
+  <div class="divide-y divide-amber-500/10">
+    {% for sub in expiring_alert %}
+    {% set ed = sub['end_date'][:10] %}
+    {% set platform = sub.get('platforms') or {} %}
+    {% set user = sub.get('users') or {} %}
+    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-amber-500/5 transition-colors">
+      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
+      <div class="flex-1 min-w-0">
+        <span class="text-sm text-slate-200 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
+        <span class="text-slate-500 mx-1">·</span>
+        <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
+      </div>
+      {% if ed <= today_str %}
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">⚠️ Vence HOY</span>
+      {% else %}
+      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ sub['end_date'] | fmt_date }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if expired_subs %}
+<div class="mx-6 mt-4 bg-red-500/10 border border-red-500/30 rounded-2xl overflow-hidden">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-red-500/20">
+    <span class="text-lg">🔴</span>
+    <p class="text-sm font-semibold text-red-300">
+      {{ expired_subs | length }} cliente(s) con suscripción vencida sin renovar
+    </p>
+    <a href="/panel/payments" class="ml-auto text-xs text-red-400 hover:text-red-300 underline">Ver pagos →</a>
+  </div>
+  <div class="divide-y divide-red-500/10">
+    {% for sub in expired_subs %}
+    {% set ed = sub.get('end_date','')[:10] %}
+    {% set platform = sub.get('platforms') or {} %}
+    {% set user = sub.get('users') or {} %}
+    {% set uid = user.get('id') %}
+    {% set has_profile = sub.get('profile_id') %}
+    <div class="flex flex-wrap items-center gap-2 px-5 py-2.5 hover:bg-red-500/5 transition-colors">
+      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
+      <div class="flex-1 min-w-0">
+        {% if uid %}
+        <a href="/panel/users/{{ uid }}" class="text-sm text-slate-200 font-medium hover:text-white transition-colors">
+          {{ user.get('name') or user.get('username') or '—' }}
+        </a>
+        {% else %}
+        <span class="text-sm text-slate-200 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
+        {% endif %}
+        <span class="text-slate-500 mx-1">·</span>
+        <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
+      </div>
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full">🔴 {{ sub.get('end_date') | fmt_date }}</span>
+      {% if has_profile %}
+      <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
+        onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
+        <button type="submit" title="Corte suave: cambia el PIN, el perfil queda asignado"
+          class="text-xs bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          🔒 Corte suave
+        </button>
+      </form>
+      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+        onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
+        <button type="submit" title="Liberar perfil: lo devuelve al pool de disponibles"
+          class="text-xs bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-200 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          📤 Liberar
+        </button>
+      </form>
+      {% else %}
+      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+        onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
+        <button type="submit" title="Sin perfil asignado — solo marca como expirada"
+          class="text-xs bg-slate-500/20 hover:bg-slate-500/30 border border-slate-500/40 text-slate-400 hover:text-slate-300 px-2.5 py-1 rounded-lg transition-colors font-medium">
+          ✓ Cerrar
+        </button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -96,7 +219,7 @@
         </div>
         <div class="flex-1 text-right">
           {% if rate_data and rate_data.get('updated_at') %}
-          <p class="text-xs text-slate-500">Actualizado: {{ rate_data.get('updated_at', '')[:16] }}</p>
+          <p class="text-xs text-slate-500">Actualizado: {{ rate_data.get('updated_at') | fmt_dt }}</p>
           {% endif %}
         </div>
       </div>
@@ -190,7 +313,6 @@
               <th class="table-header">Plataforma</th>
               <th class="table-header text-center">Mensual</th>
               <th class="table-header text-center">Express</th>
-              <th class="table-header text-center">Semanal</th>
             </tr>
           </thead>
           <tbody>
@@ -205,11 +327,6 @@
               <td class="table-cell text-center">
                 <span class="{% if p.get('express_available', 0) > 0 %}text-yellow-400{% else %}text-red-400{% endif %} font-semibold">
                   {{ p.get('express_available', 0) }}
-                </span>
-              </td>
-              <td class="table-cell text-center">
-                <span class="{% if p.get('week_available', 0) > 0 %}text-blue-400{% else %}text-red-400{% endif %} font-semibold">
-                  {{ p.get('week_available', 0) }}
                 </span>
               </td>
             </tr>
@@ -297,7 +414,7 @@ if (platformCtx) {
       data: {
         labels: avail.map(p => p.name),
         datasets: [{
-          data: avail.map(p => (p.monthly_available || 0) + (p.express_available || 0) + (p.week_available || 0)),
+          data: avail.map(p => (p.monthly_available || 0) + (p.express_available || 0)),
           backgroundColor: colors.slice(0, avail.length),
           borderColor: '#1e293b',
           borderWidth: 2,

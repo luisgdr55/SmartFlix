@@ -14,9 +14,23 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_WINDOW = 60   # seconds
 RATE_LIMIT_MAX = 30      # messages per window
 
+# Singleton Redis client with connection pool — avoids creating a new
+# connection on every call, which was silently failing on Railway.
+_redis_client: Optional[redis.Redis] = None
+
 
 def _get_redis() -> redis.Redis:
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=20,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+        )
+    return _redis_client
 
 
 async def check_user_blocked(telegram_id: int) -> bool:
@@ -31,7 +45,7 @@ async def check_user_blocked(telegram_id: int) -> bool:
             .execute()
         )
         if result.data:
-            return result.data.get("status") == "blocked"
+            return result.data[0].get("status") == "blocked"
         return False
     except Exception as e:
         logger.error(f"Error checking user blocked status: {e}")
@@ -79,7 +93,8 @@ def get_user_state(telegram_id: int) -> Optional[str]:
     try:
         r = _get_redis()
         return r.get(f"state:{telegram_id}")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Redis get_user_state error: {e}")
         return None
 
 
@@ -106,7 +121,8 @@ def get_user_data(telegram_id: int, key: str) -> Optional[str]:
     try:
         r = _get_redis()
         return r.get(f"data:{telegram_id}:{key}")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Redis get_user_data error ({key}): {e}")
         return None
 
 

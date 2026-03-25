@@ -32,6 +32,14 @@ def save_cart(telegram_id: int, items: list[dict]) -> None:
         logger.warning(f"save_cart error: {e}")
 
 
+def add_to_cart(telegram_id: int, item: dict) -> list[dict]:
+    """Append one item to cart. Returns updated cart list."""
+    cart = get_cart(telegram_id)
+    cart.append(item)
+    save_cart(telegram_id, cart)
+    return cart
+
+
 def clear_cart(telegram_id: int) -> None:
     try:
         r = _get_redis()

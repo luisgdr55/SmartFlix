@@ -46,7 +46,7 @@ async def cmd_precios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "💰 <b>Gestión de Precios</b>\n\n"
         f"💱 Tasa Binance actual: <b>Bs {rate_val}/USD</b>\n\n"
         "Selecciona una plataforma para editar sus precios:\n"
-        "<i>M = Mensual  ·  E = Express  ·  S = Semanal</i>"
+        "<i>M = Mensual  ·  E = Express</i>"
     )
     await update.message.reply_text(
         text,
@@ -89,7 +89,7 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
             "💰 <b>Gestión de Precios</b>\n\n"
             f"💱 Tasa Binance: <b>Bs {rate_val}/USD</b>\n\n"
             "Selecciona una plataforma para editar:\n"
-            "<i>M = Mensual  ·  E = Express  ·  S = Semanal</i>"
+            "<i>M = Mensual  ·  E = Express</i>"
         )
         await query.edit_message_text(
             text,
@@ -109,7 +109,6 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
         name = platform.get("name", "")
         monthly = platform.get("monthly_price_usd") or "—"
         express = platform.get("express_price_usd") or "—"
-        week = platform.get("week_price_usd") or "—"
 
         rate = await get_current_rate()
         rate_val = float((rate or {}).get("usd_binance", 0) or 0)
@@ -124,7 +123,6 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
             "━━━━━━━━━━━━━━━━━━\n"
             f"📅 Mensual:  <b>${monthly}</b>{bs_ref(monthly)}\n"
             f"⚡ Express:  <b>${express}</b>{bs_ref(express)}\n"
-            f"🗓 Semanal:  <b>${week}</b>{bs_ref(week)}\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "Elige qué precio modificar:"
         )
@@ -137,7 +135,7 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
     # ── prices:edit:<id>:<type> ───────────────────────────────────
     elif data.startswith("prices:edit:") and len(parts) == 4:
         platform_id = parts[2]
-        price_type = parts[3]  # monthly | express | week | all
+        price_type = parts[3]  # monthly | express | all
 
         platform = await get_platform_by_id(platform_id)
         if not platform:
@@ -151,13 +149,13 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         if price_type == "all":
             hint = (
-                "Envía los <b>3 precios en USD</b> separados por espacio:\n"
-                "<code>mensual express semanal</code>\n\n"
-                "Ejemplo: <code>5.00 1.00 1.50</code>"
+                "Envía los <b>2 precios en USD</b> separados por espacio:\n"
+                "<code>mensual express</code>\n\n"
+                "Ejemplo: <code>5.00 1.00</code>"
             )
         else:
             current = platform.get(f"{price_type}_price_usd") or "0"
-            labels = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal 7d"}
+            labels = {"monthly": "Mensual", "express": "Express 24h"}
             hint = (
                 f"Editando: <b>{labels.get(price_type, price_type)}</b>\n"
                 f"Precio actual: <b>${current}</b>\n\n"
@@ -189,16 +187,13 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         monthly = float(platform.get("monthly_price_usd") or 0)
         express = float(platform.get("express_price_usd") or 0)
-        week = float(platform.get("week_price_usd") or 0)
 
         if price_type == "monthly":
             monthly = new_price
         elif price_type == "express":
             express = new_price
-        elif price_type == "week":
-            week = new_price
 
-        success = await update_platform_prices(platform_id, monthly, express, week)
+        success = await update_platform_prices(platform_id, monthly, express)
         if not success:
             await query.edit_message_text("Error al guardar precio.")
             return
@@ -211,7 +206,7 @@ async def handle_prices_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         icon = platform.get("icon_emoji", "📺")
         name = platform.get("name", "")
-        labels = {"monthly": "Mensual", "express": "Express", "week": "Semanal"}
+        labels = {"monthly": "Mensual", "express": "Express"}
         await query.edit_message_text(
             f"✅ <b>{icon} {name}</b>\n"
             f"Precio {labels.get(price_type, price_type)} actualizado:\n\n"
@@ -347,39 +342,38 @@ async def handle_price_text_input(
     icon = platform.get("icon_emoji", "📺")
     name = platform.get("name", "")
 
-    # ── Guardar los 3 precios de una vez ─────────────────────────
+    # ── Guardar los 2 precios de una vez ─────────────────────────
     if price_type == "all":
         values = text.replace(",", ".").split()
-        if len(values) != 3:
+        if len(values) != 2:
             await update.message.reply_text(
-                "Necesito exactamente 3 valores separados por espacio.\n"
-                "Ejemplo: <code>5.00 1.00 1.50</code>",
+                "Necesito exactamente 2 valores separados por espacio.\n"
+                "Ejemplo: <code>5.00 1.00</code>",
                 parse_mode="HTML",
             )
             return
         try:
-            monthly, express, week = [float(v) for v in values]
-            if any(p < 0 for p in [monthly, express, week]):
+            monthly, express = [float(v) for v in values]
+            if any(p < 0 for p in [monthly, express]):
                 raise ValueError("negative")
         except ValueError:
             await update.message.reply_text("Valores inválidos. Usa números positivos.")
             return
 
-        success = await update_platform_prices(platform_id, monthly, express, week)
+        success = await update_platform_prices(platform_id, monthly, express)
         if not success:
             await update.message.reply_text("Error al guardar precios.")
             return
 
         await log_admin_action(
             telegram_id, "update_all_prices",
-            {"platform_id": platform_id, "monthly": monthly, "express": express, "week": week},
+            {"platform_id": platform_id, "monthly": monthly, "express": express},
         )
         clear_user_state(telegram_id)
         await update.message.reply_text(
             f"✅ <b>{icon} {name}</b> — Precios actualizados:\n\n"
             f"📅 Mensual:  <b>${monthly:.2f}</b>\n"
-            f"⚡ Express:  <b>${express:.2f}</b>\n"
-            f"🗓 Semanal:  <b>${week:.2f}</b>\n\n"
+            f"⚡ Express:  <b>${express:.2f}</b>\n\n"
             "Usa /precios para más cambios.",
             parse_mode="HTML",
         )
@@ -398,7 +392,7 @@ async def handle_price_text_input(
         )
         return
 
-    labels = {"monthly": "Mensual", "express": "Express 24h", "week": "Semanal 7d"}
+    labels = {"monthly": "Mensual", "express": "Express 24h"}
     await update.message.reply_text(
         f"{icon} <b>{name}</b> — Confirmar cambio\n\n"
         f"Tipo: <b>{labels.get(price_type, price_type)}</b>\n"

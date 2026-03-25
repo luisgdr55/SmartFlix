@@ -203,6 +203,18 @@ async def increment_user_purchases(telegram_id: int) -> bool:
         return False
 
 
+async def delete_user(user_id: str) -> bool:
+    """Permanently delete a user and all their subscriptions."""
+    try:
+        sb = get_supabase()
+        sb.table("subscriptions").delete().eq("user_id", user_id).execute()
+        sb.table("users").delete().eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in delete_user: {e}")
+        return False
+
+
 async def log_admin_action(admin_telegram_id: int, action: str, details: dict) -> bool:
     """Log an admin action to admin_log table."""
     try:

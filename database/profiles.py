@@ -37,11 +37,33 @@ async def get_available_profiles(platform_id: str, profile_type: str = "monthly"
             .eq("platform_id", platform_id)
             .eq("profile_type", profile_type)
             .eq("status", "available")
+            .order("last_released", desc=False, nullsfirst=True)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        profiles = result.data or []
+        logger.debug(
+            f"get_available_profiles(platform={platform_id}, type={profile_type}) → {len(profiles)} results"
+        )
+        return profiles
+    except Exception as e:
+        logger.error(f"Error in get_available_profiles: {e}")
+        return []
+
+
+async def get_all_profiles_for_platform(platform_id: str) -> list[dict]:
+    """List ALL profiles for a platform regardless of status/type (for diagnostics)."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("profiles")
+            .select("id, profile_name, profile_type, status, is_extra_member")
+            .eq("platform_id", platform_id)
             .execute()
         )
         return result.data or []
     except Exception as e:
-        logger.error(f"Error in get_available_profiles: {e}")
+        logger.error(f"Error in get_all_profiles_for_platform: {e}")
         return []
 
 
