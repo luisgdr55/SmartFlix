@@ -76,8 +76,8 @@
               {% if t == 'express' %}<span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">⚡ Express</span>
               {% else %}<span class="text-xs bg-indigo-600/20 text-indigo-300 px-2 py-0.5 rounded-full capitalize">{{ t }}</span>{% endif %}
             </td>
-            <td class="table-cell text-sm text-slate-400">{{ sub.get('start_date','—')[:10] if sub.get('start_date') else '—' }}</td>
-            <td class="table-cell text-sm text-slate-400">{{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}</td>
+            <td class="table-cell text-sm text-slate-400">{{ sub.get('start_date') | fmt_date }}</td>
+            <td class="table-cell text-sm text-slate-400">{{ sub.get('end_date') | fmt_date }}</td>
             <td class="table-cell font-medium text-emerald-400">${{ "%.2f"|format(sub.get('price_usd') or 0) }}</td>
             <td class="table-cell">
               {% set s = sub.get('status','') %}

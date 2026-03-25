@@ -21,6 +21,33 @@ logger = logging.getLogger(__name__)
 _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
 
+
+def _fmt_date(val) -> str:
+    """Convert ISO date string (YYYY-MM-DD...) → DD/MM/AAAA for display."""
+    if not val:
+        return "—"
+    s = str(val)[:10]
+    if len(s) == 10 and s[4] == "-":
+        return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
+    return s or "—"
+
+
+def _fmt_dt(val) -> str:
+    """Convert ISO datetime string → DD/MM/AAAA HH:MM for display."""
+    if not val:
+        return "—"
+    s = str(val)
+    date_part = s[:10]
+    time_part = s[11:16] if len(s) > 10 else ""
+    if len(date_part) == 10 and date_part[4] == "-":
+        formatted = f"{date_part[8:10]}/{date_part[5:7]}/{date_part[0:4]}"
+        return f"{formatted} {time_part}" if time_part else formatted
+    return s[:16] or "—"
+
+
+templates.env.filters["fmt_date"] = _fmt_date
+templates.env.filters["fmt_dt"] = _fmt_dt
+
 # ── Router ────────────────────────────────────────────────────────────────────
 panel_router = APIRouter(prefix="/panel", tags=["admin_panel"])
 

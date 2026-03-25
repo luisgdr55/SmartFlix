@@ -91,7 +91,7 @@
 
         <!-- Subscription details -->
         <div class="text-xs text-slate-500 mb-4 space-y-1">
-          <p>📅 Solicitado: {{ sub.get('created_at','—')[:16] if sub.get('created_at') else '—' }}</p>
+          <p>📅 Solicitado: {{ sub.get('created_at') | fmt_dt }}</p>
           <p>🔖 ID: <span class="font-mono text-slate-400">{{ sub['id'][:8] }}...</span></p>
         </div>
 
@@ -180,7 +180,7 @@
             </td>
             <td class="table-cell text-xs capitalize text-slate-300">{{ sub.get('plan_type','—') }}</td>
             <td class="table-cell text-sm text-red-400 font-medium">
-              {{ sub.get('end_date','—')[:10] if sub.get('end_date') else '—' }}
+              {{ sub.get('end_date') | fmt_date }}
             </td>
             <td class="table-cell">
               {% set uid = (sub.get('users') or {}).get('id') %}

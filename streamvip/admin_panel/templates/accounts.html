@@ -64,12 +64,11 @@
               {% endif %}
             </td>
             <td class="table-cell text-sm">
-              {% set bd = (acc.get('billing_date') or '')[:10] %}
-              {% if bd %}
-                {% if bd <= today_str %}
-                  <span class="text-red-400 font-medium">{{ bd }}</span>
+              {% if acc.get('billing_date') %}
+                {% if (acc.get('billing_date') or '')[:10] <= today_str %}
+                  <span class="text-red-400 font-medium">{{ acc.get('billing_date') | fmt_date }}</span>
                 {% else %}
-                  <span class="text-slate-400">{{ bd }}</span>
+                  <span class="text-slate-400">{{ acc.get('billing_date') | fmt_date }}</span>
                 {% endif %}
               {% else %}—{% endif %}
             </td>

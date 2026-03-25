@@ -303,11 +303,12 @@ async def send_soft_cut_notification(subscription_id: str) -> bool:
         telegram_id = user.get("telegram_id")
         if not telegram_id:
             return False
-        end_raw = (sub.get("end_date") or "")[:10]
+        _ed = (sub.get("end_date") or "")[:10]
+        end_fmt = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else _ed
         message = SOFT_CUT_NOTIFICATION.format(
             name=user.get("name", ""),
             platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}",
-            end_date=end_raw,
+            end_date=end_fmt,
         )
         from bot.keyboards import renewal_keyboard
         keyboard = renewal_keyboard(sub.get("platform_id", ""), sub.get("plan_type", "monthly"))

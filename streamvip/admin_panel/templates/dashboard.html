@@ -32,7 +32,7 @@
       {% if bd <= today_str %}
       <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">🔴 VENCIDA</span>
       {% else %}
-      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ bd }}</span>
+      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ acc.get('billing_date') | fmt_date }}</span>
       {% endif %}
     </div>
     {% endfor %}
@@ -64,7 +64,7 @@
       {% if ed <= today_str %}
       <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full animate-pulse">⚠️ Vence HOY</span>
       {% else %}
-      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ ed }}</span>
+      <span class="text-xs font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">📅 {{ sub['end_date'] | fmt_date }}</span>
       {% endif %}
     </div>
     {% endfor %}
@@ -101,7 +101,7 @@
         <span class="text-slate-500 mx-1">·</span>
         <span class="text-sm text-slate-400">{{ platform.get('name', '—') }}</span>
       </div>
-      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full">🔴 {{ ed }}</span>
+      <span class="text-xs font-bold text-red-400 bg-red-500/15 border border-red-500/30 px-2 py-0.5 rounded-full">🔴 {{ sub.get('end_date') | fmt_date }}</span>
       {% if has_profile %}
       <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
         onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
@@ -219,7 +219,7 @@
         </div>
         <div class="flex-1 text-right">
           {% if rate_data and rate_data.get('updated_at') %}
-          <p class="text-xs text-slate-500">Actualizado: {{ rate_data.get('updated_at', '')[:16] }}</p>
+          <p class="text-xs text-slate-500">Actualizado: {{ rate_data.get('updated_at') | fmt_dt }}</p>
           {% endif %}
         </div>
       </div>

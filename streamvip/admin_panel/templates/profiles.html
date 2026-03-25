@@ -118,8 +118,7 @@
             <td class="table-cell text-sm">
               {% set sub = p.get('_active_sub') %}
               {% if sub and sub.get('end_date') %}
-                {% set ed = sub['end_date'][:10] %}
-                <span class="font-mono text-amber-300">{{ ed }}</span>
+                <span class="font-mono text-amber-300">{{ sub['end_date'] | fmt_date }}</span>
               {% else %}
                 <span class="text-slate-600">—</span>
               {% endif %}

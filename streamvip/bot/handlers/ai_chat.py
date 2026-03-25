@@ -637,7 +637,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     if pin:
                         block.append(f"🔢 PIN: <code>{pin}</code>")
                     if end_raw:
-                        block.append(f"📅 Vence: {end_raw[8:10]}-{end_raw[5:7]}-{end_raw[0:4]}")
+                        block.append(f"📅 Vence: {end_raw[8:10]}/{end_raw[5:7]}/{end_raw[0:4]}")
                     lines.append("\n".join(block))
                 lines.append("\n\n⚠️ <i>No compartas estos datos con nadie.</i>")
                 await update.message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=main_menu_keyboard())

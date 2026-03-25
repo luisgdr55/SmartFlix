@@ -374,7 +374,8 @@ async def _handle_expired_clients(message) -> None:
             "telegram_id": tid,
             "subs": [],
         })
-        end = (s.get("end_date") or "")[:10]
+        _ed = (s.get("end_date") or "")[:10]
+        end = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else _ed
         icon = platform.get("icon_emoji", "📺")
         plat_name = platform.get("name", "?")
         plan = s.get("plan_type", "?")
