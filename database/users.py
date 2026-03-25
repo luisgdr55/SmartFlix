@@ -49,7 +49,8 @@ async def get_or_create_user(telegram_id: int, username: Optional[str], name: Op
             "is_admin": False,
         }
         create_result = sb.table("users").insert(new_user).execute()
-        return create_result.data[0] if create_result.data else new_user
+        created = create_result.data[0] if create_result.data else new_user
+        return {**created, "_just_created": True}
     except Exception as e:
         logger.error(f"Error in get_or_create_user: {e}")
         raise

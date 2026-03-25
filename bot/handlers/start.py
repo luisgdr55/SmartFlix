@@ -69,8 +69,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         user = await get_or_create_user(telegram_id, username, full_name)
 
-        # New user with no username — check if they're pre-registered by phone
-        if not user.get("name") and not username:
+        # New user with no username — check if they're pre-registered by phone.
+        # Triggers when the account was just created AND has no @username,
+        # so username-based auto-link was impossible (covers clients registered
+        # manually by admin who have no Telegram @username).
+        if user.get("_just_created") and not username:
             set_user_state(telegram_id, "awaiting_phone_verify")
             await update.message.reply_text(
                 "👋 ¡Hola! Para verificar si ya tienes una cuenta con nosotros, "
