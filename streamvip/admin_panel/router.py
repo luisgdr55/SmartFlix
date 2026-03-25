@@ -145,10 +145,10 @@ async def dashboard(request: Request):
             "billing_date", in_3_days_str
         ).order("billing_date").execute()
 
-        # Client subscriptions already expired (status=active but end_date in the past)
+        # Client subscriptions already expired (active past end_date OR status=expired)
         expired_subs = sb.table("subscriptions").select(
             "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
-        ).eq("status", "active").lt(
+        ).in_("status", ["active", "expired"]).lt(
             "end_date", now_ve.isoformat()
         ).order("end_date").limit(30).execute()
 

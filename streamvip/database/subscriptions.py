@@ -363,7 +363,7 @@ async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
     try:
         sb = get_supabase()
         now = venezuela_now()
-        fields = "id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)"
+        fields = "id, user_id, end_date, plan_type, price_usd, status, users(telegram_id, name, username), platforms(name, icon_emoji)"
 
         # Fetch all non-pending, non-cancelled subscriptions (includes expired_payment)
         result = (
@@ -401,6 +401,24 @@ async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
                     pass
 
         logger.info(f"get_expired_subscriptions filtered expired: {len(expired)}")
+
+        # Fallback: if users FK join returned null, fetch user data by user_id
+        missing_user_ids = [
+            r["user_id"] for r in expired
+            if not r.get("users") and r.get("user_id")
+        ]
+        if missing_user_ids:
+            try:
+                u_res = sb.table("users").select(
+                    "id, telegram_id, name, username"
+                ).in_("id", missing_user_ids).execute()
+                user_map = {u["id"]: u for u in (u_res.data or [])}
+                for r in expired:
+                    if not r.get("users") and r.get("user_id"):
+                        r["users"] = user_map.get(r["user_id"])
+            except Exception as ue:
+                logger.warning(f"get_expired_subscriptions user fallback error: {ue}")
+
         expired.sort(key=lambda x: x.get("end_date") or "", reverse=True)
         return expired[:limit]
     except Exception as e:

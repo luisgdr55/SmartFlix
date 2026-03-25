@@ -358,16 +358,19 @@ async def _handle_expired_clients(message) -> None:
         await message.reply_text("✅ No hay suscripciones vencidas registradas.")
         return
 
-    # Group by client (telegram_id) to avoid repeating same client
-    seen: dict[int, dict] = {}
+    # Group by user_id (UUID) — use telegram_id when available for buttons
+    seen: dict[str, dict] = {}
     for s in subs:
         user = s.get("users") or {}
+        # Prefer telegram_id; fall back to user_id UUID from the subscription row
         tid = user.get("telegram_id")
-        if not tid:
+        uid = str(s.get("user_id") or "")
+        key = str(tid) if tid else uid
+        if not key:
             continue
         platform = s.get("platforms") or {}
-        entry = seen.setdefault(tid, {
-            "name": user.get("name") or user.get("username") or f"ID {tid}",
+        entry = seen.setdefault(key, {
+            "name": user.get("name") or user.get("username") or f"uid {uid[:8]}",
             "telegram_id": tid,
             "subs": [],
         })
@@ -375,17 +378,20 @@ async def _handle_expired_clients(message) -> None:
         icon = platform.get("icon_emoji", "📺")
         plat_name = platform.get("name", "?")
         plan = s.get("plan_type", "?")
-        entry["subs"].append(f"{icon} {plat_name} ({plan}) — venció {end}")
+        status = s.get("status", "")
+        entry["subs"].append(f"{icon} {plat_name} ({plan}) — venció {end} [{status}]")
 
     lines = [f"📋 <b>{len(seen)} cliente(s) con suscripción vencida:</b>\n"]
     buttons = []
-    for tid, data in list(seen.items())[:15]:
+    for key, data in list(seen.items())[:15]:
         name = data["name"]
+        tid = data["telegram_id"]
         sub_lines = "\n   ".join(data["subs"][:3])
-        lines.append(f"👤 <b>{name}</b> (<code>{tid}</code>)\n   {sub_lines}")
-        buttons.append([InlineKeyboardButton(
-            f"Ver {name}", callback_data=f"admin:client_detail:{tid}"
-        )])
+        lines.append(f"👤 <b>{name}</b>" + (f" (<code>{tid}</code>)" if tid else "") + f"\n   {sub_lines}")
+        if tid:
+            buttons.append([InlineKeyboardButton(
+                f"Ver {name}", callback_data=f"admin:client_detail:{tid}"
+            )])
 
     # Split into chunks if too long
     full_text = "\n\n".join(lines)
