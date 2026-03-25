@@ -658,12 +658,40 @@ async def handle_admin_nl_callback(update: Update, context: ContextTypes.DEFAULT
     if action == "cancel_sub":
         sub_id = parts[2]
         try:
+            from database import get_supabase
             from database.subscriptions import cancel_subscription
             from database.users import log_admin_action
+            from utils.helpers import venezuela_now
+
+            sb = get_supabase()
+
+            # Get subscription to check for assigned profile
+            sub_res = sb.table("subscriptions").select("profile_id, user_id").eq("id", sub_id).limit(1).execute()
+            sub_data = sub_res.data[0] if sub_res.data else {}
+            profile_id = sub_data.get("profile_id")
+
+            # Release profile if assigned
+            if profile_id:
+                sb.table("profiles").update({
+                    "status": "available",
+                    "last_released": venezuela_now().isoformat(),
+                }).eq("id", profile_id).execute()
+
             ok = await cancel_subscription(sub_id)
             if ok:
                 await log_admin_action(update.effective_user.id, "nl_cancel_sub", {"sub_id": sub_id})
-                await query.edit_message_text(f"✅ Suscripción <code>{sub_id[:8]}</code> cancelada.", parse_mode="HTML")
+                # Notify client
+                try:
+                    from services.notification_service import send_profile_released_notification
+                    await send_profile_released_notification(sub_id)
+                except Exception:
+                    pass
+                released_msg = " y perfil liberado" if profile_id else ""
+                await query.edit_message_text(
+                    f"✅ Suscripción <code>{sub_id[:8]}</code> cancelada{released_msg}.\n"
+                    f"{'📴 Cliente notificado.' if profile_id else ''}",
+                    parse_mode="HTML",
+                )
             else:
                 await query.edit_message_text("❌ No se pudo cancelar la suscripción.")
         except Exception as e:
