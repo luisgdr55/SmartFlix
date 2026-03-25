@@ -408,6 +408,33 @@ async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
         return []
 
 
+async def auto_expire_overdue_subscriptions(user_id: str | None = None) -> int:
+    """
+    Mark as 'expired' all subscriptions that are status='active' but end_date is in the past.
+    Optionally scoped to a single user_id. Returns the count of rows updated.
+    """
+    try:
+        sb = get_supabase()
+        now = venezuela_now()
+        query = (
+            sb.table("subscriptions")
+            .select("id")
+            .eq("status", "active")
+            .lt("end_date", now.isoformat())
+        )
+        if user_id:
+            query = query.eq("user_id", user_id)
+        result = query.execute()
+        ids = [r["id"] for r in (result.data or [])]
+        if ids:
+            for sub_id in ids:
+                sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
+        return len(ids)
+    except Exception as e:
+        logger.error(f"Error in auto_expire_overdue_subscriptions: {e}")
+        return 0
+
+
 async def cancel_expired_pending_subscriptions() -> int:
     """Cancel pending subscriptions older than 45 minutes. Returns count of cancelled."""
     try:

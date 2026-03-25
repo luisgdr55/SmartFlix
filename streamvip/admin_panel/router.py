@@ -84,8 +84,11 @@ async def dashboard(request: Request):
         return guard
     try:
         from database.analytics import get_dashboard_stats
-        from database.subscriptions import get_pending_subscriptions
+        from database.subscriptions import get_pending_subscriptions, auto_expire_overdue_subscriptions
         from services.exchange_service import get_current_rate
+
+        # Sweep: mark active-but-overdue subs as expired before rendering dashboard
+        await auto_expire_overdue_subscriptions()
 
         stats = await get_dashboard_stats()
         pending = await get_pending_subscriptions()
@@ -653,6 +656,9 @@ async def user_detail(request: Request, user_id: str):
         user = user_res.data[0] if user_res.data else None
         if not user:
             return RedirectResponse(url="/panel/users?error=Usuario+no+encontrado", status_code=302)
+        # Auto-expire any active subs past end_date for this user
+        from database.subscriptions import auto_expire_overdue_subscriptions
+        await auto_expire_overdue_subscriptions(user_id=user_id)
         subs_res = sb.table("subscriptions").select(
             "*, platforms(name, icon_emoji), profiles(profile_name, pin)"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
@@ -856,6 +862,10 @@ async def subscriptions_list(request: Request):
         from database import get_supabase
         from database.platforms import get_active_platforms
         sb = get_supabase()
+
+        # Auto-expire any active subs past end_date (global sweep)
+        from database.subscriptions import auto_expire_overdue_subscriptions
+        await auto_expire_overdue_subscriptions()
 
         status_filter = request.query_params.get("status", "")
         platform_filter = request.query_params.get("platform", "")
