@@ -96,9 +96,15 @@ def _detect_intent(text: str) -> dict | None:
     if any(k in t for k in list_kws) or t.strip() in ("clientes", "usuarios", "lista clientes"):
         return {"action": "list_clients"}
 
+    # ── client detail (full) ──────────────────────────────────────
+    detail_kws = ["detalle de", "detalles de", "info de", "información de",
+                  "informacion de", "datos de", "ver cliente"]
+    if any(k in t for k in detail_kws):
+        name = _extract_name_after_de(t) or _extract_name(t, detail_kws)
+        return {"action": "client_detail_nl", "name": name}
+
     # ── find client ───────────────────────────────────────────────
-    find_kws = ["busca", "buscar", "info de", "información de", "informacion de",
-                "datos de", "perfil de", "cliente", "quién es", "quien es"]
+    find_kws = ["busca", "buscar", "perfil de", "quién es", "quien es"]
     if any(k in t for k in find_kws):
         name = _extract_name(t, find_kws)
         return {"action": "find_client", "name": name}
@@ -149,6 +155,7 @@ async def _llm_intent(text: str) -> dict:
                     "- show_rate: ver tasa de cambio actual\n"
                     "- rate_update: actualizar tasa (parámetro rate: número)\n"
                     "- list_clients: ver/listar todos los clientes registrados\n"
+                    "- client_detail_nl: ver detalle completo de un cliente por nombre (parámetro name)\n"
                     "- find_client: buscar cliente por nombre (parámetro name)\n"
                     "- block_user: bloquear cliente (parámetro name)\n"
                     "- unblock_user: desbloquear cliente (parámetro name)\n"
@@ -332,6 +339,75 @@ async def _handle_list_clients(message) -> None:
             )])
     markup = InlineKeyboardMarkup(buttons) if buttons else None
     await message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=markup)
+
+
+async def _handle_client_detail_nl(message, name_query: str) -> None:
+    """Search by name and show full client detail as a message."""
+    if not name_query:
+        await message.reply_text("¿De qué cliente quieres ver los detalles?")
+        return
+    clients = await _search_client(name_query)
+    if not clients:
+        await message.reply_text(f"🔍 No encontré clientes con el nombre <b>{name_query}</b>.", parse_mode="HTML")
+        return
+    if len(clients) > 1:
+        # Multiple matches — show a selector
+        lines = [f"🔍 Encontré {len(clients)} clientes. ¿Cuál quieres ver?\n"]
+        buttons = []
+        for c in clients:
+            tid = c.get("telegram_id")
+            name = c.get("name") or "Sin nombre"
+            username = f" @{c['username']}" if c.get("username") else ""
+            lines.append(f"• <b>{name}</b>{username}")
+            if tid:
+                buttons.append([InlineKeyboardButton(f"Ver {name}", callback_data=f"admin:client_detail:{tid}")])
+        await message.reply_text("\n".join(lines), parse_mode="HTML",
+                                 reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+        return
+
+    # Single match — show full detail
+    c = clients[0]
+    tid = c.get("telegram_id")
+    if not tid:
+        name = c.get("name") or "Sin nombre"
+        await message.reply_text(
+            f"👤 <b>{name}</b>\n"
+            f"👤 @{c.get('username') or 'N/A'}\n"
+            f"🛒 Compras: {c.get('total_purchases') or 0}\n"
+            f"⚠️ Sin Telegram ID registrado — no se puede mostrar detalle completo.",
+            parse_mode="HTML",
+        )
+        return
+
+    from database.analytics import get_client_detail
+    from bot.keyboards import client_detail_keyboard
+    data = await get_client_detail(tid)
+    if not data:
+        await message.reply_text(f"❌ No se pudo cargar el detalle del cliente.")
+        return
+    user = data["user"]
+    subs = data.get("subscriptions", [])
+    is_blocked = user.get("status") == "blocked"
+    status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+    text = (
+        f"👤 <b>Detalle del Cliente</b>\n\n"
+        f"📝 Nombre: {user.get('name') or 'N/A'}\n"
+        f"👤 Username: @{user.get('username') or 'N/A'}\n"
+        f"🆔 Telegram ID: <code>{tid}</code>\n"
+        f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
+        f"🛒 Compras: {user.get('total_purchases', 0)}\n"
+        f"📊 Estado: {status_icon}\n\n"
+        f"📋 <b>Suscripciones ({len(subs)}):</b>\n"
+    )
+    for sub in subs[:8]:
+        platform = (sub.get("platforms") or {}).get("name", "?")
+        plan = sub.get("plan_type", "?")
+        sub_status = sub.get("status", "?")
+        _ed = (sub.get("end_date") or "")[:10]
+        end_fmt = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else "—"
+        text += f"  • {platform} ({plan}) — {sub_status} — {end_fmt}\n"
+    await message.reply_text(text, parse_mode="HTML",
+                             reply_markup=client_detail_keyboard(tid, is_blocked))
 
 
 async def _handle_find_client(message, name_query: str) -> None:
@@ -565,6 +641,9 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
 
         elif action == "expired_clients":
             await _handle_expired_clients(update.message)
+
+        elif action == "client_detail_nl":
+            await _handle_client_detail_nl(update.message, name)
 
         elif action == "find_client":
             await _handle_find_client(update.message, name)
