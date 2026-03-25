@@ -48,7 +48,7 @@ def build_telegram_app() -> Application:
         admin_dashboard, cmd_tasa, cmd_tasabcv, cmd_addcuenta, cmd_addexpress,
         cmd_editpin, cmd_clientes, cmd_cliente, cmd_pendientes, cmd_ingresos,
         cmd_bloquear, cmd_broadcast, cmd_flyer, cmd_promo, cmd_config, cmd_testllm,
-        cmd_testnotif, handle_admin_callback
+        cmd_testnotif, cmd_testverif, handle_admin_callback
     )
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
@@ -75,6 +75,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("config", cmd_config))
     app.add_handler(CommandHandler("testllm", cmd_testllm))
     app.add_handler(CommandHandler("testnotif", cmd_testnotif))
+    app.add_handler(CommandHandler("testverif", cmd_testverif))
     app.add_handler(CommandHandler("precios", cmd_precios))
 
     # =====================================================

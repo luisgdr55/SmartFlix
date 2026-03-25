@@ -10,6 +10,8 @@ from bot.keyboards import (
     admin_dashboard_keyboard, pending_payment_keyboard, paginator_keyboard,
     platforms_keyboard, flyer_preview_keyboard, main_menu_keyboard,
     prices_menu_keyboard, platform_price_edit_keyboard, confirm_price_keyboard,
+    client_detail_keyboard,
+    clients_list_keyboard,
 )
 from bot.messages import ADMIN_DASHBOARD
 from bot.middleware import set_user_state, set_user_data, get_user_data, clear_user_state
@@ -18,7 +20,7 @@ from database.analytics import get_dashboard_stats, get_income_report, get_clien
 from database.subscriptions import get_pending_subscriptions, confirm_subscription, cancel_subscription
 from database.profiles import get_available_profiles, assign_profile, update_profile_pin
 from database.platforms import get_active_platforms, get_platform_by_id, update_platform_prices
-from database.users import block_user, log_admin_action, get_user_by_telegram_id
+from database.users import block_user, unblock_user, log_admin_action, get_user_by_telegram_id, update_user_name, update_user_phone
 from services.exchange_service import update_rate, get_current_rate, fetch_binance_p2p_rate, auto_update_rate
 from utils.helpers import format_datetime_vzla, short_id
 from utils.validators import is_admin
@@ -296,25 +298,31 @@ async def cmd_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = data["user"]
     subs = data.get("subscriptions", [])
 
+    is_blocked = user.get("status") == "blocked"
+    status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+
     text = (
         f"👤 <b>Detalle del Cliente</b>\n\n"
         f"📝 Nombre: {user.get('name') or 'N/A'}\n"
         f"👤 Username: @{user.get('username') or 'N/A'}\n"
         f"🆔 Telegram ID: <code>{user.get('telegram_id')}</code>\n"
         f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
-        f"📅 Registrado: {format_datetime_vzla(None)}\n"
         f"🛒 Compras: {user.get('total_purchases', 0)}\n"
-        f"📊 Estado: {user.get('status', 'active')}\n\n"
+        f"📊 Estado: {status_icon}\n\n"
         f"📋 <b>Últimas suscripciones ({len(subs)}):</b>\n"
     )
 
     for sub in subs[:5]:
         platform = (sub.get("platforms") or {}).get("name", "?")
         plan = sub.get("plan_type", "?")
-        status = sub.get("status", "?")
-        text += f"  • {platform} ({plan}) - {status}\n"
+        sub_status = sub.get("status", "?")
+        text += f"  • {platform} ({plan}) - {sub_status}\n"
 
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=client_detail_keyboard(target_id, is_blocked),
+    )
 
 
 async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -654,6 +662,169 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(config_text, parse_mode="HTML")
 
 
+async def cmd_testllm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Quick test to verify OpenRouter LLM is responding."""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    await update.message.reply_text("⏳ Probando conexión con el LLM...")
+    try:
+        from services.gemini_service import _call
+        response = await _call(
+            messages=[{"role": "user", "content": "Responde solo: OK"}],
+            temperature=0.1,
+            max_tokens=10,
+        )
+        await update.message.reply_text(f"✅ LLM respondió: <code>{response}</code>", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error LLM: <code>{e}</code>", parse_mode="HTML")
+
+
+async def cmd_testnotif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a test notification to all admin IDs to verify the notification pipeline."""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    await update.message.reply_text("⏳ Enviando notificación de prueba...")
+    try:
+        from services.notification_service import send_to_admin
+        await send_to_admin(
+            "🧪 <b>Test de notificación</b>\n\nSi ves este mensaje, el sistema de notificaciones funciona correctamente. ✅"
+        )
+        await update.message.reply_text("✅ Notificación enviada. Verifica que la recibiste.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al enviar notificación: <code>{e}</code>", parse_mode="HTML")
+
+
+async def cmd_testverif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Test IMAP connectivity and inbox scan directly. Usage: /testverif [platform_slug]"""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    args = context.args or []
+    platform_slug = args[0].lower() if args else "netflix"
+
+    await update.message.reply_text(
+        f"⏳ Probando IMAP para plataforma: <b>{platform_slug}</b>\n"
+        f"Buscando en los últimos 15 minutos...",
+        parse_mode="HTML",
+    )
+
+    try:
+        import time
+        from services.imap_reader import _imap_search_once
+
+        imap_email = getattr(settings, "IMAP_EMAIL", "")
+        imap_password = getattr(settings, "IMAP_PASSWORD", "")
+        imap_host = getattr(settings, "IMAP_HOST", "imap.gmail.com")
+        imap_port = int(getattr(settings, "IMAP_PORT", 993))
+
+        if not imap_email:
+            await update.message.reply_text("❌ IMAP_EMAIL no configurado en Railway.")
+            return
+
+        since_ts = time.time()  # busca en los últimos 15 min (lookback window)
+
+        import asyncio
+        code = await asyncio.to_thread(
+            _imap_search_once,
+            platform_slug,
+            since_ts,
+            imap_email,
+            imap_password,
+            imap_host,
+            imap_port,
+        )
+
+        if code:
+            await update.message.reply_text(
+                f"✅ <b>IMAP funciona y encontró código</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n"
+                f"🔑 Código: <code>{code}</code>",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ <b>IMAP conectó correctamente pero no encontró código</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n\n"
+                f"Posibles causas:\n"
+                f"• No hay emails de {platform_slug} en los últimos 15 min\n"
+                f"• El reenvío aún no llegó al inbox central\n"
+                f"• El dominio del remitente no coincide\n\n"
+                f"📧 Inbox: <code>{imap_email}</code>",
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>Error IMAP</b>\n\n<code>{e}</code>\n\n"
+            f"Verifica IMAP_EMAIL, IMAP_PASSWORD, IMAP_HOST en Railway.",
+            parse_mode="HTML",
+        )
+
+
+async def _show_clients_list_callback(query, page: int = 1) -> None:
+    """Edit-message version of client list for callbacks."""
+    data = await get_clients_list(page=page, per_page=10)
+    clients = data.get("clients", [])
+    total = data.get("total", 0)
+    total_pages = data.get("total_pages", 1)
+
+    if not clients:
+        await query.edit_message_text("No hay clientes registrados.")
+        return
+
+    text = f"👥 <b>Clientes</b> — Página {page}/{total_pages} (Total: {total})\n\nToca un cliente para ver su perfil y editarlo:"
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=clients_list_keyboard(clients, page, total_pages),
+    )
+
+
+async def _show_client_detail_callback(query, target_id: int) -> None:
+    """Edit-message version of client detail for callbacks."""
+    data = await get_client_detail(target_id)
+    if not data:
+        await query.edit_message_text(f"❌ Cliente {target_id} no encontrado.")
+        return
+
+    user = data["user"]
+    subs = data.get("subscriptions", [])
+    is_blocked = user.get("status") == "blocked"
+    status_icon = "🚫 Bloqueado" if is_blocked else "✅ Activo"
+
+    text = (
+        f"👤 <b>Detalle del Cliente</b>\n\n"
+        f"📝 Nombre: {user.get('name') or 'N/A'}\n"
+        f"👤 Username: @{user.get('username') or 'N/A'}\n"
+        f"🆔 Telegram ID: <code>{user.get('telegram_id')}</code>\n"
+        f"📱 Teléfono: {user.get('phone') or 'N/A'}\n"
+        f"🛒 Compras: {user.get('total_purchases', 0)}\n"
+        f"📊 Estado: {status_icon}\n\n"
+        f"📋 <b>Últimas suscripciones ({len(subs)}):</b>\n"
+    )
+    for sub in subs[:5]:
+        platform = (sub.get("platforms") or {}).get("name", "?")
+        plan = sub.get("plan_type", "?")
+        sub_status = sub.get("status", "?")
+        text += f"  • {platform} ({plan}) - {sub_status}\n"
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=client_detail_keyboard(target_id, is_blocked),
+    )
+
+
 async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin approves a pending payment manually."""
     query = update.callback_query
@@ -672,7 +843,16 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
     sub_id = parts[2]
 
     try:
-        from database.subscriptions import get_subscription_by_id
+        from database.subscriptions import (
+            get_subscription_by_id, get_user_platform_active_subscription,
+            confirm_renewal_subscription,
+        )
+        from database.users import increment_user_purchases
+        from database.platforms import get_platform_by_id
+        from services.notification_service import send_to_user
+        from utils.helpers import format_datetime_vzla, venezuela_now
+        from datetime import datetime, timedelta
+
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             await query.edit_message_text("Suscripción no encontrada.")
@@ -680,7 +860,59 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         platform_id = str(sub.get("platform_id", ""))
         plan_type = sub.get("plan_type", "monthly")
+        user = sub.get("users") or {}
+        user_tid = user.get("telegram_id")
+        user_id = str(sub.get("user_id", ""))
+        durations = {"monthly": 30, "express": 1}
+        duration_days = durations.get(plan_type, 30)
 
+        platform = await get_platform_by_id(platform_id)
+        platform_label = f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}"
+
+        # ── RENEWAL CHECK ──────────────────────────────────────────────
+        existing_sub = await get_user_platform_active_subscription(user_id, platform_id)
+        if existing_sub and existing_sub.get("profile_id"):
+            profile_id = str(existing_sub["profile_id"])
+            profile = existing_sub.get("profiles") or {}
+
+            # New end_date: extend from current end_date (if future) or from now
+            now = venezuela_now()
+            existing_end_str = (existing_sub.get("end_date") or "")[:10]
+            today_str = now.strftime("%Y-%m-%d")
+            if existing_end_str > today_str:
+                try:
+                    y, m, d = map(int, existing_end_str.split("-"))
+                    base = now.replace(year=y, month=m, day=d, hour=23, minute=59, second=59, microsecond=0)
+                except Exception:
+                    base = now
+            else:
+                base = now
+            new_end_date = base + timedelta(days=duration_days)
+
+            await confirm_renewal_subscription(str(existing_sub["id"]), profile_id, "MANUAL-ADMIN", new_end_date)
+            # Cancel the new pending sub (it's a duplicate — the existing one was updated)
+            from database.subscriptions import cancel_subscription
+            await cancel_subscription(sub_id)
+            await log_admin_action(telegram_id, "approve_renewal", {"sub_id": sub_id})
+
+            if user_tid:
+                await increment_user_purchases(user_tid)
+                renewal_msg = (
+                    f"✅ <b>¡Renovación confirmada!</b>\n\n"
+                    f"Tu suscripción de <b>{platform_label}</b> ha sido renovada.\n\n"
+                    f"👤 Perfil: <b>{profile.get('profile_name', '')}</b>\n"
+                    f"📅 Nueva fecha de corte: <b>{format_datetime_vzla(new_end_date)}</b>\n\n"
+                    f"¡Gracias por tu preferencia! 🙌 Disfruta el streaming. 🎬"
+                )
+                await send_to_user(user_tid, renewal_msg)
+
+            await query.edit_message_text(
+                f"✅ Renovación #{short_id(sub_id)} aprobada.\n"
+                f"Nueva fecha de corte: {format_datetime_vzla(new_end_date)}"
+            )
+            return
+
+        # ── NEW SUBSCRIPTION PATH ──────────────────────────────────────
         profiles = await get_available_profiles(platform_id, plan_type)
         if not profiles:
             await query.edit_message_text(
@@ -694,27 +926,18 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         await confirm_subscription(sub_id, profile_id, "MANUAL-ADMIN", "manual_approval")
         await assign_profile(profile_id)
-
         await log_admin_action(telegram_id, "approve_payment", {"sub_id": sub_id})
 
-        # Notify user
-        user = sub.get("users") or {}
-        user_tid = user.get("telegram_id")
         if user_tid:
-            from services.notification_service import send_to_user
-            from database.platforms import get_platform_by_id
+            await increment_user_purchases(user_tid)
+
+        if user_tid:
             from database.accounts import get_account_by_id
-
-            platform = await get_platform_by_id(platform_id)
-            account = await get_account_by_id(str(profile.get("account_id", "")))
-
             from bot.messages import ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE, PAYMENT_CONFIRMED
-            from utils.helpers import format_datetime_vzla, venezuela_now
-            from datetime import timedelta
 
+            account = await get_account_by_id(str(profile.get("account_id", "")))
             now = venezuela_now()
-            durations = {"monthly": 30, "express": 1, "week": 7}
-            end_date = now + timedelta(days=durations.get(plan_type, 30))
+            end_date = now + timedelta(days=duration_days)
 
             pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
             platform_slug = (platform or {}).get("slug", "netflix")
@@ -722,14 +945,20 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
             instructions = instructions_tpl.format(profile_name=profile.get("profile_name", ""))
 
             access_text = ACCESS_DELIVERED.format(
-                platform=f"{(platform or {}).get('icon_emoji','')} {(platform or {}).get('name','')}",
+                platform=platform_label,
                 profile_name=profile.get("profile_name", ""),
                 email=(account or {}).get("email", ""),
                 password=(account or {}).get("password", ""),
                 pin_line=pin_line,
                 instructions=instructions,
             )
-            await send_to_user(user_tid, f"✅ <b>Pago aprobado por el administrador</b>")
+            confirmed_text = PAYMENT_CONFIRMED.format(
+                platform=platform_label,
+                start_date=format_datetime_vzla(now),
+                end_date=format_datetime_vzla(end_date),
+                reference=sub.get("payment_reference") or "N/A",
+            )
+            await send_to_user(user_tid, confirmed_text)
             await send_to_user(user_tid, access_text)
 
         await query.edit_message_text(f"✅ Pago #{short_id(sub_id)} aprobado y acceso enviado.")
@@ -762,22 +991,46 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
             await query.edit_message_text("Suscripción no encontrada.")
             return
 
-        await cancel_subscription(sub_id)
+        from database.subscriptions import delete_subscription, get_user_active_subscriptions
+        await delete_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
-        # Notify user
-        user = sub.get("users") or {}
+        # Delete the user record too if they have no other subscriptions
+        sub_user = sub.get("users") or {}
+        sub_user_id = sub.get("user_id")
+        if sub_user_id:
+            remaining = await get_user_active_subscriptions(str(sub_user_id))
+            if not remaining:
+                from database.users import delete_user
+                await delete_user(str(sub_user_id))
+                logger.info(f"Deleted user {sub_user_id} after payment rejection (no remaining subscriptions)")
+
+        # Notify user — invite to restart
+        user = sub_user
         user_tid = user.get("telegram_id")
+        platform = sub.get("platforms") or {}
+        platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
         if user_tid:
             from services.notification_service import send_to_user
+            from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+            restart_keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Iniciar nuevo pedido", callback_data="menu:subscribe")
+            ]])
             await send_to_user(
                 user_tid,
-                "❌ <b>Pago rechazado</b>\n\n"
-                "Tu pago no pudo ser verificado. "
-                "Si realizaste el pago, por favor contacta a soporte con tu comprobante."
+                f"❌ <b>Comprobante no aprobado</b>\n\n"
+                f"Hola, tu comprobante de pago para <b>{platform_name}</b> "
+                f"no pudo ser verificado por nuestro equipo.\n\n"
+                f"<b>Posibles motivos:</b>\n"
+                f"• El monto no coincide con el precio exacto\n"
+                f"• La imagen no es legible o está recortada\n"
+                f"• La referencia ya fue registrada anteriormente\n\n"
+                f"Por favor inicia un nuevo pedido y envía el comprobante correcto. "
+                f"Si crees que es un error, contáctanos. 📞",
+                keyboard=restart_keyboard,
             )
 
-        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado.")
+        await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado — cliente notificado con opción de reiniciar.")
     except Exception as e:
         logger.error(f"Error in handle_admin_reject_payment: {e}")
         await query.edit_message_text(f"Error al rechazar: {e}")
@@ -849,7 +1102,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await cmd_pendientes(update, context)
     elif data == "admin:clients":
         await query.answer()
-        await cmd_clientes(update, context)
+        await _show_clients_list_callback(query, page=1)
     elif data == "admin:income":
         await query.answer()
         await cmd_ingresos(update, context)
@@ -875,6 +1128,50 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             f"O usa el botón 🔄 Auto-fetch para obtenerla de Binance P2P.",
             parse_mode="HTML",
         )
+    elif data.startswith("admin:edit_name:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        set_user_state(telegram_id, f"admin:edit_client:name:{target_id}")
+        await query.edit_message_text(
+            f"✏️ Ingresa el <b>nuevo nombre</b> para el cliente <code>{target_id}</code>:\n\n"
+            f"(Escribe el nombre o /cancelar para abortar)",
+            parse_mode="HTML",
+        )
+
+    elif data.startswith("admin:edit_phone:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        set_user_state(telegram_id, f"admin:edit_client:phone:{target_id}")
+        await query.edit_message_text(
+            f"📱 Ingresa el <b>nuevo teléfono</b> para el cliente <code>{target_id}</code>:\n\n"
+            f"(Ej: 04141234567 o /cancelar para abortar)",
+            parse_mode="HTML",
+        )
+
+    elif data.startswith("admin:block:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await block_user(target_id)
+        await log_admin_action(telegram_id, "block_user", {"target_telegram_id": target_id})
+        await _show_client_detail_callback(query, target_id)
+
+    elif data.startswith("admin:unblock:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await unblock_user(target_id)
+        await log_admin_action(telegram_id, "unblock_user", {"target_telegram_id": target_id})
+        await _show_client_detail_callback(query, target_id)
+
+    elif data.startswith("admin:clients_page:"):
+        await query.answer()
+        page = int(data.split(":")[2])
+        await _show_clients_list_callback(query, page=page)
+
+    elif data.startswith("admin:client_detail:"):
+        await query.answer()
+        target_id = int(data.split(":")[2])
+        await _show_client_detail_callback(query, target_id)
+
     elif data == "admin:back":
         await query.answer()
         await admin_dashboard(update, context)

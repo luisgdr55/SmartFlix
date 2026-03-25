@@ -296,7 +296,11 @@ async def _fetch_verification_code(query, sub: dict, telegram_id: int) -> None:
 
     # Background task: poll IMAP then notify client or escalate to admin
     async def _bg_task():
-        code = await poll_for_code(platform_slug, since_ts, timeout=240)
+        try:
+            code = await poll_for_code(platform_slug, since_ts, timeout=240)
+        except Exception as e:
+            logger.error(f"poll_for_code crashed for {platform_slug}: {e}", exc_info=True)
+            code = None
 
         if code:
             await send_to_user(
