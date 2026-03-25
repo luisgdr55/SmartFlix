@@ -167,12 +167,23 @@
                   {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
                 </td>
                 <td class="table-cell" x-show="!editing">
-                  <div class="flex items-center gap-2">
-                    <button @click="editing = true" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">✏️ Editar</button>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button @click="editing = true" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors">✏️</button>
                     {% set s = sub.get('status','') %}
-                    {% if s in ('expired', 'cancelled') %}
+                    {% if s == 'active' %}
+                      {% if sub.get('profile_id') %}
+                      <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST"
+                        onsubmit="return confirm('¿Corte suave? Se cambia el PIN y se notifica al cliente.')">
+                        <button type="submit" title="Corte suave" class="text-xs bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/40 text-amber-300 px-2 py-0.5 rounded-lg transition-colors">🔒 Corte</button>
+                      </form>
+                      {% endif %}
+                      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST"
+                        onsubmit="return confirm('¿Cortar acceso y liberar perfil? Se notifica al cliente.')">
+                        <button type="submit" title="Cortar y liberar perfil" class="text-xs bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 text-red-400 px-2 py-0.5 rounded-lg transition-colors">✂️ Cortar</button>
+                      </form>
+                    {% elif s in ('expired', 'cancelled') %}
                     <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
-                      onsubmit="return confirm('¿Eliminar esta suscripción {{ s }}? No se puede deshacer.')">
+                      onsubmit="return confirm('¿Eliminar esta suscripción? No se puede deshacer.')">
                       <button type="submit" class="text-xs text-red-400 hover:text-red-300 font-medium transition-colors">🗑️</button>
                     </form>
                     {% endif %}

@@ -97,10 +97,28 @@
               {% endif %}
             </td>
             <td class="table-cell">
-              <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
-                onsubmit="return confirm('¿Eliminar esta suscripción permanentemente?')">
-                <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-2 py-1 rounded-lg transition-colors">🗑️</button>
-              </form>
+              <div class="flex items-center gap-1.5">
+                {% if sub.get('status') == 'active' %}
+                  {% if sub.get('profile_id') %}
+                  <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST"
+                    onsubmit="return confirm('¿Corte suave? Se cambia el PIN y se notifica al cliente. El perfil queda reservado.')">
+                    <button type="submit" title="Corte suave: cambia PIN, notifica al cliente"
+                      class="text-xs bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/40 text-amber-300 px-2 py-1 rounded-lg transition-colors">🔒</button>
+                  </form>
+                  {% endif %}
+                  <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST"
+                    onsubmit="return confirm('¿Liberar perfil y cortar acceso? Se notifica al cliente.')">
+                    <button type="submit" title="Cortar acceso y liberar perfil"
+                      class="text-xs bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 text-red-400 px-2 py-1 rounded-lg transition-colors">✂️</button>
+                  </form>
+                {% else %}
+                  <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
+                    onsubmit="return confirm('¿Eliminar esta suscripción permanentemente?')">
+                    <button type="submit" title="Eliminar registro"
+                      class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-2 py-1 rounded-lg transition-colors">🗑️</button>
+                  </form>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% else %}
