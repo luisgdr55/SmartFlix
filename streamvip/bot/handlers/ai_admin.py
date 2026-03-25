@@ -318,7 +318,7 @@ async def _handle_rate_update(message, rate_val: float, admin_id: int) -> None:
 
 async def _handle_list_clients(message) -> None:
     from database.analytics import get_clients_list
-    data = await get_clients_list(page=1, per_page=20)
+    data = await get_clients_list(page=1, per_page=20)  # already filters total_purchases > 0
     clients = data.get("clients", [])
     total = data.get("total", 0)
     if not clients:

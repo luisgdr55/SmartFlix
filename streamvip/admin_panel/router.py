@@ -635,11 +635,11 @@ async def users_list(request: Request):
         per_page = 20
         offset = (page - 1) * per_page
 
-        query = sb.table("users").select("*")
+        query = sb.table("users").select("*").gt("total_purchases", 0)
         if search:
             query = query.or_(f"name.ilike.%{search}%,username.ilike.%{search}%")
 
-        count_query = sb.table("users").select("id", count="exact")
+        count_query = sb.table("users").select("id", count="exact").gt("total_purchases", 0)
         if search:
             count_query = count_query.or_(f"name.ilike.%{search}%,username.ilike.%{search}%")
         count_res = count_query.execute()
