@@ -67,13 +67,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     try:
-        user = await get_or_create_user(telegram_id, username, full_name)
-
-        # New user with no username — check if they're pre-registered by phone.
-        # Triggers when the account was just created AND has no @username,
-        # so username-based auto-link was impossible (covers clients registered
-        # manually by admin who have no Telegram @username).
-        if user.get("_just_created") and not username:
+        # Check if already registered by telegram_id BEFORE creating anything.
+        # If not found and no @username, ask for phone first — otherwise we'd
+        # create an empty ghost account that blocks the pre-registered account link.
+        existing = await get_user_by_telegram_id(telegram_id)
+        if not existing and not username:
             set_user_state(telegram_id, "awaiting_phone_verify")
             await update.message.reply_text(
                 "👋 ¡Hola! Para verificar si ya tienes una cuenta con nosotros, "
@@ -81,6 +79,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 reply_markup=share_contact_keyboard(),
             )
             return
+
+        user = await get_or_create_user(telegram_id, username, full_name)
 
         # Check if user needs to provide their name
         if not user.get("name"):
@@ -171,6 +171,18 @@ async def handle_contact_shared(update: Update, context: ContextTypes.DEFAULT_TY
         pre_user = await find_user_by_phone(phone)
 
         if pre_user:
+            # Delete any ghost account that may have been created with this telegram_id
+            # before phone verification (from the old buggy flow). This frees the
+            # telegram_id so we can link it cleanly to the pre-registered account.
+            ghost = await get_user_by_telegram_id(telegram_id)
+            if ghost and ghost.get("id") != pre_user.get("id"):
+                try:
+                    from database.users import delete_user
+                    await delete_user(str(ghost["id"]))
+                    logger.info(f"Deleted ghost user {ghost['id']} before linking pre-registered account")
+                except Exception as ghost_err:
+                    logger.warning(f"Could not delete ghost user: {ghost_err}")
+
             await link_user_telegram_id(pre_user["id"], telegram_id, username)
             name = pre_user.get("name", "")
             availability = await _build_availability_text()
