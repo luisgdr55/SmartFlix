@@ -335,6 +335,58 @@ async def mark_expiry_notified(sub_id: str) -> bool:
         return False
 
 
+async def get_subscriptions_in_grace_period() -> list[dict]:
+    """Monthly subs that are expired (status=active, end_date < now) and still within
+    the 6-day grace period (debt_reminder_count < 6). Used for daily debt reminders."""
+    try:
+        sb = get_supabase()
+        now = venezuela_now()
+        result = (
+            sb.table("subscriptions")
+            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name)")
+            .eq("status", "active")
+            .eq("plan_type", "monthly")
+            .lt("end_date", now.isoformat())
+            .lt("debt_reminder_count", 6)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error in get_subscriptions_in_grace_period: {e}")
+        return []
+
+
+async def get_subscriptions_past_grace_period() -> list[dict]:
+    """Monthly subs that exhausted all 6 debt reminders without renewing — ready to cut."""
+    try:
+        sb = get_supabase()
+        now = venezuela_now()
+        result = (
+            sb.table("subscriptions")
+            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name)")
+            .eq("status", "active")
+            .eq("plan_type", "monthly")
+            .lt("end_date", now.isoformat())
+            .gte("debt_reminder_count", 6)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error in get_subscriptions_past_grace_period: {e}")
+        return []
+
+
+async def increment_debt_reminder(sub_id: str, current_count: int) -> bool:
+    """Increment the debt_reminder_count by 1."""
+    try:
+        sb = get_supabase()
+        sb.table("subscriptions").update({"debt_reminder_count": current_count + 1}).eq("id", sub_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in increment_debt_reminder: {e}")
+        return False
+
+
 async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
     """Get subscription by UUID with related data."""
     try:

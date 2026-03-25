@@ -256,6 +256,93 @@ async def job_daily_admin_report() -> None:
         logger.error(f"Error in job_daily_admin_report: {e}")
 
 
+# ============================================================
+# JOB 8: Debt reminders + hard cut - daily at 9AM VE time
+# ============================================================
+async def job_debt_reminders_and_cuts() -> None:
+    """
+    Daily job for expired monthly subscriptions:
+    - Days 1-6 after expiration: send a debt reminder and increment counter.
+    - Day 7+ (counter >= 6): release profile, cancel subscription, notify client + admin.
+    """
+    logger.info("Running job: debt_reminders_and_cuts")
+    try:
+        from database.subscriptions import (
+            get_subscriptions_in_grace_period,
+            get_subscriptions_past_grace_period,
+            increment_debt_reminder,
+            cancel_subscription,
+        )
+        from services.notification_service import (
+            send_debt_reminder,
+            send_hard_cut_notification,
+            send_to_admin,
+        )
+
+        # ── PART 1: Send daily debt reminders (days 1-6) ──────────────
+        grace_subs = await get_subscriptions_in_grace_period()
+        logger.info(f"Found {len(grace_subs)} subscriptions in grace period")
+
+        for sub in grace_subs:
+            try:
+                sub_id = str(sub["id"])
+                current_count = sub.get("debt_reminder_count") or 0
+                day_number = current_count + 1
+                await send_debt_reminder(sub, day_number)
+                await increment_debt_reminder(sub_id, current_count)
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error sending debt reminder for {sub.get('id')}: {e}")
+
+        # ── PART 2: Hard cut — 6 reminders exhausted ──────────────────
+        cut_subs = await get_subscriptions_past_grace_period()
+        logger.info(f"Found {len(cut_subs)} subscriptions to cut after grace period")
+
+        for sub in cut_subs:
+            try:
+                sub_id = str(sub["id"])
+                profile = sub.get("profiles") or {}
+                profile_id = profile.get("id")
+                platform = sub.get("platforms") or {}
+                user = sub.get("users") or {}
+                client_name = user.get("name") or user.get("username") or "Cliente"
+                platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+
+                # Release profile
+                if profile_id:
+                    from database import get_supabase
+                    from utils.helpers import venezuela_now
+                    import random, string
+                    sb = get_supabase()
+                    new_pin = "".join(random.choices(string.digits, k=4))
+                    sb.table("profiles").update({
+                        "status": "available",
+                        "pin": new_pin,
+                        "last_released": venezuela_now().isoformat(),
+                    }).eq("id", profile_id).execute()
+
+                # Cancel subscription
+                await cancel_subscription(sub_id)
+
+                # Notify client
+                await send_hard_cut_notification(sub)
+
+                # Notify admin
+                await send_to_admin(
+                    f"✂️ <b>Suscripción cortada por impago</b>\n\n"
+                    f"👤 Cliente: <b>{client_name}</b>\n"
+                    f"📺 Plataforma: <b>{platform_label}</b>\n"
+                    f"👤 Perfil liberado: <b>{profile.get('profile_name', '—')}</b>\n"
+                    f"⏳ 6 recordatorios enviados sin respuesta."
+                )
+
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Error cutting subscription {sub.get('id')}: {e}")
+    except Exception as e:
+        logger.error(f"Error in job_debt_reminders_and_cuts: {e}")
+
+
 def setup_scheduler() -> AsyncIOScheduler:
     """Configure and return the scheduler with all jobs."""
     # Job 1: Expiry reminders - daily at 10:00 AM Venezuela time
@@ -321,5 +408,14 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured with 7 jobs")
+    # Job 8: Debt reminders + hard cut - 9:00 AM Venezuela time
+    scheduler.add_job(
+        job_debt_reminders_and_cuts,
+        CronTrigger(hour=9, minute=0, timezone=VENEZUELA_TZ),
+        id="debt_reminders_and_cuts",
+        name="Debt Reminders & Hard Cut",
+        replace_existing=True,
+    )
+
+    logger.info("Scheduler configured with 8 jobs")
     return scheduler

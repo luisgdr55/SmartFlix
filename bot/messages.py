@@ -205,6 +205,22 @@ EXPIRY_NOTIFICATION = (
     "Presiona el botón para renovar 👇"
 )
 
+DEBT_REMINDER = (
+    "⚠️ <b>Suscripción vencida — Día {day}/6</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> venció el <b>{end_date}</b> "
+    "y aún no hemos recibido tu pago de renovación.\n\n"
+    "{urgency_line}\n\n"
+    "Presiona el botón para renovar y mantener tu acceso 👇"
+)
+
+HARD_CUT_NOTIFICATION = (
+    "🔴 <b>Acceso cancelado</b>\n\n"
+    "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> venció el <b>{end_date}</b> "
+    "y tras 6 días sin renovación, tu perfil ha sido liberado.\n\n"
+    "Cuando quieras volver, aquí estaremos 🎬\n"
+    "Usa el botón de abajo para contratar un nuevo plan 👇"
+)
+
 SOFT_CUT_NOTIFICATION = (
     "🔒 <b>Acceso suspendido temporalmente</b>\n\n"
     "Hola <b>{name}</b>, tu suscripción a <b>{platform}</b> venció el <b>{end_date}</b> "

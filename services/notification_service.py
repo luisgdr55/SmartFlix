@@ -260,6 +260,87 @@ async def send_expiry_notification(subscription_id: str) -> bool:
         return False
 
 
+async def send_debt_reminder(sub: dict, day_number: int) -> bool:
+    """Send a daily debt reminder (day 1-6 after expiration)."""
+    from bot.messages import DEBT_REMINDER
+    from utils.helpers import format_datetime_vzla
+
+    try:
+        user = sub.get("users") or {}
+        platform = sub.get("platforms") or {}
+        telegram_id = user.get("telegram_id")
+        if not telegram_id:
+            return False
+
+        end_date_str = sub.get("end_date", "")
+        end_dt = None
+        if end_date_str:
+            try:
+                from datetime import datetime
+                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        end_date_fmt = format_datetime_vzla(end_dt) if end_dt else "N/A"
+        platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+
+        days_left = 6 - day_number
+        if days_left > 1:
+            urgency_line = f"⏳ Te quedan <b>{days_left} días</b> antes de que se libere tu perfil."
+        elif days_left == 1:
+            urgency_line = "🚨 <b>¡Último día!</b> Mañana se liberará tu perfil si no renuevas."
+        else:
+            urgency_line = "🚨 <b>¡Hoy es el último día!</b> Tu perfil se liberará si no renuevas."
+
+        message = DEBT_REMINDER.format(
+            day=day_number,
+            name=user.get("name", ""),
+            platform=platform_label,
+            end_date=end_date_fmt,
+            urgency_line=urgency_line,
+        )
+
+        from bot.keyboards import renewal_keyboard
+        keyboard = renewal_keyboard(str(sub.get("platform_id", "")), "monthly")
+        return await send_to_user(telegram_id, message, keyboard)
+    except Exception as e:
+        logger.error(f"Error in send_debt_reminder: {e}")
+        return False
+
+
+async def send_hard_cut_notification(sub: dict) -> bool:
+    """Notify user their subscription was cut after grace period."""
+    from bot.messages import HARD_CUT_NOTIFICATION
+    from utils.helpers import format_datetime_vzla
+
+    try:
+        user = sub.get("users") or {}
+        platform = sub.get("platforms") or {}
+        telegram_id = user.get("telegram_id")
+        if not telegram_id:
+            return False
+
+        end_date_str = sub.get("end_date", "")
+        end_dt = None
+        if end_date_str:
+            try:
+                from datetime import datetime
+                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        from bot.keyboards import main_menu_keyboard
+        message = HARD_CUT_NOTIFICATION.format(
+            name=user.get("name", ""),
+            platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip(),
+            end_date=format_datetime_vzla(end_dt) if end_dt else "N/A",
+        )
+        return await send_to_user(telegram_id, message, main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Error in send_hard_cut_notification: {e}")
+        return False
+
+
 async def send_express_expired(subscription_id: str) -> bool:
     """Send express expiry notification + upsell."""
     from database.subscriptions import get_subscription_by_id
