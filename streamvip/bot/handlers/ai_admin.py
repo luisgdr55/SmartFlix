@@ -90,6 +90,12 @@ def _detect_intent(text: str) -> dict | None:
     if any(k in t for k in expired_kws):
         return {"action": "expired_clients"}
 
+    # ── list all clients ──────────────────────────────────────────
+    list_kws = ["todos los clientes", "lista de clientes", "listar clientes",
+                "ver clientes", "mostrar clientes"]
+    if any(k in t for k in list_kws) or t.strip() in ("clientes", "usuarios", "lista clientes"):
+        return {"action": "list_clients"}
+
     # ── find client ───────────────────────────────────────────────
     find_kws = ["busca", "buscar", "info de", "información de", "informacion de",
                 "datos de", "perfil de", "cliente", "quién es", "quien es"]
@@ -142,6 +148,7 @@ async def _llm_intent(text: str) -> dict:
                     "- dashboard: ver resumen general/estadísticas\n"
                     "- show_rate: ver tasa de cambio actual\n"
                     "- rate_update: actualizar tasa (parámetro rate: número)\n"
+                    "- list_clients: ver/listar todos los clientes registrados\n"
                     "- find_client: buscar cliente por nombre (parámetro name)\n"
                     "- block_user: bloquear cliente (parámetro name)\n"
                     "- unblock_user: desbloquear cliente (parámetro name)\n"
@@ -300,6 +307,31 @@ async def _handle_rate_update(message, rate_val: float, admin_id: int) -> None:
         await message.reply_text(f"✅ Tasa actualizada: <b>Bs {rate_val:.2f} / USD</b>", parse_mode="HTML")
     else:
         await message.reply_text("❌ Error al actualizar la tasa.")
+
+
+async def _handle_list_clients(message) -> None:
+    from database.analytics import get_clients_list
+    data = await get_clients_list(page=1, per_page=20)
+    clients = data.get("clients", [])
+    total = data.get("total", 0)
+    if not clients:
+        await message.reply_text("No hay clientes registrados.")
+        return
+    lines = [f"👥 <b>{total} clientes registrados</b> (mostrando {len(clients)}):\n"]
+    buttons = []
+    for c in clients:
+        tid = c.get("telegram_id")
+        name = c.get("name") or "Sin nombre"
+        username = f"@{c['username']}" if c.get("username") else ""
+        status_icon = "✅" if c.get("status") == "active" else "🚫"
+        purchases = c.get("total_purchases") or 0
+        lines.append(f"{status_icon} <b>{name}</b> {username} — {purchases} compra(s)")
+        if tid:
+            buttons.append([InlineKeyboardButton(
+                f"{name}", callback_data=f"admin:client_detail:{tid}"
+            )])
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
+    await message.reply_text("\n".join(lines), parse_mode="HTML", reply_markup=markup)
 
 
 async def _handle_find_client(message, name_query: str) -> None:
@@ -510,7 +542,10 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
     logger.info(f"Admin NL intent [{admin_id}]: {action} | name={name} | period={period}")
 
     try:
-        if action == "pending":
+        if action == "list_clients":
+            await _handle_list_clients(update.message)
+
+        elif action == "pending":
             await _handle_pending(update.message)
 
         elif action == "income":
