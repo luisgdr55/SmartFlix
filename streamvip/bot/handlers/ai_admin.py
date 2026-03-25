@@ -311,19 +311,22 @@ async def _handle_find_client(message, name_query: str) -> None:
         await message.reply_text(f"🔍 No encontré clientes con el nombre <b>{name_query}</b>.", parse_mode="HTML")
         return
     lines = [f"🔍 <b>Resultados para \"{name_query}\":</b>\n"]
+    buttons = []
     for c in clients:
-        tid = c.get("telegram_id", "?")
+        tid = c.get("telegram_id")
         name = c.get("name") or "Sin nombre"
         username = f"@{c['username']}" if c.get("username") else ""
         status = "✅" if c.get("status") == "active" else "🚫"
         purchases = c.get("total_purchases", 0)
-        lines.append(f"{status} <b>{name}</b> {username}\n   ID: <code>{tid}</code> | Compras: {purchases}")
-    # Buttons for each result
-    buttons = [[InlineKeyboardButton(
-        f"{c.get('name') or 'Sin nombre'} ({c.get('telegram_id')})",
-        callback_data=f"admin:client_detail:{c['telegram_id']}"
-    )] for c in clients]
-    await message.reply_text("\n\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+        tid_display = f"<code>{tid}</code>" if tid else "<i>sin ID Telegram</i>"
+        lines.append(f"{status} <b>{name}</b> {username}\n   ID: {tid_display} | Compras: {purchases}")
+        if tid:
+            buttons.append([InlineKeyboardButton(
+                f"Ver {name}",
+                callback_data=f"admin:client_detail:{tid}"
+            )])
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
+    await message.reply_text("\n\n".join(lines), parse_mode="HTML", reply_markup=markup)
 
 
 async def _handle_block_unblock(message, name_query: str, action: str, admin_id: int) -> None:
