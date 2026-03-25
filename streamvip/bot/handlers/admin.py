@@ -702,6 +702,75 @@ async def cmd_testnotif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"❌ Error al enviar notificación: <code>{e}</code>", parse_mode="HTML")
 
 
+async def cmd_testverif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Test IMAP connectivity and inbox scan directly. Usage: /testverif [platform_slug]"""
+    if not update.message or not update.effective_user:
+        return
+    if not _check_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Sin permisos.")
+        return
+
+    args = context.args or []
+    platform_slug = args[0].lower() if args else "netflix"
+
+    await update.message.reply_text(
+        f"⏳ Probando IMAP para plataforma: <b>{platform_slug}</b>\n"
+        f"Buscando en los últimos 15 minutos...",
+        parse_mode="HTML",
+    )
+
+    try:
+        import time
+        from services.imap_reader import _imap_search_once
+
+        imap_email = getattr(settings, "IMAP_EMAIL", "")
+        imap_password = getattr(settings, "IMAP_PASSWORD", "")
+        imap_host = getattr(settings, "IMAP_HOST", "imap.gmail.com")
+        imap_port = int(getattr(settings, "IMAP_PORT", 993))
+
+        if not imap_email:
+            await update.message.reply_text("❌ IMAP_EMAIL no configurado en Railway.")
+            return
+
+        since_ts = time.time()  # busca en los últimos 15 min (lookback window)
+
+        import asyncio
+        code = await asyncio.to_thread(
+            _imap_search_once,
+            platform_slug,
+            since_ts,
+            imap_email,
+            imap_password,
+            imap_host,
+            imap_port,
+        )
+
+        if code:
+            await update.message.reply_text(
+                f"✅ <b>IMAP funciona y encontró código</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n"
+                f"🔑 Código: <code>{code}</code>",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ <b>IMAP conectó correctamente pero no encontró código</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n\n"
+                f"Posibles causas:\n"
+                f"• No hay emails de {platform_slug} en los últimos 15 min\n"
+                f"• El reenvío aún no llegó al inbox central\n"
+                f"• El dominio del remitente no coincide\n\n"
+                f"📧 Inbox: <code>{imap_email}</code>",
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>Error IMAP</b>\n\n<code>{e}</code>\n\n"
+            f"Verifica IMAP_EMAIL, IMAP_PASSWORD, IMAP_HOST en Railway.",
+            parse_mode="HTML",
+        )
+
+
 async def _show_clients_list_callback(query, page: int = 1) -> None:
     """Edit-message version of client list for callbacks."""
     data = await get_clients_list(page=page, per_page=10)

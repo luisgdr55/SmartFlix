@@ -48,7 +48,7 @@ def build_telegram_app() -> Application:
         admin_dashboard, cmd_tasa, cmd_tasabcv, cmd_addcuenta, cmd_addexpress,
         cmd_editpin, cmd_clientes, cmd_cliente, cmd_pendientes, cmd_ingresos,
         cmd_bloquear, cmd_broadcast, cmd_flyer, cmd_promo, cmd_config, cmd_testllm,
-        cmd_testnotif, handle_admin_callback
+        cmd_testnotif, cmd_testverif, handle_admin_callback
     )
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
@@ -75,6 +75,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("config", cmd_config))
     app.add_handler(CommandHandler("testllm", cmd_testllm))
     app.add_handler(CommandHandler("testnotif", cmd_testnotif))
+    app.add_handler(CommandHandler("testverif", cmd_testverif))
     app.add_handler(CommandHandler("precios", cmd_precios))
 
     # =====================================================
@@ -121,6 +122,9 @@ def build_telegram_app() -> Application:
     # Admin natural-language action callbacks (admin_nl:*)
     from bot.handlers.ai_admin import handle_admin_nl_callback
     app.add_handler(CallbackQueryHandler(handle_admin_nl_callback, pattern="^admin_nl:"))
+
+    # Verification code — admin sends code manually (verif:send:{request_id}:{client_tid})
+    app.add_handler(CallbackQueryHandler(_handle_verif_send_callback, pattern="^verif:send:"))
 
     # Shopping cart callbacks
     from bot.handlers.subscription import handle_cart_confirm, handle_cart_clear, handle_cart_add
@@ -186,6 +190,8 @@ async def _text_message_router(update: Update, context) -> None:
         await handle_price_text_input(update, context, state)
     elif state and state.startswith("admin:edit_client:"):
         await _handle_admin_edit_client_flow(update, context, state)
+    elif state and state.startswith("admin:verif:send:"):
+        await _handle_admin_verif_send_flow(update, context, state)
     else:
         from utils.validators import is_admin as _is_admin
         if _is_admin(telegram_id, __import__("config").settings.ADMIN_TELEGRAM_IDS):
@@ -325,6 +331,119 @@ async def _handle_admin_edit_client_flow(update: Update, context, state: str) ->
             await update.message.reply_text("❌ Error al actualizar el teléfono.")
 
     clear_user_state(admin_id)
+
+
+async def _handle_verif_send_callback(update: Update, context) -> None:
+    """Admin clicked 'Ingresar y enviar código' from the verification alert."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+
+    from utils.validators import is_admin as _is_admin
+    if not _is_admin(update.effective_user.id, settings.ADMIN_TELEGRAM_IDS):
+        return
+
+    # callback_data format: verif:send:{request_id}:{client_telegram_id}
+    parts = (query.data or "").split(":")
+    if len(parts) < 4:
+        return
+
+    request_id = parts[2]
+    client_tid = parts[3]
+
+    from database.verification import get_verification_request
+    req = await get_verification_request(request_id)
+    if not req:
+        await query.edit_message_text("❌ Solicitud no encontrada.")
+        return
+
+    if req.get("status") in ("sent", "cancelled"):
+        await query.edit_message_text(
+            f"ℹ️ Esta solicitud ya fue procesada (estado: <b>{req['status']}</b>).",
+            parse_mode="HTML",
+        )
+        return
+
+    from bot.middleware import set_user_state
+    admin_id = update.effective_user.id
+    set_user_state(admin_id, f"admin:verif:send:{request_id}:{client_tid}")
+
+    platform_name = req.get("platform_name", "la plataforma")
+    platform_emoji = req.get("platform_emoji", "📺")
+    client_name = req.get("client_name", "el cliente")
+
+    await query.edit_message_text(
+        f"✏️ <b>Enviar código de verificación</b>\n\n"
+        f"👤 Cliente: <b>{client_name}</b>\n"
+        f"📺 Plataforma: {platform_emoji} {platform_name}\n\n"
+        f"Escribe el código ahora:\n"
+        f"<i>(Escribe /cancelar para cancelar)</i>",
+        parse_mode="HTML",
+    )
+
+
+async def _handle_admin_verif_send_flow(update: Update, context, state: str) -> None:
+    """Admin typed the verification code — forward it to the client."""
+    if not update.message or not update.effective_user:
+        return
+    admin_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    from bot.middleware import clear_user_state
+    from database.verification import get_verification_request, mark_request_sent
+    from services.notification_service import send_to_user
+
+    # state format: admin:verif:send:{request_id}:{client_telegram_id}
+    parts = state.split(":")
+    if len(parts) < 5:
+        clear_user_state(admin_id)
+        return
+
+    request_id = parts[3]
+    try:
+        client_tid = int(parts[4])
+    except ValueError:
+        clear_user_state(admin_id)
+        await update.message.reply_text("❌ ID de cliente inválido.")
+        return
+
+    if text.lower() == "/cancelar":
+        clear_user_state(admin_id)
+        await update.message.reply_text("❌ Envío cancelado.")
+        return
+
+    req = await get_verification_request(request_id)
+    if not req:
+        clear_user_state(admin_id)
+        await update.message.reply_text("❌ Solicitud no encontrada.")
+        return
+
+    platform_name = req.get("platform_name", "la plataforma")
+    platform_emoji = req.get("platform_emoji", "📺")
+    client_name = req.get("client_name", "Cliente")
+
+    sent = await send_to_user(
+        client_tid,
+        f"🔑 <b>Tu código de verificación</b>\n\n"
+        f"{platform_emoji} <b>{platform_name}</b>\n\n"
+        f"<code>{text}</code>\n\n"
+        f"⚠️ Úsalo de inmediato, expira pronto.\n"
+        f"¿Más problemas? Regresa a Soporte y solicita un nuevo código.",
+    )
+
+    await mark_request_sent(request_id, text)
+    clear_user_state(admin_id)
+
+    if sent:
+        await update.message.reply_text(
+            f"✅ Código enviado a <b>{client_name}</b>.",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ No se pudo enviar. El cliente puede haber bloqueado el bot.",
+        )
 
 
 async def _global_error_handler(update: object, context) -> None:

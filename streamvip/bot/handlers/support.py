@@ -14,7 +14,6 @@ from database.users import get_user_by_telegram_id
 from database.subscriptions import get_user_active_subscriptions
 from database.profiles import get_profile_by_id
 from database.accounts import get_account_by_id
-from services.gmail_service import get_verification_code
 from services.gemini_service import generate_troubleshooting_response
 
 logger = logging.getLogger(__name__)
@@ -196,7 +195,7 @@ async def handle_support_verification_code(update: Update, context: ContextTypes
             set_user_state(telegram_id, "support:verification_code")
             return
 
-        await _fetch_verification_code(query, active_subs[0])
+        await _fetch_verification_code(query, active_subs[0], telegram_id)
     except Exception as e:
         logger.error(f"Error in handle_support_verification_code: {e}")
         await query.edit_message_text("Error al procesar. Intenta de nuevo.")
@@ -225,7 +224,7 @@ async def handle_support_platform_selected(update: Update, context: ContextTypes
             return
 
         if state == "support:verification_code":
-            await _fetch_verification_code(query, sub)
+            await _fetch_verification_code(query, sub, update.effective_user.id)
         else:
             await _send_credentials(query, sub)
     except Exception as e:
@@ -238,55 +237,111 @@ def from_middleware_get_state(telegram_id: int):
     return get_user_state(telegram_id)
 
 
-async def _fetch_verification_code(query, sub: dict) -> None:
-    """Fetch verification code from Gmail for subscription account."""
+async def _fetch_verification_code(query, sub: dict, telegram_id: int) -> None:
+    """
+    Start an async verification code fetch for the given subscription.
+
+    - Shows an immediate "searching..." message to the client.
+    - Polls the central IMAP inbox every 15 s for up to 4 minutes.
+    - If code found → sends it to the client automatically.
+    - If not found → notifies admin with a one-click "Send code" button.
+    """
+    import asyncio
+    import time
+    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+    from database.verification import (
+        create_verification_request,
+        mark_request_sent,
+        mark_request_pending_admin,
+    )
+    from services.imap_reader import poll_for_code
+    from services.notification_service import send_to_admin, send_to_user
+
+    platform = sub.get("platforms") or {}
+    platform_name = platform.get("name", "la plataforma")
+    platform_emoji = platform.get("icon_emoji", "📺")
+    platform_slug = platform.get("slug", "")
+    sub_id = str(sub.get("id", ""))
+
     try:
-        platform = sub.get("platforms") or {}
-        profile_id = sub.get("profile_id")
+        user = await get_user_by_telegram_id(telegram_id)
+        user_id = str(user["id"]) if user else ""
+        client_name = (user or {}).get("name", "Cliente")
+    except Exception:
+        user_id = ""
+        client_name = "Cliente"
 
-        if not profile_id:
-            await query.edit_message_text("No hay perfil asignado.")
-            return
+    # Create DB request record for audit trail and admin fallback
+    request = await create_verification_request(
+        user_id=user_id,
+        client_telegram_id=telegram_id,
+        subscription_id=sub_id,
+        platform_name=platform_name,
+        platform_emoji=platform_emoji,
+        platform_slug=platform_slug,
+        client_name=client_name,
+    )
+    request_id = str(request["id"]) if request else "unknown"
+    since_ts = time.time()
 
-        profile = await get_profile_by_id(str(profile_id))
-        account = await get_account_by_id(str((profile or {}).get("account_id", "")))
+    # Acknowledge immediately so the client isn't left waiting
+    await query.edit_message_text(
+        f"🔍 <b>Buscando tu código de verificación...</b>\n\n"
+        f"{platform_emoji} {platform_name}\n\n"
+        f"⏳ Puede tardar hasta 4 minutos si el correo aún no llegó.\n"
+        f"Te lo enviamos en cuanto lo tengamos. <b>No necesitas hacer nada más.</b>",
+        parse_mode="HTML",
+    )
 
-        if not account:
-            await query.edit_message_text("No se encontró la cuenta.")
-            return
-
-        platform_name = platform.get("name", "")
-        platform_slug = platform.get("slug", "")
-
-        await query.edit_message_text(
-            SUPPORT_VERIFICATION_CODE.format(platform=platform_name),
-            parse_mode="HTML",
-        )
-
-        # Try Gmail API if enabled
-        code = None
-        if account.get("gmail_api_enabled") and account.get("gmail_credentials"):
-            code = await get_verification_code(
-                account_email=account.get("email", ""),
-                platform=platform_slug,
-                credentials_json=account.get("gmail_credentials", {}),
-            )
+    # Background task: poll IMAP then notify client or escalate to admin
+    async def _bg_task():
+        try:
+            code = await poll_for_code(platform_slug, since_ts, timeout=240)
+        except Exception as e:
+            logger.error(f"poll_for_code crashed for {platform_slug}: {e}", exc_info=True)
+            code = None
 
         if code:
-            await query.edit_message_text(
-                SUPPORT_CODE_FOUND.format(platform=platform_name, code=code),
-                parse_mode="HTML",
-                reply_markup=support_keyboard(),
+            await send_to_user(
+                telegram_id,
+                f"🔑 <b>Tu código de verificación</b>\n\n"
+                f"{platform_emoji} <b>{platform_name}</b>\n\n"
+                f"<code>{code}</code>\n\n"
+                f"⚠️ Úsalo de inmediato, expira pronto.\n"
+                f"¿Más problemas? Regresa a Soporte y solicita un nuevo código.",
             )
+            if request:
+                await mark_request_sent(request_id, code)
         else:
-            await query.edit_message_text(
-                SUPPORT_CODE_NOT_FOUND.format(platform=platform_name),
-                parse_mode="HTML",
-                reply_markup=support_keyboard(),
+            # Escalate: notify admin and keep client informed
+            if request:
+                await mark_request_pending_admin(request_id)
+
+            await send_to_user(
+                telegram_id,
+                f"⏳ <b>Código en camino</b>\n\n"
+                f"No pudimos obtenerlo automáticamente esta vez.\n"
+                f"Nuestro equipo lo está revisando y te lo enviará en breve.\n\n"
+                f"{platform_emoji} <b>{platform_name}</b>",
             )
-    except Exception as e:
-        logger.error(f"Error in _fetch_verification_code: {e}")
-        await query.edit_message_text("Error al obtener el código. Contacta a soporte.")
+
+            await send_to_admin(
+                f"🔑 <b>Solicitud de código de verificación</b>\n\n"
+                f"👤 Cliente: <b>{client_name}</b>\n"
+                f"📺 Plataforma: {platform_emoji} {platform_name}\n"
+                f"🆔 Request: <code>{request_id}</code>\n\n"
+                f"El sistema no encontró el código en 4 min.\n"
+                f"Revisa el correo reenviado y usa el botón:",
+                keyboard=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "✉️ Ingresar y enviar código",
+                        callback_data=f"verif:send:{request_id}:{telegram_id}",
+                    )
+                ]]),
+            )
+
+    asyncio.create_task(_bg_task())
 
 
 async def handle_support_troubleshooting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

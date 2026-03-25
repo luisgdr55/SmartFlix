@@ -109,6 +109,17 @@ def _detect_intent(text: str) -> dict | None:
         name = _extract_name(t, find_kws)
         return {"action": "find_client", "name": name}
 
+    # ── test imap ─────────────────────────────────────────────────
+    imap_kws = ["probar imap", "test imap", "probar correo", "verificar correo",
+                "probar verificacion", "probar verificación", "testverif"]
+    if any(k in t for k in imap_kws):
+        slug = "netflix"
+        for p in ["netflix", "disney", "max", "prime", "paramount"]:
+            if p in t:
+                slug = p
+                break
+        return {"action": "test_imap", "platform": slug}
+
     return None
 
 
@@ -565,6 +576,70 @@ async def _handle_cancel_sub(message, name_query: str, admin_id: int) -> None:
 # CONFIRM CANCEL SUB CALLBACK
 # ─────────────────────────────────────────────────────────────────
 
+async def _handle_test_imap(message, platform_slug: str = "netflix") -> None:
+    """Test IMAP connectivity and scan inbox for a recent code."""
+    import asyncio
+    import time
+
+    await message.reply_text(
+        f"⏳ Probando IMAP — plataforma: <b>{platform_slug}</b>\n"
+        f"Buscando emails de los últimos 15 minutos...",
+        parse_mode="HTML",
+    )
+    try:
+        from config import settings
+        from services.imap_reader import _imap_search_once
+
+        imap_email = getattr(settings, "IMAP_EMAIL", "")
+        imap_password = getattr(settings, "IMAP_PASSWORD", "")
+        imap_host = getattr(settings, "IMAP_HOST", "imap.gmail.com")
+        imap_port = int(getattr(settings, "IMAP_PORT", 993))
+
+        if not imap_email:
+            await message.reply_text("❌ <b>IMAP_EMAIL</b> no está configurado en Railway.", parse_mode="HTML")
+            return
+
+        since_ts = time.time()
+        code = await asyncio.to_thread(
+            _imap_search_once,
+            platform_slug,
+            since_ts,
+            imap_email,
+            imap_password,
+            imap_host,
+            imap_port,
+        )
+
+        if code:
+            await message.reply_text(
+                f"✅ <b>IMAP funciona — código encontrado</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n"
+                f"🔑 Código: <code>{code}</code>\n\n"
+                f"El sistema está listo para entregar códigos automáticamente.",
+                parse_mode="HTML",
+            )
+        else:
+            await message.reply_text(
+                f"⚠️ <b>IMAP conectó pero no encontró código</b>\n\n"
+                f"📺 Plataforma: {platform_slug}\n"
+                f"📧 Inbox: <code>{imap_email}</code>\n\n"
+                f"Posibles causas:\n"
+                f"• No hay email de {platform_slug} en los últimos 15 min\n"
+                f"• El reenvío no llegó aún al inbox central\n"
+                f"• El dominio del remitente no coincide\n\n"
+                f"Prueba pidiendo un código en Netflix y repite este test.",
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        await message.reply_text(
+            f"❌ <b>Error de conexión IMAP</b>\n\n"
+            f"<code>{e}</code>\n\n"
+            f"Verifica en Railway:\n"
+            f"• IMAP_EMAIL\n• IMAP_PASSWORD\n• IMAP_HOST",
+            parse_mode="HTML",
+        )
+
+
 async def handle_admin_nl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle admin_nl:* callbacks (e.g. cancel_sub confirmations)."""
     query = update.callback_query
@@ -658,6 +733,9 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
 
         elif action == "cancel_sub":
             await _handle_cancel_sub(update.message, name, admin_id)
+
+        elif action == "test_imap":
+            await _handle_test_imap(update.message, intent.get("platform", "netflix"))
 
         else:
             # Conversational fallback for admin
