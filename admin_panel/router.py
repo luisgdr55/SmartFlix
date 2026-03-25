@@ -1234,6 +1234,18 @@ async def payment_approve(
                         await send_to_user(telegram_id, renewal_msg)
                     except Exception as notify_err:
                         logger.warning(f"Could not notify renewal: {notify_err}")
+                try:
+                    from services.notification_service import send_to_admins
+                    client_name = user.get("name") or user.get("username") or str(telegram_id)
+                    await send_to_admins(
+                        f"✅ <b>Renovación aprobada (Panel)</b>\n\n"
+                        f"👤 Cliente: <b>{client_name}</b>\n"
+                        f"📺 Plataforma: <b>{platform_label}</b>\n"
+                        f"📅 Nuevo vencimiento: <b>{format_datetime_vzla(new_end_date)}</b>\n"
+                        f"🔖 Ref: <code>{payment_reference}</code>"
+                    )
+                except Exception as adm_err:
+                    logger.warning(f"Could not notify admins after renewal approve: {adm_err}")
                 return RedirectResponse(url="/panel/payments?success=Renovacion+aprobada+y+cliente+notificado", status_code=302)
             return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+renovacion", status_code=302)
 
@@ -1263,6 +1275,18 @@ async def payment_approve(
                     await send_to_user(telegram_id, msg)
             except Exception as notify_err:
                 logger.warning(f"Could not notify user after approve: {notify_err}")
+            try:
+                from services.notification_service import send_to_admins
+                client_name = user.get("name") or user.get("username") or str(telegram_id)
+                await send_to_admins(
+                    f"✅ <b>Pago aprobado (Panel)</b>\n\n"
+                    f"👤 Cliente: <b>{client_name}</b>\n"
+                    f"📺 Plataforma: <b>{platform_label}</b>\n"
+                    f"📱 Perfil: <b>{profile_data.get('profile_name','')}</b>\n"
+                    f"🔖 Ref: <code>{payment_reference}</code>"
+                )
+            except Exception as adm_err:
+                logger.warning(f"Could not notify admins after approve: {adm_err}")
             return RedirectResponse(url="/panel/payments?success=Pago+aprobado+y+perfil+asignado", status_code=302)
         return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+pago", status_code=302)
     except Exception as e:
@@ -1318,6 +1342,19 @@ async def payment_reject(
                     await send_to_user(telegram_id, msg, keyboard=restart_kb)
             except Exception as notify_err:
                 logger.warning(f"Could not notify user after reject: {notify_err}")
+
+            try:
+                from services.notification_service import send_to_admins
+                client_name = (sub.get("users") or {}).get("name") or (sub.get("users") or {}).get("username") or "?"
+                platform_label_rej = f"{(sub.get('platforms') or {}).get('icon_emoji','')} {(sub.get('platforms') or {}).get('name','')}".strip()
+                await send_to_admins(
+                    f"❌ <b>Pago rechazado (Panel)</b>\n\n"
+                    f"👤 Cliente: <b>{client_name}</b>\n"
+                    f"📺 Plataforma: <b>{platform_label_rej}</b>\n"
+                    f"📝 Motivo: {reason}"
+                )
+            except Exception as adm_err:
+                logger.warning(f"Could not notify admins after reject: {adm_err}")
 
         return RedirectResponse(url="/panel/payments?success=Pago+rechazado", status_code=302)
     except Exception as e:
