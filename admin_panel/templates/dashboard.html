@@ -4,13 +4,13 @@
 
 {% block alerts %}
 {% if error %}
-<div class="mx-6 mt-4 flex items-center gap-3 alert-danger px-4 py-3 text-sm alert-error-text">
+<div class="mx-3 mt-3 md:mx-6 md:mt-4 flex items-center gap-3 alert-danger px-4 py-3 text-sm alert-error-text">
   ⚠️ Error cargando estadísticas: {{ error }}
 </div>
 {% endif %}
 
 {% if accounts_due %}
-<div class="mx-6 mt-4 alert-danger overflow-hidden">
+<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-danger overflow-hidden">
   <div class="flex items-center gap-3 px-5 py-3 border-b border-red-100">
     <span class="text-lg">💳</span>
     <p class="text-sm font-semibold alert-error-text">
@@ -41,7 +41,7 @@
 {% endif %}
 
 {% if expiring_alert %}
-<div class="mx-6 mt-4 alert-warning overflow-hidden">
+<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-warning overflow-hidden">
   <div class="flex items-center gap-3 px-5 py-3 border-b border-amber-100">
     <span class="text-lg">🔔</span>
     <p class="text-sm font-semibold alert-warning-text">
@@ -73,7 +73,7 @@
 {% endif %}
 
 {% if expired_subs %}
-<div class="mx-6 mt-4 alert-danger overflow-hidden">
+<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-danger overflow-hidden">
   <div class="flex items-center gap-3 px-5 py-3 border-b border-red-100">
     <span class="text-lg">🔴</span>
     <p class="text-sm font-semibold alert-error-text">

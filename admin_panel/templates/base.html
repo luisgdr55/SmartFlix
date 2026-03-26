@@ -120,12 +120,26 @@
     .alert-divider-warning { border-color: #FEF3C7; }
   </style>
 </head>
-<body class="h-full" x-data="{ sidebarOpen: true }">
+<body class="h-full" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+
+<!-- Mobile backdrop -->
+<div
+  x-show="sidebarOpen && window.innerWidth < 768"
+  x-cloak
+  @click="sidebarOpen = false"
+  class="fixed inset-0 bg-black/40 z-40 md:hidden"
+></div>
 
 <div class="flex h-screen overflow-hidden">
 
   <!-- Sidebar -->
-  <aside class="flex-shrink-0 w-60 bg-white border-r border-slate-200 flex flex-col" x-show="sidebarOpen" x-cloak>
+  <aside
+    class="flex-shrink-0 w-64 bg-white border-r border-slate-200 flex flex-col
+           fixed inset-y-0 left-0 z-50 md:relative md:z-auto
+           transition-transform duration-300"
+    :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'"
+    x-show="true"
+    x-cloak>
     <!-- Logo -->
     <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-100">
       <div class="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center text-white text-sm font-bold">▶</div>
@@ -136,7 +150,7 @@
     </div>
 
     <!-- Navigation -->
-    <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+    <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto" @click="if(window.innerWidth < 768) sidebarOpen = false">
       <p class="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Principal</p>
       <a href="/panel/dashboard" class="sidebar-link {% if page == 'dashboard' %}active{% endif %}">
         <span class="text-base">📊</span> Dashboard
@@ -187,7 +201,7 @@
   <div class="flex-1 flex flex-col overflow-hidden">
 
     <!-- Top bar -->
-    <header class="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between flex-shrink-0">
+    <header class="bg-white border-b border-slate-200 px-4 md:px-6 py-3.5 flex items-center justify-between flex-shrink-0">
       <div class="flex items-center gap-4">
         <button @click="sidebarOpen = !sidebarOpen" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -214,7 +228,7 @@
     {% block alerts %}{% endblock %}
 
     <!-- Page content -->
-    <main class="flex-1 overflow-y-auto p-6">
+    <main class="flex-1 overflow-y-auto p-3 md:p-6">
       {% block content %}{% endblock %}
     </main>
   </div>
