@@ -73,7 +73,7 @@
             <td class="table-cell text-sm text-slate-400 font-mono">
               {{ (p.get('accounts') or {}).get('email', '—') }}
             </td>
-            <td class="table-cell font-medium text-slate-200">
+            <td class="table-cell font-bold text-slate-900">
               {{ p.get('profile_name', '—') }}
               {% if p.get('is_extra_member') %}
               <span class="ml-1 text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full">🏠 Extra</span>
