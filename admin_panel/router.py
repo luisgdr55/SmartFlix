@@ -1021,6 +1021,22 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         if not profile_id:
             return RedirectResponse(url=f"/panel/users/{user_id}?error=Esta+suscripcion+no+tiene+perfil+asignado", status_code=302)
 
+        # Fetch profile BEFORE changing PIN (to get old PIN + account info)
+        profile_res = sb.table("profiles").select(
+            "profile_name, pin, account_id"
+        ).eq("id", profile_id).limit(1).execute()
+        profile = profile_res.data[0] if profile_res.data else {}
+        old_pin = profile.get("pin") or "—"
+        profile_name = profile.get("profile_name") or "—"
+
+        # Fetch account credentials so admin knows where to make the change
+        account_email = "—"
+        account_id = profile.get("account_id")
+        if account_id:
+            acc_res = sb.table("accounts").select("email").eq("id", account_id).limit(1).execute()
+            if acc_res.data:
+                account_email = acc_res.data[0].get("email") or "—"
+
         # Generate random 4-digit PIN
         new_pin = "".join(random.choices(string.digits, k=4))
         sb.table("profiles").update({"pin": new_pin}).eq("id", profile_id).execute()
@@ -1028,12 +1044,30 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         # Mark subscription as expired
         sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
 
-        # Notify user via Telegram (best-effort)
+        # Notify client via Telegram (best-effort)
         try:
             from services.notification_service import send_soft_cut_notification
             await send_soft_cut_notification(sub_id)
         except Exception as notify_err:
             logger.warning(f"Could not send soft-cut notification: {notify_err}")
+
+        # Notify ADMIN with old PIN + new PIN + account info so they can update the platform
+        try:
+            from services.notification_service import send_to_admin
+            platform = sub.get("platforms") or {}
+            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            admin_msg = (
+                f"🔒 <b>Corte Suave Aplicado</b>\n\n"
+                f"📺 <b>Plataforma:</b> {platform_label}\n"
+                f"👤 <b>Perfil:</b> {profile_name}\n"
+                f"📧 <b>Cuenta:</b> <code>{account_email}</code>\n\n"
+                f"🔢 <b>PIN anterior:</b> <code>{old_pin}</code>\n"
+                f"🆕 <b>PIN nuevo:</b> <code>{new_pin}</code>\n\n"
+                f"<i>Ingresa a la plataforma con el PIN anterior, cámbialo al nuevo y el cliente ya no podrá acceder.</i>"
+            )
+            await send_to_admin(admin_msg)
+        except Exception as admin_notify_err:
+            logger.warning(f"Could not send admin soft-cut notification: {admin_notify_err}")
 
         redirect_base = f"/panel/users/{user_id}" if user_id else "/panel/"
         return RedirectResponse(url=f"{redirect_base}?success=Corte+suave+aplicado+y+PIN+cambiado", status_code=302)
