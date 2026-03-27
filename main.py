@@ -193,9 +193,9 @@ async def _text_message_router(update: Update, context) -> None:
     elif state and (state.startswith("admin:precios:") or state == "admin:tasa_manual"):
         from bot.handlers._prices_addon import handle_price_text_input
         await handle_price_text_input(update, context, state)
-    elif state and state.startswith("admin:afiliar:"):
+    elif context.user_data.get("afiliar_session", {}).get("step"):
         from bot.handlers.afiliar import handle_afiliar_text
-        await handle_afiliar_text(update, context, state)
+        await handle_afiliar_text(update, context)
     elif state and state.startswith("admin:edit_client:"):
         await _handle_admin_edit_client_flow(update, context, state)
     elif state and state.startswith("admin:verif:send:"):
