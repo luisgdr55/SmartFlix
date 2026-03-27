@@ -258,8 +258,8 @@
                       <label class="form-label text-xs">Perfil asignado</label>
                       <select name="profile_id" class="form-input text-sm py-1.5" x-model="profileId">
                         <option value="">— Sin perfil —</option>
-                        <template x-for="p in profiles.filter(p => p.status === 'available' || p.id === profileId)" :key="p.id">
-                          <option :value="p.id" x-text="p.profile_name + (p.status !== 'available' ? ' (actual)' : ' (disponible)')"></option>
+                        <template x-for="p in profiles" :key="p.id">
+                          <option :value="p.id" x-text="p.profile_name + (p.status === 'available' ? ' (disponible)' : p.status === 'occupied' ? ' (ocupado)' : ' (' + p.status + ')')"></option>
                         </template>
                       </select>
                       <p class="text-xs mt-1" style="color:#94A3B8;">Solo se muestran perfiles disponibles y el perfil actual.</p>
