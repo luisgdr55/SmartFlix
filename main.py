@@ -132,7 +132,10 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(_handle_verif_send_callback, pattern="^verif:send:"))
 
     # Shopping cart callbacks
-    from bot.handlers.subscription import handle_cart_confirm, handle_cart_clear, handle_cart_add
+    from bot.handlers.subscription import (
+        handle_cart_confirm, handle_cart_clear, handle_cart_add,
+        handle_renewal_cart_toggle, handle_renewal_cart_confirm, handle_renewal_add_new,
+    )
 
     async def _handle_cart_callback(update, context):
         query = update.callback_query
@@ -147,6 +150,21 @@ def build_telegram_app() -> Application:
             await handle_cart_add(update, context)
 
     app.add_handler(CallbackQueryHandler(_handle_cart_callback, pattern="^cart:"))
+
+    # Renewal cart callbacks (pre-filled from expired subscriptions)
+    async def _handle_rcart_callback(update, context):
+        query = update.callback_query
+        if not query:
+            return
+        data = query.data or ""
+        if data.startswith("rcart:toggle:"):
+            await handle_renewal_cart_toggle(update, context)
+        elif data == "rcart:confirm":
+            await handle_renewal_cart_confirm(update, context)
+        elif data == "rcart:add_new":
+            await handle_renewal_add_new(update, context)
+
+    app.add_handler(CallbackQueryHandler(_handle_rcart_callback, pattern="^rcart:"))
 
     # =====================================================
     # MESSAGE HANDLERS

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.keyboards import (
@@ -31,15 +31,23 @@ logger = logging.getLogger(__name__)
 
 
 async def show_subscription_platforms(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show platform selection for monthly subscription."""
+    """Show platform selection, or renewal cart if user has expired subscriptions."""
     query = update.callback_query
-    if not query:
+    if not query or not update.effective_user:
         return
     await query.answer()
 
     try:
+        from database.subscriptions import get_user_attention_subscriptions
+        user = await get_user_by_telegram_id(update.effective_user.id)
+        if user:
+            attention = await get_user_attention_subscriptions(str(user["id"]))
+            expired = attention.get("expired", [])
+            if expired:
+                await _show_renewal_cart(query, context, user, expired)
+                return
+
         availability = await get_platform_availability()
-        monthly_available = [p for p in availability if p.get("monthly_available", 0) > 0]
 
         platform_list_text = ""
         for p in availability:
@@ -683,3 +691,237 @@ async def handle_cart_payment_photo(update: Update, context: ContextTypes.DEFAUL
             )
         except Exception:
             pass
+
+
+# ── Renewal cart (pre-filled with expired subscriptions) ─────────────────────
+
+_RCART_KEY = "renewal_cart"
+
+
+async def _show_renewal_cart(query, context, user, expired_subs: list) -> None:
+    """Build renewal cart from expired subscriptions and display it."""
+    try:
+        rate_obj = await get_current_rate()
+        rate = float((rate_obj or {}).get("usd_binance") or 36.0)
+
+        cart: dict = {}
+        for sub in expired_subs:
+            platform_id = sub.get("platform_id")
+            if not platform_id:
+                continue
+            platform = sub.get("platforms") or {}
+            plan_type = sub.get("plan_type") or "monthly"
+            price_field = "monthly_price_usd" if plan_type == "monthly" else "express_price_usd"
+            plat_data = await get_platform_by_id(str(platform_id)) or {}
+            price_usd = float(plat_data.get(price_field) or 0)
+            price_bs = round(price_usd * rate, 2)
+            sub_id = str(sub["id"])
+            cart[sub_id] = {
+                "sub_id": sub_id,
+                "platform_id": str(platform_id),
+                "name": platform.get("name") or plat_data.get("name") or "?",
+                "emoji": platform.get("icon_emoji") or plat_data.get("icon_emoji") or "📺",
+                "plan_type": plan_type,
+                "price_usd": price_usd,
+                "price_bs": price_bs,
+                "rate_used": rate,
+                "selected": True,
+            }
+
+        if not cart:
+            # Fallback: no price data, go to normal platform picker
+            availability = await get_platform_availability()
+            platform_list_text = ""
+            for p in availability:
+                icon = p.get("icon_emoji", "📺")
+                name = p.get("name", "")
+                count = p.get("monthly_available", 0)
+                platform_list_text += f"{icon} <b>{name}</b> - {count} disponible{'s' if count != 1 else ''}\n"
+            await query.edit_message_text(
+                SUBSCRIPTION_PLATFORM_SELECT.format(platform_list=platform_list_text),
+                parse_mode="HTML",
+                reply_markup=platforms_keyboard(availability, "monthly"),
+            )
+            return
+
+        context.user_data[_RCART_KEY] = cart
+        await _render_renewal_cart(query, context)
+
+    except Exception as e:
+        logger.error(f"_show_renewal_cart error: {e}", exc_info=True)
+        await query.edit_message_text("Error al cargar servicios. Intenta de nuevo.", reply_markup=main_menu_keyboard())
+
+
+async def _render_renewal_cart(query, context) -> None:
+    """Render the renewal cart message with toggle buttons."""
+    cart: dict = context.user_data.get(_RCART_KEY, {})
+    selected = {k: v for k, v in cart.items() if v.get("selected")}
+
+    total_usd = sum(float(v["price_usd"]) for v in selected.values())
+    total_bs = sum(float(v["price_bs"]) for v in selected.values())
+
+    plan_labels = {"monthly": "Mensual", "express": "Express 24h"}
+
+    lines = ["🛒 <b>Renovar tus servicios:</b>\n"]
+    for item in cart.values():
+        check = "✅" if item.get("selected") else "⬜"
+        pl = plan_labels.get(item.get("plan_type", "monthly"), "Mensual")
+        lines.append(
+            f"{check} {item.get('emoji','📺')} <b>{item.get('name','?')}</b> — {pl}: "
+            f"${float(item.get('price_usd', 0)):.2f} / Bs {float(item.get('price_bs', 0)):,.0f}"
+        )
+
+    if selected:
+        lines.append(f"\n💰 <b>Total: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+        lines.append("\nPuedes desmarcar servicios que no quieras renovar ahora.")
+    else:
+        lines.append("\n⚠️ Selecciona al menos un servicio para continuar.")
+
+    # Keyboard: one toggle button per item
+    buttons = []
+    for item in cart.values():
+        label = f"✅ {item['name']}" if item.get("selected") else f"☐ {item['name']}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"rcart:toggle:{item['sub_id']}")])
+
+    # Action row
+    action_row = []
+    if selected:
+        count = len(selected)
+        label = f"💳 Pagar {count} servicio{'s' if count > 1 else ''} — Bs {total_bs:,.0f}"
+        action_row.append(InlineKeyboardButton(label, callback_data="rcart:confirm"))
+    action_row.append(InlineKeyboardButton("➕ Agregar otro", callback_data="rcart:add_new"))
+    buttons.append(action_row)
+    buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")])
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def handle_renewal_cart_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle a subscription in/out of the renewal cart."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    sub_id = (query.data or "").split(":")[-1]
+    cart: dict = context.user_data.get(_RCART_KEY, {})
+    if sub_id in cart:
+        cart[sub_id]["selected"] = not cart[sub_id].get("selected", True)
+    await _render_renewal_cart(query, context)
+
+
+async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Create pending_payment subscriptions for selected renewal items."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+
+    telegram_id = update.effective_user.id
+
+    try:
+        cart: dict = context.user_data.get(_RCART_KEY, {})
+        selected = [v for v in cart.values() if v.get("selected")]
+
+        if not selected:
+            await query.answer("Selecciona al menos un servicio.", show_alert=True)
+            return
+
+        user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            await query.edit_message_text("No encontramos tu cuenta. Usa /start.")
+            return
+
+        now = venezuela_now()
+        sub_ids = []
+        lines = ["📋 <b>Pedido de renovación confirmado:</b>\n"]
+
+        for item in selected:
+            plan_type = item.get("plan_type", "monthly")
+            price_usd = float(item.get("price_usd") or 0)
+            price_bs = float(item.get("price_bs") or 0)
+            platform_id = item.get("platform_id")
+            name = item.get("name", "?")
+            emoji = item.get("emoji", "📺")
+            plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h"}.get(plan_type, plan_type)
+            plan_days = {"monthly": 30, "express": 1}.get(plan_type, 30)
+            end_date = now + timedelta(days=plan_days)
+
+            sub = await create_subscription(
+                user_id=str(user["id"]),
+                platform_id=platform_id,
+                plan_type=plan_type,
+                price_usd=price_usd,
+                price_bs=price_bs,
+                rate_used=float(item.get("rate_used") or 36),
+                end_date=end_date,
+            )
+            if sub:
+                sub_ids.append(str(sub["id"]))
+                lines.append(f"{emoji} <b>{name}</b> — {plan_label}: Bs {price_bs:,.0f}")
+
+        if not sub_ids:
+            await query.edit_message_text(
+                "Error al crear los pedidos. Intenta de nuevo o contacta soporte.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+
+        total_bs = sum(float(v.get("price_bs") or 0) for v in selected)
+        total_usd = sum(float(v.get("price_usd") or 0) for v in selected)
+        lines.append(f"\n💰 <b>Total a pagar: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
+
+        payment_cfg = await get_payment_config()
+        payment_text = (
+            "\n".join(lines) + "\n\n"
+            "📲 <b>Instrucciones de pago:</b>\n\n"
+            f"🏦 Banco: <b>{payment_cfg.get('banco', 'N/A')}</b>\n"
+            f"📱 Teléfono: <b>{payment_cfg.get('telefono', 'N/A')}</b>\n"
+            f"🪪 Cédula: <b>{payment_cfg.get('cedula', 'N/A')}</b>\n"
+            f"👤 Titular: <b>{payment_cfg.get('titular', 'N/A')}</b>\n\n"
+            f"💵 Monto exacto: <b>Bs {total_bs:,.2f}</b>\n\n"
+            "📸 Envía el comprobante aquí y el equipo lo revisará enseguida. ¡Gracias! 🙏"
+        )
+
+        set_user_state(telegram_id, "awaiting_cart_payment")
+        set_user_data(telegram_id, "cart_sub_ids", ",".join(sub_ids))
+        set_user_data(telegram_id, "cart_total_bs", str(total_bs))
+        set_user_data(telegram_id, "cart_total_usd", str(total_usd))
+
+        context.user_data.pop(_RCART_KEY, None)
+
+        await query.edit_message_text(payment_text, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"handle_renewal_cart_confirm error: {e}", exc_info=True)
+        await query.edit_message_text("Error al procesar la renovación.", reply_markup=main_menu_keyboard())
+
+
+async def handle_renewal_add_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Open platform picker to add an extra service to the renewal cart."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    try:
+        availability = await get_platform_availability()
+        platform_list_text = ""
+        for p in availability:
+            icon = p.get("icon_emoji", "📺")
+            name = p.get("name", "")
+            count = p.get("monthly_available", 0)
+            platform_list_text += f"{icon} <b>{name}</b> - {count} disponible{'s' if count != 1 else ''}\n"
+
+        await query.edit_message_text(
+            SUBSCRIPTION_PLATFORM_SELECT.format(platform_list=platform_list_text),
+            parse_mode="HTML",
+            reply_markup=platforms_keyboard(availability, "monthly"),
+        )
+    except Exception as e:
+        logger.error(f"handle_renewal_add_new error: {e}")
+        await query.edit_message_text("Error al cargar plataformas.", reply_markup=main_menu_keyboard())

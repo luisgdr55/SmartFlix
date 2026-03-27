@@ -543,6 +543,8 @@ async def profile_edit_form(request: Request, profile_id: str):
         "profile": profile,
         "form_action": f"/panel/profiles/{profile_id}/edit",
         "form_title": "Editar Perfil",
+        "success": request.query_params.get("success"),
+        "error": request.query_params.get("error"),
     })
 
 
@@ -550,7 +552,7 @@ async def profile_edit_form(request: Request, profile_id: str):
 async def profile_edit_save(
     request: Request,
     profile_id: str,
-    account_id: str = Form(...),
+    account_id: str = Form(default=""),
     platform_id: str = Form(...),
     profile_name: str = Form(...),
     pin: str = Form(default=""),
@@ -567,8 +569,7 @@ async def profile_edit_save(
         from database import get_supabase
         sb = get_supabase()
         extra = is_extra_member == "on"
-        sb.table("profiles").update({
-            "account_id": account_id,
+        update_data = {
             "platform_id": platform_id,
             "profile_name": profile_name,
             "pin": pin or None,
@@ -577,11 +578,14 @@ async def profile_edit_save(
             "is_extra_member": extra,
             "extra_email": extra_email or None,
             "extra_password": extra_password or None,
-        }).eq("id", profile_id).execute()
-        return RedirectResponse(url="/panel/profiles?success=Perfil+actualizado", status_code=302)
+        }
+        if account_id:
+            update_data["account_id"] = account_id
+        sb.table("profiles").update(update_data).eq("id", profile_id).execute()
+        return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?success=1", status_code=302)
     except Exception as e:
         logger.error(f"Profile edit error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?error={str(e)[:100]}", status_code=302)
 
 
 @panel_router.post("/profiles/{profile_id}/set-status")
