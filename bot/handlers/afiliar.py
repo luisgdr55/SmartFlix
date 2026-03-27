@@ -138,6 +138,21 @@ async def handle_afiliar_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=_plan_select_keyboard(),
         )
 
+    elif state in ("admin:afiliar:plan", "admin:afiliar:plataforma", "admin:afiliar:confirmar"):
+        # Admin is in a button-click step — remind them to use the buttons
+        nombre = get_user_data(telegram_id, "afiliar_nombre") or ""
+        step_msgs = {
+            "admin:afiliar:plan": ("Selecciona el tipo de plan usando los botones de arriba.", _plan_select_keyboard()),
+            "admin:afiliar:plataforma": ("Selecciona la plataforma usando los botones de arriba.", None),
+            "admin:afiliar:confirmar": ("Usa los botones para confirmar o cancelar la afiliación.", _confirm_keyboard()),
+        }
+        hint, kb = step_msgs.get(state, ("Usa los botones para continuar.", None))
+        await update.message.reply_text(
+            f"👆 <i>{hint}</i>\n\nSi deseas cancelar y empezar de nuevo: /afiliar",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CALLBACK QUERY HANDLER (called from main.py for pattern ^afiliar:)
