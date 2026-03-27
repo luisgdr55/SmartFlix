@@ -5,46 +5,47 @@
 {% block content %}
 <div class="max-w-2xl mx-auto" x-data="{
   isExtraMember: {{ 'true' if profile and profile.get('is_extra_member') else 'false' }},
-  selectedPlatform: '{{ profile.get('platform_id','') if profile else '' }}',
-  filterAccounts(clearValue) {
-    const sel = document.getElementById('account-select');
-    if (!sel) return;
-    const opts = sel.querySelectorAll('option[data-platform]');
+  filterAccounts(platformSel, clearValue) {
+    const platform = platformSel ? platformSel.value : '';
+    const accountSel = document.getElementById('account-select');
+    if (!accountSel) return;
+    const opts = accountSel.querySelectorAll('option[data-platform]');
     opts.forEach(opt => {
-      opt.hidden = !!(this.selectedPlatform && opt.dataset.platform !== this.selectedPlatform);
+      opt.hidden = !!(platform && opt.dataset.platform !== platform);
     });
-    if (clearValue && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex].hidden) {
-      sel.value = '';
+    if (clearValue && accountSel.selectedIndex >= 0 && accountSel.options[accountSel.selectedIndex].hidden) {
+      accountSel.value = '';
     }
   }
-}" x-init="filterAccounts(false)">
+}" x-init="filterAccounts(document.getElementById('platform-select'), false)">
+
   <div class="flex items-center gap-3 mb-6">
-    <a href="/panel/profiles" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+    <a href="/panel/profiles" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
       </svg>
     </a>
-    <h2 class="text-xl font-bold text-white">{{ form_title }}</h2>
+    <h2 class="text-xl font-bold text-slate-700">{{ form_title }}</h2>
   </div>
 
   {% if success %}
-  <div class="mb-4 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm font-medium">
+  <div id="msg-top" class="mb-4 flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-4 py-3 text-sm font-medium">
     ✅ Perfil actualizado correctamente.
   </div>
   {% endif %}
   {% if error %}
-  <div class="mb-4 flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm font-medium">
+  <div id="msg-top" class="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-medium">
     ❌ {{ error }}
   </div>
   {% endif %}
 
-  <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">
-    <form action="{{ form_action }}" method="POST" class="space-y-5">
+  <div class="stat-card">
+    <form action="{{ form_action }}" method="POST" class="space-y-5" novalidate>
 
       <div>
         <label class="form-label">Plataforma *</label>
-        <select name="platform_id" required class="form-input" id="platform-select"
-          x-model="selectedPlatform" @change="filterAccounts(true)">
+        <select name="platform_id" class="form-input" id="platform-select"
+          @change="filterAccounts($el, true)">
           <option value="">Selecciona plataforma...</option>
           {% for p in platforms %}
           <option value="{{ p['id'] }}" {% if profile and profile.get('platform_id') == p['id'] %}selected{% endif %}>
@@ -55,7 +56,7 @@
       </div>
 
       <div>
-        <label class="form-label">Cuenta *</label>
+        <label class="form-label">Cuenta</label>
         <select name="account_id" class="form-input" id="account-select">
           <option value="">Selecciona cuenta...</option>
           {% for acc in accounts %}
@@ -70,31 +71,31 @@
 
       <div>
         <label class="form-label">Nombre del Perfil *</label>
-        <input type="text" name="profile_name" required
+        <input type="text" name="profile_name"
           value="{{ profile.get('profile_name','') if profile else '' }}"
           placeholder="Ej: Perfil 1, Cupo Extra 1..."
           class="form-input" />
       </div>
 
       <!-- Toggle cupo adicional -->
-      <div class="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-xl px-4 py-3">
+      <div class="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
         <input type="checkbox" name="is_extra_member" id="is_extra_member"
           value="on" x-model="isExtraMember"
           {% if profile and profile.get('is_extra_member') %}checked{% endif %}
-          class="w-5 h-5 rounded cursor-pointer" style="accent-color:#6366f1" />
+          class="w-5 h-5 rounded cursor-pointer" style="accent-color:#5b7fa6" />
         <div>
-          <label for="is_extra_member" class="text-slate-200 font-medium cursor-pointer">🏠 Cupo adicional de hogar</label>
-          <p class="text-xs text-slate-500">Marcar si este perfil es un cupo extra con sus propias credenciales (ej. Netflix Extra)</p>
+          <label for="is_extra_member" class="text-slate-700 font-medium cursor-pointer">🏠 Cupo adicional de hogar</label>
+          <p class="text-xs text-slate-400">Marcar si este perfil es un cupo extra con sus propias credenciales (ej. Netflix Extra)</p>
         </div>
       </div>
 
       <!-- Campos de cupo adicional -->
       <div x-show="isExtraMember" x-cloak
-        class="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 space-y-4">
-        <p class="text-xs text-amber-400 font-medium uppercase tracking-wider">
+        class="bg-amber-50 border border-amber-200 rounded-xl p-5 space-y-4">
+        <p class="text-xs text-amber-600 font-medium uppercase tracking-wider">
           🏠 Credenciales del cupo adicional
         </p>
-        <p class="text-xs text-slate-400">
+        <p class="text-xs text-slate-500">
           El cupo adicional de Netflix tiene su propio email y contraseña. Ingrésalos aquí — el cliente los recibirá al activar su suscripción.
         </p>
         <div>
@@ -125,7 +126,7 @@
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="form-label">Tipo de Perfil *</label>
-          <select name="profile_type" required class="form-input">
+          <select name="profile_type" class="form-input">
             <option value="monthly" {% if not profile or profile.get('profile_type') == 'monthly' %}selected{% endif %}>Mensual</option>
             <option value="express" {% if profile and profile.get('profile_type') == 'express' %}selected{% endif %}>⚡ Express</option>
           </select>
@@ -150,4 +151,10 @@
     </form>
   </div>
 </div>
+
+{% if success or error %}
+<script>
+  document.getElementById('msg-top').scrollIntoView({ behavior: 'smooth', block: 'center' });
+</script>
+{% endif %}
 {% endblock %}
