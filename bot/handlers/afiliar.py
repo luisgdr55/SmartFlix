@@ -239,8 +239,8 @@ async def handle_afiliar_callback(update: Update, context: ContextTypes.DEFAULT_
             )
 
         except Exception as e:
-            logger.error(f"Error loading platforms in afiliar: {e}")
-            await query.edit_message_text("❌ Error al cargar plataformas. Intenta de nuevo.")
+            logger.error(f"Error loading platforms in afiliar: {e}", exc_info=True)
+            await query.edit_message_text(f"❌ Error al cargar plataformas:\n<code>{e}</code>", parse_mode="HTML")
             _clear_session(context)
         return
 
