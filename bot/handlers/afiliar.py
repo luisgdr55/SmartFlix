@@ -70,7 +70,7 @@ def _platforms_keyboard(platforms: list[dict]) -> InlineKeyboardMarkup:
     for p in platforms:
         icon = p.get("icon_emoji", "📺")
         name = p.get("name", "")
-        pid = str(p["id"])
+        pid = str(p.get("platform_id") or p.get("id", ""))
         buttons.append([InlineKeyboardButton(f"{icon} {name}", callback_data=f"afiliar:platform:{pid}")])
     buttons.append([InlineKeyboardButton("❌ Cancelar", callback_data="afiliar:cancel")])
     return InlineKeyboardMarkup(buttons)
@@ -240,7 +240,7 @@ async def handle_afiliar_callback(update: Update, context: ContextTypes.DEFAULT_
 
         except Exception as e:
             logger.error(f"Error loading platforms in afiliar: {e}", exc_info=True)
-            await query.edit_message_text(f"❌ Error al cargar plataformas:\n<code>{e}</code>", parse_mode="HTML")
+            await query.edit_message_text("❌ Error al cargar plataformas. Intenta de nuevo.")
             _clear_session(context)
         return
 
