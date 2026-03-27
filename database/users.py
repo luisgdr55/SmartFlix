@@ -203,6 +203,29 @@ async def increment_user_purchases(telegram_id: int) -> bool:
         return False
 
 
+async def create_external_user(name: str, phone: str, notes: Optional[str] = None) -> Optional[dict]:
+    """Create a user without telegram_id (external client affiliated manually by admin).
+    These clients are notified via admin when subscriptions expire."""
+    try:
+        sb = get_supabase()
+        now = venezuela_now().isoformat()
+        new_user = {
+            "name": name,
+            "phone": phone,
+            "last_seen": now,
+            "status": "active",
+            "total_purchases": 1,
+            "receives_promos": False,
+            "is_admin": False,
+            "notes": notes or f"Cliente externo — contacto: {phone}",
+        }
+        result = sb.table("users").insert(new_user).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error in create_external_user: {e}")
+        return None
+
+
 async def delete_user(user_id: str) -> bool:
     """Permanently delete a user and all their subscriptions."""
     try:

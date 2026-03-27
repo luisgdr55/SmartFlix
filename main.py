@@ -50,6 +50,7 @@ def build_telegram_app() -> Application:
         cmd_bloquear, cmd_broadcast, cmd_flyer, cmd_promo, cmd_config, cmd_testllm,
         cmd_testnotif, cmd_testverif, handle_admin_callback
     )
+    from bot.handlers.afiliar import cmd_afiliar, handle_afiliar_callback
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
@@ -77,6 +78,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("testnotif", cmd_testnotif))
     app.add_handler(CommandHandler("testverif", cmd_testverif))
     app.add_handler(CommandHandler("precios", cmd_precios))
+    app.add_handler(CommandHandler("afiliar", cmd_afiliar))
 
     # =====================================================
     # CALLBACK QUERY HANDLERS
@@ -115,6 +117,9 @@ def build_telegram_app() -> Application:
     # Admin callbacks
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^admin:"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^campaign:"))
+
+    # Manual affiliation callbacks (afiliar:*)
+    app.add_handler(CallbackQueryHandler(handle_afiliar_callback, pattern="^afiliar:"))
 
     # Price management callbacks (prices:*)
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))
@@ -188,6 +193,9 @@ async def _text_message_router(update: Update, context) -> None:
     elif state and (state.startswith("admin:precios:") or state == "admin:tasa_manual"):
         from bot.handlers._prices_addon import handle_price_text_input
         await handle_price_text_input(update, context, state)
+    elif state and state.startswith("admin:afiliar:"):
+        from bot.handlers.afiliar import handle_afiliar_text
+        await handle_afiliar_text(update, context, state)
     elif state and state.startswith("admin:edit_client:"):
         await _handle_admin_edit_client_flow(update, context, state)
     elif state and state.startswith("admin:verif:send:"):

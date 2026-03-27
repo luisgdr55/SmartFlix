@@ -186,7 +186,8 @@ async def notify_express_queue(platform_id: str) -> int:
 
 
 async def send_expiry_reminder(subscription_id: str) -> bool:
-    """Send 3-day expiry reminder to user."""
+    """Send 3-day expiry reminder to user.
+    If the user has no telegram_id (external client), notifies admin instead."""
     from database.subscriptions import get_subscription_by_id, mark_reminder_sent
     from bot.messages import EXPIRY_REMINDER_3DAYS
 
@@ -198,8 +199,6 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
         user = sub.get("users") or {}
         platform = sub.get("platforms") or {}
         telegram_id = user.get("telegram_id")
-        if not telegram_id:
-            return False
 
         from datetime import datetime
         import pytz
@@ -209,6 +208,29 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
             days_left = days_remaining(end_dt)
         else:
             days_left = 3
+            end_dt = None
+
+        # External client: no telegram_id — notify admin instead
+        if not telegram_id:
+            client_name = user.get("name") or "Sin nombre"
+            client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
+            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            end_fmt = format_datetime_vzla(end_dt) if end_dt else "pronto"
+            message = (
+                f"⏰ <b>Recordatorio — Cliente Externo</b>\n\n"
+                f"El siguiente cliente sin Telegram está por vencer en <b>{days_left} día(s)</b>.\n"
+                f"Notifícalo por su medio de contacto.\n\n"
+                f"👤 <b>Cliente:</b> {client_name}\n"
+                f"📞 <b>Contacto:</b> {client_contact}\n"
+                f"📺 <b>Plataforma:</b> {platform_label}\n"
+                f"📅 <b>Plan:</b> {sub.get('plan_type', 'mensual')}\n"
+                f"📆 <b>Vence:</b> {end_fmt}\n\n"
+                f"<i>Este cliente no tiene Telegram. Avísale tú directamente.</i>"
+            )
+            success = await send_to_admin(message)
+            if success:
+                await mark_reminder_sent(subscription_id)
+            return bool(success)
 
         message = EXPIRY_REMINDER_3DAYS.format(
             name=user.get("name", ""),
@@ -229,7 +251,8 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
 
 
 async def send_expiry_notification(subscription_id: str) -> bool:
-    """Send expiry notification to user."""
+    """Send expiry notification to user.
+    If the user has no telegram_id (external client), notifies admin instead."""
     from database.subscriptions import get_subscription_by_id, mark_expiry_notified
     from bot.messages import EXPIRY_NOTIFICATION
 
@@ -241,8 +264,29 @@ async def send_expiry_notification(subscription_id: str) -> bool:
         user = sub.get("users") or {}
         platform = sub.get("platforms") or {}
         telegram_id = user.get("telegram_id")
+
+        # External client: notify admin
         if not telegram_id:
-            return False
+            client_name = user.get("name") or "Sin nombre"
+            client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
+            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            end_date_str = sub.get("end_date", "")
+            end_fmt = end_date_str[:10] if end_date_str else "N/A"
+            message = (
+                f"🔴 <b>Suscripción Vencida — Cliente Externo</b>\n\n"
+                f"La suscripción del siguiente cliente sin Telegram acaba de vencer.\n"
+                f"Notifícalo por su medio de contacto para que renueve.\n\n"
+                f"👤 <b>Cliente:</b> {client_name}\n"
+                f"📞 <b>Contacto:</b> {client_contact}\n"
+                f"📺 <b>Plataforma:</b> {platform_label}\n"
+                f"📅 <b>Plan:</b> {sub.get('plan_type', 'mensual')}\n"
+                f"📆 <b>Venció:</b> {end_fmt}\n\n"
+                f"<i>Tiene 6 días de gracia antes de que se libere el perfil.</i>"
+            )
+            success = await send_to_admin(message)
+            if success:
+                await mark_expiry_notified(subscription_id)
+            return bool(success)
 
         message = EXPIRY_NOTIFICATION.format(
             name=user.get("name", ""),
@@ -261,7 +305,8 @@ async def send_expiry_notification(subscription_id: str) -> bool:
 
 
 async def send_debt_reminder(sub: dict, day_number: int) -> bool:
-    """Send a daily debt reminder (day 1-6 after expiration)."""
+    """Send a daily debt reminder (day 1-6 after expiration).
+    If the user has no telegram_id (external client), notifies admin instead."""
     from bot.messages import DEBT_REMINDER
     from utils.helpers import format_datetime_vzla
 
@@ -269,6 +314,32 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
         user = sub.get("users") or {}
         platform = sub.get("platforms") or {}
         telegram_id = user.get("telegram_id")
+
+        # External client: notify admin
+        if not telegram_id:
+            client_name = user.get("name") or "Sin nombre"
+            client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
+            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            end_date_str = sub.get("end_date", "")
+            end_fmt = end_date_str[:10] if end_date_str else "N/A"
+            days_left = 6 - day_number
+            if days_left > 1:
+                urgency = f"Quedan {days_left} días antes del corte."
+            elif days_left == 1:
+                urgency = "¡Mañana se libera el perfil si no renueva!"
+            else:
+                urgency = "¡Hoy es el último día! El perfil se libera si no renueva."
+            message = (
+                f"⚠️ <b>Recordatorio de Deuda #{day_number} — Cliente Externo</b>\n\n"
+                f"El siguiente cliente sin Telegram aún no ha renovado. {urgency}\n\n"
+                f"👤 <b>Cliente:</b> {client_name}\n"
+                f"📞 <b>Contacto:</b> {client_contact}\n"
+                f"📺 <b>Plataforma:</b> {platform_label}\n"
+                f"📆 <b>Venció:</b> {end_fmt}\n\n"
+                f"<i>Contacta al cliente por su medio externo para cobrar la renovación.</i>"
+            )
+            return bool(await send_to_admin(message))
+
         if not telegram_id:
             return False
 
@@ -309,7 +380,8 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
 
 
 async def send_hard_cut_notification(sub: dict) -> bool:
-    """Notify user their subscription was cut after grace period."""
+    """Notify user their subscription was cut after grace period.
+    If the user has no telegram_id (external client), notifies admin instead."""
     from bot.messages import HARD_CUT_NOTIFICATION
     from utils.helpers import format_datetime_vzla
 
@@ -317,6 +389,26 @@ async def send_hard_cut_notification(sub: dict) -> bool:
         user = sub.get("users") or {}
         platform = sub.get("platforms") or {}
         telegram_id = user.get("telegram_id")
+
+        # External client: notify admin
+        if not telegram_id:
+            client_name = user.get("name") or "Sin nombre"
+            client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
+            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            end_date_str = sub.get("end_date", "")
+            end_fmt = end_date_str[:10] if end_date_str else "N/A"
+            message = (
+                f"🔴 <b>Corte Ejecutado — Cliente Externo</b>\n\n"
+                f"El perfil del siguiente cliente fue liberado por falta de pago.\n\n"
+                f"👤 <b>Cliente:</b> {client_name}\n"
+                f"📞 <b>Contacto:</b> {client_contact}\n"
+                f"📺 <b>Plataforma:</b> {platform_label}\n"
+                f"📆 <b>Venció:</b> {end_fmt}\n\n"
+                f"<i>El perfil ya está disponible para otro cliente. "
+                f"Si desea reactivar, usa /afiliar de nuevo.</i>"
+            )
+            return bool(await send_to_admin(message))
+
         if not telegram_id:
             return False
 

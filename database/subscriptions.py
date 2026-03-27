@@ -41,6 +41,44 @@ async def create_subscription(
         return None
 
 
+async def create_active_subscription(
+    user_id: str,
+    platform_id: str,
+    plan_type: str,
+    price_usd: float,
+    price_bs: float,
+    rate_used: float,
+    end_date: datetime,
+    profile_id: str,
+    payment_reference: str,
+) -> Optional[dict]:
+    """Create a subscription already in 'active' status with a profile assigned.
+    Used for manual affiliations where payment was confirmed externally."""
+    try:
+        sb = get_supabase()
+        now = venezuela_now()
+        result = sb.table("subscriptions").insert({
+            "user_id": user_id,
+            "platform_id": platform_id,
+            "plan_type": plan_type,
+            "price_usd": price_usd,
+            "price_bs": price_bs,
+            "rate_used": rate_used,
+            "start_date": now.isoformat(),
+            "end_date": end_date.isoformat(),
+            "status": "active",
+            "profile_id": profile_id,
+            "payment_reference": payment_reference,
+            "payment_confirmed_at": now.isoformat(),
+            "reminder_sent": False,
+            "expiry_notified": False,
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error in create_active_subscription: {e}")
+        return None
+
+
 async def get_user_active_subscriptions(user_id: str) -> list[dict]:
     """List all active subscriptions for a user."""
     try:
