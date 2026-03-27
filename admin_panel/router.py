@@ -963,15 +963,17 @@ async def subscription_edit(request: Request, sub_id: str):
         form = await request.form()
         sb = get_supabase()
 
-        # Fetch sub to get user_id for redirect
-        sub_res = sb.table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute()
+        # Fetch sub to get user_id and current profile_id for redirect and profile swapping
+        sub_res = sb.table("subscriptions").select("user_id, profile_id").eq("id", sub_id).limit(1).execute()
         user_id = sub_res.data[0]["user_id"] if sub_res.data else None
+        old_profile_id = sub_res.data[0].get("profile_id") if sub_res.data else None
 
         upd: dict = {}
         end_date = (form.get("end_date") or "").strip()
         status = (form.get("status") or "").strip()
         plan_type = (form.get("plan_type") or "").strip()
         price_usd = (form.get("price_usd") or "").strip()
+        new_profile_id = (form.get("profile_id") or "").strip() or None
 
         if end_date:
             # Store as end-of-day in ISO format
@@ -989,6 +991,16 @@ async def subscription_edit(request: Request, sub_id: str):
                 upd["price_usd"] = float(price_usd)
             except ValueError:
                 pass
+
+        # Handle profile assignment change
+        if new_profile_id != old_profile_id:
+            upd["profile_id"] = new_profile_id
+            # Release old profile back to available
+            if old_profile_id:
+                sb.table("profiles").update({"status": "available"}).eq("id", old_profile_id).execute()
+            # Mark new profile as occupied
+            if new_profile_id:
+                sb.table("profiles").update({"status": "occupied"}).eq("id", new_profile_id).execute()
 
         if upd:
             sb.table("subscriptions").update(upd).eq("id", sub_id).execute()

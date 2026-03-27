@@ -147,7 +147,16 @@
             </thead>
             <tbody>
               {% for sub in subscriptions %}
-              <tr x-data="{ editing: false }" class="table-row">
+              <tr x-data="{
+                editing: false,
+                profiles: [],
+                profileId: '{{ sub.get('profile_id') or '' }}',
+                loadProfiles() {
+                  fetch('/panel/api/profiles/available/{{ sub['platform_id'] }}')
+                    .then(r => r.json())
+                    .then(d => { this.profiles = d.profiles || []; });
+                }
+              }" class="table-row">
 
                 <!-- View mode -->
                 <td class="table-cell" x-show="!editing">
@@ -187,7 +196,7 @@
                 </td>
                 <td class="table-cell" x-show="!editing">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <button @click="editing = true" class="text-xs font-medium transition-colors" style="color:#5b7fa6;">✏️</button>
+                    <button @click="editing = true; loadProfiles()" class="text-xs font-medium transition-colors" style="color:#5b7fa6;">✏️</button>
                     {% set s = sub.get('status','') %}
                     {% if s == 'active' %}
                       {% if sub.get('profile_id') %}
@@ -243,6 +252,17 @@
                           value="{{ sub.get('price_usd') or '' }}"
                           class="form-input text-sm py-1.5" placeholder="0.00" />
                       </div>
+                    </div>
+                    <!-- Perfil asignado -->
+                    <div class="mb-3">
+                      <label class="form-label text-xs">Perfil asignado</label>
+                      <select name="profile_id" class="form-input text-sm py-1.5" x-model="profileId">
+                        <option value="">— Sin perfil —</option>
+                        <template x-for="p in profiles.filter(p => p.status === 'available' || p.id === profileId)" :key="p.id">
+                          <option :value="p.id" x-text="p.profile_name + (p.status !== 'available' ? ' (actual)' : ' (disponible)')"></option>
+                        </template>
+                      </select>
+                      <p class="text-xs mt-1" style="color:#94A3B8;">Solo se muestran perfiles disponibles y el perfil actual.</p>
                     </div>
                     <div class="flex gap-2">
                       <button type="submit" class="btn-primary text-xs py-1.5 px-4">💾 Guardar</button>
