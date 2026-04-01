@@ -164,6 +164,11 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
 
         user = await get_user_by_telegram_id(telegram_id)
         if not user:
+            # User may have been deleted after a rejected payment — recreate them
+            from database.users import get_or_create_user as _get_or_create
+            tg_user = update.effective_user
+            user = await _get_or_create(telegram_id, tg_user.username, tg_user.full_name)
+        if not user:
             await query.edit_message_text("Error al obtener tu perfil. Usa /start.")
             return
 
@@ -547,6 +552,12 @@ async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
         lines.append(f"\n💰 <b>Total a pagar: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
 
         payment_cfg = await get_payment_config()
+        if not payment_cfg:
+            await query.edit_message_text(
+                "Error al obtener datos de pago. Contacta a soporte.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
 
         payment_text = (
             "\n".join(lines) + "\n\n"

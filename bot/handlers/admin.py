@@ -992,21 +992,12 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
             await query.edit_message_text("Suscripción no encontrada.")
             return
 
-        from database.subscriptions import delete_subscription, get_user_active_subscriptions
+        from database.subscriptions import delete_subscription
         await delete_subscription(sub_id)
         await log_admin_action(telegram_id, "reject_payment", {"sub_id": sub_id})
 
-        # Delete the user record too if they have no other subscriptions
-        sub_user = sub.get("users") or {}
-        sub_user_id = sub.get("user_id")
-        if sub_user_id:
-            remaining = await get_user_active_subscriptions(str(sub_user_id))
-            if not remaining:
-                from database.users import delete_user
-                await delete_user(str(sub_user_id))
-                logger.info(f"Deleted user {sub_user_id} after payment rejection (no remaining subscriptions)")
-
         # Notify user — invite to restart
+        sub_user = sub.get("users") or {}
         user = sub_user
         user_tid = user.get("telegram_id")
         platform = sub.get("platforms") or {}

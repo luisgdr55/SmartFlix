@@ -1360,18 +1360,6 @@ async def payment_reject(
         await delete_subscription(sub_id)
 
         if sub:
-            # Delete user if they have no other subscriptions (no failed attempts accumulate)
-            user_id = sub.get("user_id")
-            if user_id:
-                try:
-                    remaining = await get_user_active_subscriptions(str(user_id))
-                    if not remaining:
-                        from database.users import delete_user
-                        await delete_user(str(user_id))
-                        logger.info(f"Deleted user {user_id} after web panel payment rejection")
-                except Exception as del_err:
-                    logger.warning(f"Could not delete user after reject: {del_err}")
-
             # Notify user via Telegram
             try:
                 user = sub.get("users") or {}
