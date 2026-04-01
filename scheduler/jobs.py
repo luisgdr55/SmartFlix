@@ -308,6 +308,17 @@ async def job_debt_reminders_and_cuts() -> None:
                 client_name = user.get("name") or user.get("username") or "Cliente"
                 platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
 
+                # Skip cut if user already has a pending renewal for this platform
+                from database.subscriptions import has_pending_renewal_for_platform
+                user_id = str(sub.get("user_id", ""))
+                platform_id = str(sub.get("platform_id", ""))
+                if await has_pending_renewal_for_platform(user_id, platform_id):
+                    logger.info(
+                        f"Skipping hard cut for sub {sub_id} ({client_name} / {platform_label}): "
+                        f"pending renewal exists — waiting for admin approval."
+                    )
+                    continue
+
                 # Release profile
                 if profile_id:
                     from database import get_supabase

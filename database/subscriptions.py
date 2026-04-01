@@ -190,6 +190,26 @@ async def get_user_pending_subscription(user_id: str) -> Optional[dict]:
         return None
 
 
+async def has_pending_renewal_for_platform(user_id: str, platform_id: str) -> bool:
+    """Return True if the user has a pending_payment subscription for this platform.
+    Used by the scheduler to avoid cutting a subscription that is already being renewed."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("platform_id", platform_id)
+            .eq("status", "pending_payment")
+            .limit(1)
+            .execute()
+        )
+        return bool(result.data)
+    except Exception as e:
+        logger.error(f"Error in has_pending_renewal_for_platform: {e}")
+        return False
+
+
 async def save_payment_proof(sub_id: str, payment_reference: str, payment_image_url: str) -> bool:
     """Save payment proof to a pending subscription (awaiting admin approval)."""
     try:
