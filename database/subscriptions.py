@@ -279,6 +279,28 @@ async def delete_subscription(sub_id: str) -> bool:
         return False
 
 
+async def delete_pending_subscriptions_for_platform(user_id: str, platform_id: str) -> int:
+    """Delete all pending_payment subscriptions for a user+platform.
+    Called before creating a new pending sub to avoid duplicates that confuse the admin."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("platform_id", platform_id)
+            .eq("status", "pending_payment")
+            .execute()
+        )
+        ids = [r["id"] for r in (result.data or [])]
+        for sub_id in ids:
+            sb.table("subscriptions").delete().eq("id", sub_id).execute()
+        return len(ids)
+    except Exception as e:
+        logger.error(f"Error in delete_pending_subscriptions_for_platform: {e}")
+        return 0
+
+
 async def get_expiring_subscriptions(days_ahead: int = 3) -> list[dict]:
     """Get subscriptions expiring in the next N days (for reminders)."""
     try:

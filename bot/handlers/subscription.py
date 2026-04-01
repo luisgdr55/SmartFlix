@@ -172,6 +172,10 @@ async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_T
         durations = {"monthly": 30, "express": 1}
         end_date = now + timedelta(days=durations.get(plan_type, 30))
 
+        # Remove any stale pending subs for this platform to avoid duplicates
+        from database.subscriptions import delete_pending_subscriptions_for_platform
+        await delete_pending_subscriptions_for_platform(str(user["id"]), platform_id)
+
         # Create pending subscription
         sub = await create_subscription(
             user_id=str(user["id"]),
@@ -850,6 +854,10 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
             plan_label = {"monthly": "Mensual ~30d", "express": "Express 24h"}.get(plan_type, plan_type)
             plan_days = {"monthly": 30, "express": 1}.get(plan_type, 30)
             end_date = now + timedelta(days=plan_days)
+
+            # Remove any stale pending subs for this platform to avoid duplicates
+            from database.subscriptions import delete_pending_subscriptions_for_platform
+            await delete_pending_subscriptions_for_platform(str(user["id"]), platform_id)
 
             sub = await create_subscription(
                 user_id=str(user["id"]),

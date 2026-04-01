@@ -1249,7 +1249,8 @@ async def payment_approve(
 
         # ── RENEWAL CHECK ──────────────────────────────────────────────
         existing_sub = await get_user_platform_active_subscription(user_id, platform_id)
-        if existing_sub and existing_sub.get("profile_id"):
+        # Safety: existing_sub must be a different record than the pending sub being approved
+        if existing_sub and existing_sub.get("profile_id") and str(existing_sub["id"]) != sub_id:
             existing_profile_id = str(existing_sub["profile_id"])
             profile_data = existing_sub.get("profiles") or {}
 
@@ -1268,9 +1269,9 @@ async def payment_approve(
 
             ok = await confirm_renewal_subscription(str(existing_sub["id"]), existing_profile_id, payment_reference, new_end_date)
             if ok:
-                # Cancel the new pending sub (it's a duplicate — the existing one was updated)
-                from database.subscriptions import cancel_subscription
-                await cancel_subscription(sub_id)
+                # Delete the pending duplicate sub (not cancel — so it disappears from the UI cleanly)
+                from database.subscriptions import delete_subscription
+                await delete_subscription(sub_id)
                 if telegram_id:
                     await increment_user_purchases(telegram_id)
                     try:
