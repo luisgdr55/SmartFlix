@@ -17,7 +17,7 @@ from bot.messages import ADMIN_DASHBOARD
 from bot.middleware import set_user_state, set_user_data, get_user_data, clear_user_state
 from config import settings
 from database.analytics import get_dashboard_stats, get_income_report, get_clients_list, get_client_detail, get_platform_availability
-from database.subscriptions import get_pending_subscriptions, confirm_subscription, cancel_subscription
+from database.subscriptions import get_pending_subscriptions, confirm_subscription, cancel_subscription, get_active_subscriptions_by_user, get_subscription_by_id
 from database.profiles import get_available_profiles, assign_profile, update_profile_pin
 from database.platforms import get_active_platforms, get_platform_by_id, update_platform_prices
 from database.users import block_user, unblock_user, log_admin_action, get_user_by_telegram_id, update_user_name, update_user_phone
@@ -1197,6 +1197,78 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "admin:config":
         await query.answer()
         await cmd_config(update, context)
+
+    elif data.startswith("admin:cancel_sub_prompt:"):
+        await query.answer()
+        target_tid = int(data.split(":")[2])
+        user = await get_user_by_telegram_id(target_tid)
+        if not user:
+            await query.answer("Usuario no encontrado.", show_alert=True)
+            return
+        subs = await get_active_subscriptions_by_user(str(user["id"]))
+        if not subs:
+            await query.answer("Este cliente no tiene suscripciones activas.", show_alert=True)
+            return
+        lines = ["⚠️ <b>Selecciona la suscripción a cancelar:</b>\n"]
+        buttons = []
+        for sub in subs:
+            platform = sub.get("platforms") or {}
+            icon = platform.get("icon_emoji", "📺")
+            name = platform.get("name", "?")
+            end = (sub.get("end_date") or "")[:10]
+            lines.append(f"{icon} {name} — vence {end}")
+            buttons.append([InlineKeyboardButton(
+                f"✂️ Cancelar {icon}{name}",
+                callback_data=f"admin:cancel_sub_confirm:{sub['id']}"
+            )])
+        buttons.append([InlineKeyboardButton("🔙 Atrás", callback_data=f"admin:client_detail:{target_tid}")])
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+    elif data.startswith("admin:cancel_sub_confirm:"):
+        await query.answer()
+        sub_id = data.split(":")[2]
+        sub = await get_subscription_by_id(sub_id)
+        if not sub:
+            await query.answer("Suscripción no encontrada.", show_alert=True)
+            return
+        profile_id = sub.get("profile_id")
+        user = sub.get("users") or {}
+        user_tid = user.get("telegram_id")
+        platform = sub.get("platforms") or {}
+        platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+
+        if profile_id:
+            import random, string
+            from database import get_supabase
+            from utils.helpers import venezuela_now
+            new_pin = "".join(random.choices(string.digits, k=4))
+            sb = get_supabase()
+            sb.table("profiles").update({
+                "status": "available",
+                "pin": new_pin,
+                "last_released": venezuela_now().isoformat(),
+            }).eq("id", profile_id).execute()
+
+        await cancel_subscription(sub_id)
+        await log_admin_action(admin_telegram_id, "cancel_subscription", {"sub_id": sub_id})
+
+        if user_tid:
+            from services.notification_service import send_to_user
+            await send_to_user(
+                user_tid,
+                f"📢 Tu suscripción de <b>{platform_name}</b> ha sido cancelada por el administrador.\n"
+                f"Si tienes alguna duda, contáctanos. 🙏"
+            )
+
+        await query.edit_message_text(
+            f"✅ Suscripción de <b>{platform_name}</b> cancelada.\n"
+            f"Perfil liberado y PIN rotado.",
+            parse_mode="HTML"
+        )
 
     elif data == "admin:back":
         await query.answer()

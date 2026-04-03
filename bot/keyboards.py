@@ -283,6 +283,7 @@ def client_detail_keyboard(telegram_id: int, is_blocked: bool) -> InlineKeyboard
             InlineKeyboardButton("📱 Editar teléfono", callback_data=f"admin:edit_phone:{telegram_id}"),
         ],
         [block_btn],
+        [InlineKeyboardButton("✂️ Cancelar suscripción", callback_data=f"admin:cancel_sub_prompt:{telegram_id}")],
         [InlineKeyboardButton("🔙 Lista clientes", callback_data="admin:clients")],
     ])
 
