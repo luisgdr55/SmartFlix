@@ -89,7 +89,12 @@ async def job_express_release() -> None:
                 client_name = user.get("name") or user.get("username") or "Sin nombre"
 
                 # Expire subscription
-                await expire_subscription(sub_id)
+                expired_ok = await expire_subscription(sub_id)
+                if not expired_ok:
+                    logger.warning(
+                        f"job_express_release: expire_subscription failed for {sub_id}, skipping to avoid double processing"
+                    )
+                    continue
 
                 # Change PIN + release profile
                 if profile_id:
@@ -270,6 +275,7 @@ async def job_debt_reminders_and_cuts() -> None:
         from database.subscriptions import (
             get_subscriptions_in_grace_period,
             get_subscriptions_past_grace_period,
+            has_pending_renewal_for_platform,
             increment_debt_reminder,
             cancel_subscription,
         )
@@ -309,7 +315,6 @@ async def job_debt_reminders_and_cuts() -> None:
                 platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
 
                 # Skip cut if user already has a pending renewal for this platform
-                from database.subscriptions import has_pending_renewal_for_platform
                 user_id = str(sub.get("user_id", ""))
                 platform_id = str(sub.get("platform_id", ""))
                 if await has_pending_renewal_for_platform(user_id, platform_id):

@@ -25,6 +25,7 @@ from bot.messages import ACCESS_INSTRUCTIONS, PIN_LINE
 from config import settings
 from database.accounts import get_account_by_id
 from database.platforms import get_platform_by_id
+from database.subscriptions import create_active_subscription
 from database.profiles import get_available_profiles, assign_profile
 from database.analytics import get_platform_availability
 from services.exchange_service import calculate_price_bs, get_current_rate
@@ -315,8 +316,7 @@ async def _execute_affiliation(
     admin_telegram_id: int,
 ) -> None:
     """Crear usuario externo, suscripción activa y asignar perfil."""
-    from database.users import create_external_user, log_admin_action
-    from database.subscriptions import create_active_subscription
+    from database.users import create_external_user, log_admin_action, delete_user
 
     sess = _session(context)
     nombre = sess.get("nombre", "")
@@ -351,9 +351,11 @@ async def _execute_affiliation(
         # 2. Obtener perfil disponible
         profiles = await get_available_profiles(platform_id, plan_type)
         if not profiles:
+            await delete_user(str(user["id"]))
             await query.edit_message_text(
                 "❌ No hay perfiles disponibles en este momento.\n"
-                "El usuario fue creado pero sin suscripción. Agrega perfiles y reintenta."
+                "El usuario fue eliminado para evitar registros huérfanos.\n"
+                "Agrega perfiles y vuelve a intentar la afiliación."
             )
             _clear_session(context)
             return
@@ -379,7 +381,11 @@ async def _execute_affiliation(
             payment_reference=f"MANUAL-{short_id(user_id)}",
         )
         if not sub:
-            await query.edit_message_text("❌ Error al crear la suscripción. Intenta de nuevo.")
+            await delete_user(str(user["id"]))
+            await query.edit_message_text(
+                "❌ Error al crear la suscripción. "
+                "El usuario fue eliminado para evitar registros huérfanos."
+            )
             _clear_session(context)
             return
 

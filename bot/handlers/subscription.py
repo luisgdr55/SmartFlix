@@ -40,6 +40,10 @@ async def show_subscription_platforms(update: Update, context: ContextTypes.DEFA
     try:
         from database.subscriptions import get_user_attention_subscriptions
         user = await get_user_by_telegram_id(update.effective_user.id)
+        if not user:
+            from database.users import get_or_create_user as _get_or_create
+            tg = update.effective_user
+            user = await _get_or_create(tg.id, tg.username, tg.full_name)
         if user:
             attention = await get_user_attention_subscriptions(str(user["id"]))
             expired = attention.get("expired", [])
@@ -259,6 +263,10 @@ async def handle_payment_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         if not sub_id or not price_bs_str or not platform_id:
             logger.info(f"Redis session incomplete for {telegram_id}, falling back to DB")
             user_db = await get_user_by_telegram_id(telegram_id)
+            if not user_db:
+                from database.users import get_or_create_user as _get_or_create
+                tg = update.effective_user
+                user_db = await _get_or_create(tg.id, tg.username, tg.full_name)
             if user_db:
                 from database.subscriptions import get_user_pending_subscription
                 pending = await get_user_pending_subscription(str(user_db["id"]))
@@ -508,6 +516,10 @@ async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            from database.users import get_or_create_user as _get_or_create
+            tg = update.effective_user
+            user = await _get_or_create(tg.id, tg.username, tg.full_name)
         if not user:
             await query.edit_message_text("No encontramos tu cuenta. Usa /start.")
             return
@@ -759,7 +771,8 @@ async def _show_renewal_cart(query, context, user, expired_subs: list) -> None:
             )
             return
 
-        context.user_data[_RCART_KEY] = cart
+        from services.cart_service import save_renewal_cart
+        save_renewal_cart(query.from_user.id, cart)
         await _render_renewal_cart(query, context)
 
     except Exception as e:
@@ -769,7 +782,8 @@ async def _show_renewal_cart(query, context, user, expired_subs: list) -> None:
 
 async def _render_renewal_cart(query, context) -> None:
     """Render the renewal cart message with toggle buttons."""
-    cart: dict = context.user_data.get(_RCART_KEY, {})
+    from services.cart_service import get_renewal_cart
+    cart: dict = get_renewal_cart(query.from_user.id)
     selected = {k: v for k, v in cart.items() if v.get("selected")}
 
     total_usd = sum(float(v["price_usd"]) for v in selected.values())
@@ -823,9 +837,11 @@ async def handle_renewal_cart_toggle(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     sub_id = (query.data or "").split(":")[-1]
-    cart: dict = context.user_data.get(_RCART_KEY, {})
+    from services.cart_service import get_renewal_cart, save_renewal_cart
+    cart: dict = get_renewal_cart(query.from_user.id)
     if sub_id in cart:
         cart[sub_id]["selected"] = not cart[sub_id].get("selected", True)
+        save_renewal_cart(query.from_user.id, cart)
     await _render_renewal_cart(query, context)
 
 
@@ -839,7 +855,9 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
     telegram_id = update.effective_user.id
 
     try:
-        cart: dict = context.user_data.get(_RCART_KEY, {})
+        from services.cart_service import get_renewal_cart, clear_renewal_cart
+        from database.subscriptions import delete_pending_subscriptions_for_platform
+        cart: dict = get_renewal_cart(telegram_id)
         selected = [v for v in cart.values() if v.get("selected")]
 
         if not selected:
@@ -847,6 +865,10 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
             return
 
         user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            from database.users import get_or_create_user as _get_or_create
+            tg = update.effective_user
+            user = await _get_or_create(tg.id, tg.username, tg.full_name)
         if not user:
             await query.edit_message_text("No encontramos tu cuenta. Usa /start.")
             return
@@ -867,7 +889,6 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
             end_date = now + timedelta(days=plan_days)
 
             # Remove any stale pending subs for this platform to avoid duplicates
-            from database.subscriptions import delete_pending_subscriptions_for_platform
             await delete_pending_subscriptions_for_platform(str(user["id"]), platform_id)
 
             sub = await create_subscription(
@@ -895,6 +916,13 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
         lines.append(f"\n💰 <b>Total a pagar: ${total_usd:.2f} / Bs {total_bs:,.0f}</b>")
 
         payment_cfg = await get_payment_config()
+        if not payment_cfg:
+            await query.edit_message_text(
+                "Error al obtener datos de pago. Contacta soporte.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+
         payment_text = (
             "\n".join(lines) + "\n\n"
             "📲 <b>Instrucciones de pago:</b>\n\n"
@@ -911,7 +939,7 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
         set_user_data(telegram_id, "cart_total_bs", str(total_bs))
         set_user_data(telegram_id, "cart_total_usd", str(total_usd))
 
-        context.user_data.pop(_RCART_KEY, None)
+        clear_renewal_cart(telegram_id)
 
         await query.edit_message_text(payment_text, parse_mode="HTML")
 

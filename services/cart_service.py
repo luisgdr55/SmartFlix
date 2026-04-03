@@ -6,6 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 CART_KEY = "cart:{}"
+RENEWAL_CART_KEY = "renewal_cart:{}"
 CART_TTL = 1800
 
 
@@ -46,3 +47,29 @@ def clear_cart(telegram_id: int) -> None:
         r.delete(CART_KEY.format(telegram_id))
     except Exception as e:
         logger.warning(f"clear_cart error: {e}")
+
+
+def get_renewal_cart(telegram_id: int) -> dict:
+    try:
+        r = _get_redis()
+        raw = r.get(RENEWAL_CART_KEY.format(telegram_id))
+        return json.loads(raw) if raw else {}
+    except Exception as e:
+        logger.warning(f"get_renewal_cart error: {e}")
+        return {}
+
+
+def save_renewal_cart(telegram_id: int, cart: dict) -> None:
+    try:
+        r = _get_redis()
+        r.setex(RENEWAL_CART_KEY.format(telegram_id), CART_TTL, json.dumps(cart))
+    except Exception as e:
+        logger.warning(f"save_renewal_cart error: {e}")
+
+
+def clear_renewal_cart(telegram_id: int) -> None:
+    try:
+        r = _get_redis()
+        r.delete(RENEWAL_CART_KEY.format(telegram_id))
+    except Exception as e:
+        logger.warning(f"clear_renewal_cart error: {e}")

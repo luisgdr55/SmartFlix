@@ -620,12 +620,12 @@ async def cmd_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show configuration menu."""
-    if not update.message or not update.effective_user:
+    if not update.effective_message or not update.effective_user:
         return
     telegram_id = update.effective_user.id
 
     if not _check_admin(telegram_id):
-        await update.message.reply_text("❌ Sin permisos.")
+        await update.effective_message.reply_text("❌ Sin permisos.")
         return
 
     from services.exchange_service import get_current_rate, check_rate_staleness
@@ -659,7 +659,7 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "/editpin <profile_id> <pin> - Editar PIN\n"
     )
 
-    await update.message.reply_text(config_text, parse_mode="HTML")
+    await update.effective_message.reply_text(config_text, parse_mode="HTML")
 
 
 async def cmd_testllm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -871,10 +871,21 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
         # ── RENEWAL CHECK ──────────────────────────────────────────────
         existing_sub = await get_user_platform_active_subscription(user_id, platform_id)
-        # Safety: existing_sub must be a different record than the pending sub being approved
-        if existing_sub and existing_sub.get("profile_id") and str(existing_sub["id"]) != sub_id:
-            profile_id = str(existing_sub["profile_id"])
-            profile = existing_sub.get("profiles") or {}
+
+        if existing_sub and str(existing_sub["id"]) != sub_id:
+            # Perfil puede haber sido liberado por el scheduler antes de la aprobación
+            profile_id = existing_sub.get("profile_id")
+            if not profile_id:
+                available = await get_available_profiles(platform_id, plan_type)
+                if not available:
+                    await query.edit_message_text("❌ No hay perfiles disponibles para asignar.")
+                    return
+                profile_id = str(available[0]["id"])
+                await assign_profile(profile_id)
+                profile = available[0]
+            else:
+                profile_id = str(profile_id)
+                profile = existing_sub.get("profiles") or {}
 
             # New end_date: extend from current end_date (if future) or from now
             now = venezuela_now()
@@ -1078,6 +1089,20 @@ async def handle_campaign_send(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"Error al enviar campaña: {e}")
 
 
+async def cmd_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stock overview — shows available profiles per platform."""
+    availability = await get_platform_availability()
+    lines = ["📦 <b>Stock disponible:</b>\n"]
+    for p in availability:
+        icon = p.get("icon_emoji", "📺")
+        name = p.get("name", "")
+        monthly = p.get("monthly_available", 0)
+        express = p.get("express_available", 0)
+        lines.append(f"{icon} <b>{name}</b> — Mensual: {monthly}  Express: {express}")
+    msg = "\n".join(lines) or "Sin datos de stock."
+    await update.effective_message.reply_text(msg, parse_mode="HTML")
+
+
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Router for admin callback queries."""
     query = update.callback_query
@@ -1089,6 +1114,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     data = query.data
+    admin_telegram_id = update.effective_user.id
     if data == "admin:pending":
         await query.answer()
         await cmd_pendientes(update, context)
@@ -1123,7 +1149,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("admin:edit_name:"):
         await query.answer()
         target_id = int(data.split(":")[2])
-        set_user_state(telegram_id, f"admin:edit_client:name:{target_id}")
+        set_user_state(admin_telegram_id, f"admin:edit_client:name:{target_id}")
         await query.edit_message_text(
             f"✏️ Ingresa el <b>nuevo nombre</b> para el cliente <code>{target_id}</code>:\n\n"
             f"(Escribe el nombre o /cancelar para abortar)",
@@ -1133,7 +1159,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("admin:edit_phone:"):
         await query.answer()
         target_id = int(data.split(":")[2])
-        set_user_state(telegram_id, f"admin:edit_client:phone:{target_id}")
+        set_user_state(admin_telegram_id, f"admin:edit_client:phone:{target_id}")
         await query.edit_message_text(
             f"📱 Ingresa el <b>nuevo teléfono</b> para el cliente <code>{target_id}</code>:\n\n"
             f"(Ej: 04141234567 o /cancelar para abortar)",
@@ -1144,14 +1170,14 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         target_id = int(data.split(":")[2])
         await block_user(target_id)
-        await log_admin_action(telegram_id, "block_user", {"target_telegram_id": target_id})
+        await log_admin_action(admin_telegram_id, "block_user", {"target_telegram_id": target_id})
         await _show_client_detail_callback(query, target_id)
 
     elif data.startswith("admin:unblock:"):
         await query.answer()
         target_id = int(data.split(":")[2])
         await unblock_user(target_id)
-        await log_admin_action(telegram_id, "unblock_user", {"target_telegram_id": target_id})
+        await log_admin_action(admin_telegram_id, "unblock_user", {"target_telegram_id": target_id})
         await _show_client_detail_callback(query, target_id)
 
     elif data.startswith("admin:clients_page:"):
@@ -1163,6 +1189,14 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         target_id = int(data.split(":")[2])
         await _show_client_detail_callback(query, target_id)
+
+    elif data == "admin:stock":
+        await query.answer()
+        await cmd_stock(update, context)
+
+    elif data == "admin:config":
+        await query.answer()
+        await cmd_config(update, context)
 
     elif data == "admin:back":
         await query.answer()

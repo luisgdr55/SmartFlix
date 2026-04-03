@@ -98,8 +98,9 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
 
 
 async def get_user_platform_active_subscription(user_id: str, platform_id: str) -> Optional[dict]:
-    """Find the most recent active/expired subscription for user+platform that has a profile assigned.
-    Used to detect renewals at approval time."""
+    """Find the most recent active/expired/cancelled subscription for user+platform.
+    Used to detect renewals at approval time. Includes cancelled so the scheduler
+    cutting a sub before admin approval still routes as renewal (not new client)."""
     try:
         sb = get_supabase()
         result = (
@@ -107,8 +108,7 @@ async def get_user_platform_active_subscription(user_id: str, platform_id: str) 
             .select("*, profiles(id, profile_name, pin, account_id)")
             .eq("user_id", user_id)
             .eq("platform_id", platform_id)
-            .in_("status", ["active", "expired"])
-            .not_.is_("profile_id", "null")
+            .in_("status", ["active", "expired", "cancelled"])
             .order("end_date", desc=True)
             .limit(1)
             .execute()
