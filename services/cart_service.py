@@ -47,8 +47,11 @@ def save_cart(telegram_id: int, items: list[dict]) -> None:
 def add_to_cart(telegram_id: int, item: dict) -> list[dict]:
     """Append one item to cart. Returns updated cart list."""
     cart = get_cart(telegram_id)
+    logger.error(f"add_to_cart BEFORE: tid={telegram_id} cart_len={len(cart)} cart={cart}")
     cart.append(item)
     save_cart(telegram_id, cart)
+    after = get_cart(telegram_id)
+    logger.error(f"add_to_cart AFTER: tid={telegram_id} cart_len={len(after)} after={after}")
     return cart
 
 
