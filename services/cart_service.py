@@ -2,9 +2,6 @@
 from __future__ import annotations
 import json
 import logging
-import redis as _redis_lib
-
-from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -12,18 +9,10 @@ CART_KEY = "cart:{}"
 RENEWAL_CART_KEY = "renewal_cart:{}"
 CART_TTL = 1800
 
-_cart_redis_client = None
-
 
 def _get_redis():
-    global _cart_redis_client
-    if _cart_redis_client is None:
-        _cart_redis_client = _redis_lib.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=10,
-        )
-    return _cart_redis_client
+    from bot.middleware import _redis_client
+    return _redis_client
 
 
 def get_cart(telegram_id: int) -> list[dict]:
@@ -47,11 +36,8 @@ def save_cart(telegram_id: int, items: list[dict]) -> None:
 def add_to_cart(telegram_id: int, item: dict) -> list[dict]:
     """Append one item to cart. Returns updated cart list."""
     cart = get_cart(telegram_id)
-    logger.error(f"add_to_cart BEFORE: tid={telegram_id} cart_len={len(cart)} cart={cart}")
     cart.append(item)
     save_cart(telegram_id, cart)
-    after = get_cart(telegram_id)
-    logger.error(f"add_to_cart AFTER: tid={telegram_id} cart_len={len(after)} after={after}")
     return cart
 
 
