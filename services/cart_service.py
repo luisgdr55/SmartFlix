@@ -2,6 +2,9 @@
 from __future__ import annotations
 import json
 import logging
+import redis as _redis_lib
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -9,10 +12,18 @@ CART_KEY = "cart:{}"
 RENEWAL_CART_KEY = "renewal_cart:{}"
 CART_TTL = 1800
 
+_cart_redis_client = None
+
 
 def _get_redis():
-    from services.gemini_service import _get_redis as _r
-    return _r()
+    global _cart_redis_client
+    if _cart_redis_client is None:
+        _cart_redis_client = _redis_lib.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=10,
+        )
+    return _cart_redis_client
 
 
 def get_cart(telegram_id: int) -> list[dict]:
@@ -21,7 +32,7 @@ def get_cart(telegram_id: int) -> list[dict]:
         raw = r.get(CART_KEY.format(telegram_id))
         return json.loads(raw) if raw else []
     except Exception as e:
-        logger.warning(f"get_cart error: {e}")
+        logger.error(f"get_cart error: {e}")
         return []
 
 
@@ -30,7 +41,7 @@ def save_cart(telegram_id: int, items: list[dict]) -> None:
         r = _get_redis()
         r.setex(CART_KEY.format(telegram_id), CART_TTL, json.dumps(items))
     except Exception as e:
-        logger.warning(f"save_cart error: {e}")
+        logger.error(f"save_cart error: {e}")
 
 
 def add_to_cart(telegram_id: int, item: dict) -> list[dict]:
@@ -46,7 +57,7 @@ def clear_cart(telegram_id: int) -> None:
         r = _get_redis()
         r.delete(CART_KEY.format(telegram_id))
     except Exception as e:
-        logger.warning(f"clear_cart error: {e}")
+        logger.error(f"clear_cart error: {e}")
 
 
 def get_renewal_cart(telegram_id: int) -> dict:
@@ -55,7 +66,7 @@ def get_renewal_cart(telegram_id: int) -> dict:
         raw = r.get(RENEWAL_CART_KEY.format(telegram_id))
         return json.loads(raw) if raw else {}
     except Exception as e:
-        logger.warning(f"get_renewal_cart error: {e}")
+        logger.error(f"get_renewal_cart error: {e}")
         return {}
 
 
@@ -64,7 +75,7 @@ def save_renewal_cart(telegram_id: int, cart: dict) -> None:
         r = _get_redis()
         r.setex(RENEWAL_CART_KEY.format(telegram_id), CART_TTL, json.dumps(cart))
     except Exception as e:
-        logger.warning(f"save_renewal_cart error: {e}")
+        logger.error(f"save_renewal_cart error: {e}")
 
 
 def clear_renewal_cart(telegram_id: int) -> None:
@@ -72,4 +83,4 @@ def clear_renewal_cart(telegram_id: int) -> None:
         r = _get_redis()
         r.delete(RENEWAL_CART_KEY.format(telegram_id))
     except Exception as e:
-        logger.warning(f"clear_renewal_cart error: {e}")
+        logger.error(f"clear_renewal_cart error: {e}")
