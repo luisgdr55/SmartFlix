@@ -66,6 +66,25 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-12 — Sesión 5 — Reserva temporal de perfiles
+
+#### Mejora añadida
+
+| Mejora | Detalle |
+|--------|---------|
+| Reserva temporal de perfil al renovar | Al confirmar pago, el perfil disponible queda reservado 30 min para ese usuario. Evita que otro cliente lo tome mientras espera aprobación del admin. |
+
+#### Cambios en BD
+- `profiles.reserved_until` (TIMESTAMPTZ) — cuándo expira la reserva
+- `profiles.reserved_for` (UUID FK → users) — qué usuario tiene la reserva
+- `idx_profiles_reserved` — índice para el scheduler
+
+#### Flujo de reserva
+1. Cliente confirma renovación → `reserve_profile()` → status="reserved", TTL 30 min
+2. Scheduler cada 10 min → `job_release_expired_reservations()` → libera reservas vencidas
+3. Admin aprueba pago → `assign_profile()` → status="occupied", limpia reserved_for/reserved_until
+4. `get_available_profiles()` excluye reservas vigentes, incluye reservas expiradas
+
 ---
 
 ## Funcionalidades principales
