@@ -903,6 +903,15 @@ async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFA
             if sub:
                 sub_ids.append(str(sub["id"]))
                 lines.append(f"{emoji} <b>{name}</b> — {plan_label}: Bs {price_bs:,.0f}")
+                # Reservar perfil por 30 min mientras espera aprobación del pago
+                from database.profiles import get_available_profiles, reserve_profile
+                available = await get_available_profiles(platform_id, plan_type)
+                if available:
+                    await reserve_profile(
+                        profile_id=str(available[0]["id"]),
+                        user_id=str(user["id"]),
+                        ttl_minutes=30,
+                    )
 
         if not sub_ids:
             await query.edit_message_text(

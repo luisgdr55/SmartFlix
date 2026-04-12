@@ -298,6 +298,20 @@ async def job_debt_reminders_and_cuts() -> None:
         logger.error(f"Error in job_debt_reminders_and_cuts: {e}")
 
 
+# ============================================================
+# JOB 9: Release expired profile reservations - every 10 min
+# ============================================================
+async def job_release_expired_reservations() -> None:
+    """Release profiles whose 30-min reservation TTL has expired."""
+    try:
+        from database.profiles import release_expired_reservations
+        count = await release_expired_reservations()
+        if count:
+            logger.info(f"job_release_expired_reservations: released {count} profile(s)")
+    except Exception as e:
+        logger.error(f"Error in job_release_expired_reservations: {e}")
+
+
 def setup_scheduler() -> AsyncIOScheduler:
     """Configure and return the scheduler with all jobs."""
     # Job 1: Expiry reminders - daily at 10:00 AM Venezuela time
@@ -363,14 +377,24 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Job 8: Debt reminders + hard cut - 9:00 AM Venezuela time
+    # Job 8: Debt reminders - 9:00 AM Venezuela time
     scheduler.add_job(
         job_debt_reminders_and_cuts,
         CronTrigger(hour=9, minute=0, timezone=VENEZUELA_TZ),
         id="debt_reminders_and_cuts",
-        name="Debt Reminders & Hard Cut",
+        name="Debt Reminders",
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured with 8 jobs")
+    # Job 9: Release expired profile reservations - every 10 min
+    scheduler.add_job(
+        job_release_expired_reservations,
+        "interval",
+        minutes=10,
+        id="release_expired_reservations",
+        name="Release Expired Profile Reservations",
+        replace_existing=True,
+    )
+
+    logger.info("Scheduler configured with 9 jobs")
     return scheduler

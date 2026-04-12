@@ -28,15 +28,16 @@ async def create_profile(account_id: str, platform_id: str, name: str, pin: Opti
 
 
 async def get_available_profiles(platform_id: str, profile_type: str = "monthly") -> list[dict]:
-    """List available profiles for a platform and type."""
+    """List truly available profiles: status=available OR (status=reserved AND TTL expired)."""
     try:
         sb = get_supabase()
+        now_iso = venezuela_now().isoformat()
         result = (
             sb.table("profiles")
             .select("*")
             .eq("platform_id", platform_id)
             .eq("profile_type", profile_type)
-            .eq("status", "available")
+            .or_(f"status.eq.available,and(status.eq.reserved,reserved_until.lt.{now_iso})")
             .order("last_released", desc=False, nullsfirst=True)
             .order("created_at", desc=False)
             .execute()
@@ -68,10 +69,14 @@ async def get_all_profiles_for_platform(platform_id: str) -> list[dict]:
 
 
 async def assign_profile(profile_id: str) -> bool:
-    """Mark profile as occupied."""
+    """Mark profile as occupied, clearing any reservation."""
     try:
         sb = get_supabase()
-        sb.table("profiles").update({"status": "occupied"}).eq("id", profile_id).execute()
+        sb.table("profiles").update({
+            "status": "occupied",
+            "reserved_for": None,
+            "reserved_until": None,
+        }).eq("id", profile_id).execute()
         return True
     except Exception as e:
         logger.error(f"Error in assign_profile: {e}")
@@ -133,3 +138,39 @@ async def get_profile_by_id(profile_id: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Error in get_profile_by_id: {e}")
         return None
+
+
+async def reserve_profile(profile_id: str, user_id: str, ttl_minutes: int = 30) -> bool:
+    """Reserve a profile for a user for TTL minutes while payment is pending."""
+    try:
+        from datetime import timedelta
+        sb = get_supabase()
+        reserved_until = (venezuela_now() + timedelta(minutes=ttl_minutes)).isoformat()
+        sb.table("profiles").update({
+            "status": "reserved",
+            "reserved_for": user_id,
+            "reserved_until": reserved_until,
+        }).eq("id", profile_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error in reserve_profile: {e}")
+        return False
+
+
+async def release_expired_reservations() -> int:
+    """Release all profiles whose reservation TTL has expired. Returns count released."""
+    try:
+        sb = get_supabase()
+        now_iso = venezuela_now().isoformat()
+        res = sb.table("profiles").update({
+            "status": "available",
+            "reserved_for": None,
+            "reserved_until": None,
+        }).eq("status", "reserved").lt("reserved_until", now_iso).execute()
+        count = len(res.data or [])
+        if count:
+            logger.info(f"release_expired_reservations: released {count} profile(s)")
+        return count
+    except Exception as e:
+        logger.error(f"Error in release_expired_reservations: {e}")
+        return 0
