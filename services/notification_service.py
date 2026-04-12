@@ -358,9 +358,6 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
             )
             return bool(await send_to_admin(message))
 
-        if not telegram_id:
-            return False
-
         end_date_str = sub.get("end_date", "")
         end_dt = None
         if end_date_str:
@@ -390,7 +387,7 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
         )
 
         from bot.keyboards import renewal_keyboard
-        keyboard = renewal_keyboard(str(sub.get("platform_id", "")), "monthly")
+        keyboard = renewal_keyboard(str(sub.get("platform_id", "")), sub.get("plan_type", "monthly"))
         return await send_to_user(telegram_id, message, keyboard)
     except Exception as e:
         logger.error(f"Error in send_debt_reminder: {e}")

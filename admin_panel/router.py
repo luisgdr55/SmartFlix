@@ -1103,7 +1103,7 @@ async def subscription_release(request: Request, sub_id: str):
         sb = get_supabase()
 
         sub_res = sb.table("subscriptions").select(
-            "user_id, profile_id"
+            "user_id, profile_id, users(name), platforms(name, icon_emoji)"
         ).eq("id", sub_id).limit(1).execute()
         if not sub_res.data:
             return RedirectResponse(url="/panel/?error=Suscripcion+no+encontrada", status_code=302)
@@ -1111,7 +1111,15 @@ async def subscription_release(request: Request, sub_id: str):
         user_id = sub.get("user_id")
         profile_id = sub.get("profile_id")
 
+        # Capturar datos del perfil ANTES de modificarlo
+        old_pin = "—"
+        profile_name = "—"
+        new_pin = "—"
         if profile_id:
+            prof_res = sb.table("profiles").select("profile_name, pin").eq("id", profile_id).limit(1).execute()
+            if prof_res.data:
+                old_pin = prof_res.data[0].get("pin") or "—"
+                profile_name = prof_res.data[0].get("profile_name") or "—"
             import random, string
             from utils.helpers import venezuela_now
             new_pin = "".join(random.choices(string.digits, k=4))
@@ -1137,6 +1145,24 @@ async def subscription_release(request: Request, sub_id: str):
             await send_profile_released_notification(sub_id)
         except Exception as notify_err:
             logger.warning(f"Could not send release notification: {notify_err}")
+
+        # Notify admin with old and new PIN
+        try:
+            from services.notification_service import send_to_admin
+            client_name = (sub.get("users") or {}).get("name") or "—"
+            plat = sub.get("platforms") or {}
+            platform_label = f"{plat.get('icon_emoji', '')} {plat.get('name', '')}".strip() or "—"
+            await send_to_admin(
+                f"🔓 <b>Perfil liberado manualmente</b>\n\n"
+                f"👤 Cliente: <b>{client_name}</b>\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n"
+                f"👤 Perfil: <b>{profile_name}</b>\n"
+                f"🔢 PIN anterior: <code>{old_pin}</code>\n"
+                f"🔄 PIN nuevo: <code>{new_pin}</code>\n\n"
+                f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
+            )
+        except Exception as admin_err:
+            logger.warning(f"Could not send admin release notification: {admin_err}")
 
         redirect_base = f"/panel/users/{user_id}" if user_id else "/panel/"
         return RedirectResponse(url=f"{redirect_base}?success=Perfil+liberado+correctamente", status_code=302)
