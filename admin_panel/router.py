@@ -906,7 +906,7 @@ async def subscriptions_list(request: Request):
         offset = (page - 1) * per_page
 
         query = sb.table("subscriptions").select(
-            "*, users(name, username), platforms(name, icon_emoji, slug)"
+            "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, pin, accounts(email, password))"
         )
         if status_filter:
             query = query.eq("status", status_filter)

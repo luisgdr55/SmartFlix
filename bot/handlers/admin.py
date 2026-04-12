@@ -826,7 +826,8 @@ async def _show_client_detail_callback(query, target_id: int) -> None:
         end_date = (sub.get("end_date") or "")[:10] or "N/A"
         profile = sub.get("profiles") or {}
         profile_name = profile.get("profile_name") or "—"
-        text += f"  • {platform_name} ({plan}) — {sub_status} | vence {end_date} | perfil: {profile_name}\n"
+        pin = profile.get("pin") or "—"
+        text += f"  • {platform_name} ({plan}) — {sub_status} | vence {end_date} | perfil: {profile_name} | PIN: <code>{pin}</code>\n"
 
     await query.edit_message_text(
         text,

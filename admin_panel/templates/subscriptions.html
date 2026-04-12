@@ -3,7 +3,7 @@
 {% block header_title %}Suscripciones{% endblock %}
 
 {% block content %}
-<div>
+<div x-data="subModal()" @keydown.escape.window="close()">
 
   <!-- Header + Filters -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -61,9 +61,26 @@
           <tr class="table-row">
             <td class="table-cell">
               <div>
-                <p class="font-medium text-slate-200">{{ (sub.get('users') or {}).get('name') or 'Sin nombre' }}</p>
-                {% if (sub.get('users') or {}).get('username') %}
-                <p class="text-xs text-slate-500">@{{ sub['users']['username'] }}</p>
+                {% set u = sub.get('users') or {} %}
+                {% set pr = sub.get('profiles') or {} %}
+                {% set acc = pr.get('accounts') or {} %}
+                {% set plat = sub.get('platforms') or {} %}
+                <button
+                  style="font-weight:700;color:#111827;text-align:left;background:none;border:none;cursor:pointer;padding:0;"
+                  @click="open({
+                    name:         {{ (u.get('name') or 'Sin nombre') | tojson }},
+                    username:     {{ (u.get('username') or '') | tojson }},
+                    platform:     {{ ((plat.get('icon_emoji') or '') ~ ' ' ~ (plat.get('name') or '—')) | tojson }},
+                    profile_name: {{ (pr.get('profile_name') or '—') | tojson }},
+                    pin:          {{ (pr.get('pin') or '—') | tojson }},
+                    email:        {{ (acc.get('email') or '—') | tojson }},
+                    password:     {{ (acc.get('password') or '—') | tojson }},
+                    end_date:     {{ ((sub.get('end_date') or '')[:10]) | tojson }}
+                  })">
+                  {{ u.get('name') or 'Sin nombre' }}
+                </button>
+                {% if u.get('username') %}
+                <p class="text-xs text-slate-500">@{{ u['username'] }}</p>
                 {% endif %}
               </div>
             </td>
@@ -152,4 +169,61 @@
   </div>
 
 </div>
+
+<!-- Modal detalle suscripción -->
+<div x-show="show" x-cloak
+     class="fixed inset-0 z-50 flex items-center justify-center"
+     style="background:rgba(0,0,0,0.55);"
+     @click.self="close()">
+  <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md mx-4">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="text-lg font-bold text-slate-800">🔎 Detalle de suscripción</h3>
+      <button @click="close()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+    </div>
+    <template x-if="sub">
+      <dl class="space-y-3 text-sm">
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">Cliente</dt>
+          <dd class="font-semibold text-slate-800" x-text="sub.name"></dd>
+        </div>
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">Plataforma</dt>
+          <dd class="font-semibold text-slate-800" x-text="sub.platform"></dd>
+        </div>
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">Correo de cuenta</dt>
+          <dd class="font-mono text-slate-800 text-right break-all" x-text="sub.email"></dd>
+        </div>
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">Contraseña</dt>
+          <dd class="font-mono text-slate-800" x-text="sub.password"></dd>
+        </div>
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">Perfil</dt>
+          <dd class="text-slate-800" x-text="sub.profile_name"></dd>
+        </div>
+        <div class="flex justify-between border-b border-slate-100 pb-2">
+          <dt class="text-slate-500">PIN</dt>
+          <dd class="font-mono font-bold text-slate-800 tracking-widest" x-text="sub.pin"></dd>
+        </div>
+        <div class="flex justify-between">
+          <dt class="text-slate-500">Vence</dt>
+          <dd class="text-slate-800" x-text="sub.end_date"></dd>
+        </div>
+      </dl>
+    </template>
+  </div>
+</div>
+
+<script>
+function subModal() {
+  return {
+    show: false,
+    sub: null,
+    open(data) { this.sub = data; this.show = true; },
+    close() { this.show = false; this.sub = null; }
+  }
+}
+</script>
+
 {% endblock %}
