@@ -42,6 +42,30 @@
 | 1 | Cancelación manual de suscripción activa desde `/admin` — libera perfil, rota PIN, notifica cliente | `admin.py`, `keyboards.py`, `subscriptions.py` |
 | 2 | `job_express_release` notifica al admin con PIN anterior y PIN nuevo al liberar cuenta express | `jobs.py` |
 
+### 2026-04-12 — Sesión de mejoras panel admin y notificaciones
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Panel web: liberar suscripción express no rotaba PIN | `router.py` | (sesión anterior) |
+| 2 | `admin:income` no mostraba nada — incompatible con callbacks | `admin.py` | (sesión anterior) |
+| 3 | `admin:config` error inesperado — `reply_text` vs `edit_message_text` | `admin.py` | (sesión anterior) |
+| 4 | Detalle de cliente sin datos de perfil ni fecha de vencimiento | `analytics.py`, `admin.py` | (sesión anterior) |
+| 5 | Error inesperado al abrir algunos clientes — sin guard try/except | `admin.py` | (sesión anterior) |
+| 6 | Lista de clientes congela spinner al pulsar varios botones | `admin.py` | (sesión anterior) |
+| 7 | Notificaciones de vencimiento no llegaban al admin | `notification_service.py` | (sesión anterior) |
+| 8 | Ficha de cliente en /admin no mostraba PIN del perfil | `admin.py` | 5723d5e |
+| 9 | Nombres de suscriptores invisibles en panel (texto blanco sobre blanco) | `subscriptions.html` | 5723d5e |
+
+#### Mejoras añadidas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Modal de detalle de suscripción en panel web — muestra plataforma, correo, contraseña, perfil, PIN y fecha de vencimiento al pulsar el nombre del cliente | `subscriptions.html`, `router.py` | 5723d5e |
+| 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
+| 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
+
 ---
 
 ## Funcionalidades principales
