@@ -252,12 +252,13 @@ def clients_list_keyboard(clients: list[dict], current_page: int, total_pages: i
     buttons = []
     for c in clients:
         name = c.get("name") or c.get("username") or "Sin nombre"
-        tid = c.get("telegram_id")
         status_icon = "✅" if c.get("status") == "active" else "🚫"
         purchases = c.get("total_purchases", 0)
+        # Clientes externos tienen telegram_id=None — usar UUID como fallback
+        identifier = c.get("telegram_id") or c.get("id")
         buttons.append([InlineKeyboardButton(
             f"{status_icon} {name}  ({purchases} compras)",
-            callback_data=f"admin:client_detail:{tid}",
+            callback_data=f"admin:client_detail:{identifier}",
         )])
     nav = []
     if current_page > 1:

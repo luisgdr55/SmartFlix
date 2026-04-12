@@ -1212,7 +1212,9 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data.startswith("admin:client_detail:"):
         await query.answer()
-        target_id = int(data.split(":")[2])
+        raw = data.split(":")[2]
+        # Puede ser telegram_id numérico o UUID para clientes externos
+        target_id = int(raw) if raw.isdigit() else raw
         try:
             await _show_client_detail_callback(query, target_id)
         except Exception as e:

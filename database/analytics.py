@@ -156,11 +156,15 @@ async def get_clients_list(page: int = 1, per_page: int = 10) -> dict:
         return {"clients": [], "total": 0, "page": page, "per_page": per_page, "total_pages": 0}
 
 
-async def get_client_detail(telegram_id: int) -> Optional[dict]:
-    """Get full client info including subscription history."""
+async def get_client_detail(identifier) -> Optional[dict]:
+    """Get full client info by telegram_id (int) or user UUID (str)."""
     try:
         sb = get_supabase()
-        user_result = sb.table("users").select("*").eq("telegram_id", telegram_id).limit(1).execute()
+        # Detectar si es UUID (str con guiones) o telegram_id (int/str numérico)
+        if isinstance(identifier, str) and "-" in identifier:
+            user_result = sb.table("users").select("*").eq("id", identifier).limit(1).execute()
+        else:
+            user_result = sb.table("users").select("*").eq("telegram_id", int(identifier)).limit(1).execute()
         if not user_result.data:
             return None
 
