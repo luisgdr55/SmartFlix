@@ -898,17 +898,14 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
                 profile_id = str(profile_id)
                 profile = existing_sub.get("profiles") or {}
 
-            # New end_date: extend from current end_date (if future) or from now
+            # New end_date: always extend from original end_date, never from today
+            # Garantiza: venció el 5-abr + 30d = 5-may, no 12-abr + 30d = 12-may
             now = venezuela_now()
             existing_end_str = (existing_sub.get("end_date") or "")[:10]
-            today_str = now.strftime("%Y-%m-%d")
-            if existing_end_str > today_str:
-                try:
-                    y, m, d = map(int, existing_end_str.split("-"))
-                    base = now.replace(year=y, month=m, day=d, hour=23, minute=59, second=59, microsecond=0)
-                except Exception:
-                    base = now
-            else:
+            try:
+                y, m, d = map(int, existing_end_str.split("-"))
+                base = now.replace(year=y, month=m, day=d, hour=23, minute=59, second=59, microsecond=0)
+            except Exception:
                 base = now
             new_end_date = base + timedelta(days=duration_days)
 
