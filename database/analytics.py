@@ -168,7 +168,7 @@ async def get_client_detail(telegram_id: int) -> Optional[dict]:
 
         subs_result = (
             sb.table("subscriptions")
-            .select("*, platforms(name, icon_emoji)")
+            .select("*, platforms(name, icon_emoji), profiles(profile_name, pin)")
             .eq("user_id", user["id"])
             .order("created_at", desc=True)
             .limit(10)

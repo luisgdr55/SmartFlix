@@ -1112,14 +1112,24 @@ async def subscription_release(request: Request, sub_id: str):
         profile_id = sub.get("profile_id")
 
         if profile_id:
+            import random, string
             from utils.helpers import venezuela_now
+            new_pin = "".join(random.choices(string.digits, k=4))
             sb.table("profiles").update({
                 "status": "available",
+                "pin": new_pin,
                 "last_released": venezuela_now().isoformat(),
             }).eq("id", profile_id).execute()
 
         # Mark subscription as expired
-        sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
+        update_res = sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
+        if not update_res.data:
+            logger.error(f"subscription_release: update returned no rows for sub_id={sub_id}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"No se pudo actualizar la suscripción {sub_id}. Verifica permisos RLS en Supabase."},
+            )
 
         # Notify user via Telegram (best-effort)
         try:

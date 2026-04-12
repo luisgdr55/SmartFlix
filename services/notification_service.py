@@ -244,6 +244,15 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
         success = await send_to_user(telegram_id, message, keyboard)
         if success:
             await mark_reminder_sent(subscription_id)
+            platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
+            end_date_fmt = (sub.get("end_date") or "")[:10]
+            await send_to_admin(
+                f"🔔 <b>Recordatorio D-3 enviado</b>\n\n"
+                f"👤 {user.get('name') or user.get('username') or 'Sin nombre'}\n"
+                f"🎬 {platform_name}\n"
+                f"📅 Vence: {end_date_fmt}\n"
+                f"📱 TG: <code>{telegram_id}</code>"
+            )
         return success
     except Exception as e:
         logger.error(f"Error in send_expiry_reminder: {e}")
@@ -298,6 +307,15 @@ async def send_expiry_notification(subscription_id: str) -> bool:
         success = await send_to_user(telegram_id, message, keyboard)
         if success:
             await mark_expiry_notified(subscription_id)
+            platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
+            end_date_fmt = (sub.get("end_date") or "")[:10]
+            await send_to_admin(
+                f"🔴 <b>Vencimiento notificado al cliente</b>\n\n"
+                f"👤 {user.get('name') or user.get('username') or 'Sin nombre'}\n"
+                f"🎬 {platform_name}\n"
+                f"📅 Venció: {end_date_fmt}\n"
+                f"📱 TG: <code>{telegram_id}</code>"
+            )
         return success
     except Exception as e:
         logger.error(f"Error in send_expiry_notification: {e}")

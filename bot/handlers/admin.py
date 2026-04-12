@@ -659,7 +659,10 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "/editpin <profile_id> <pin> - Editar PIN\n"
     )
 
-    await update.effective_message.reply_text(config_text, parse_mode="HTML")
+    if update.callback_query:
+        await update.callback_query.edit_message_text(config_text, parse_mode="HTML")
+    else:
+        await update.effective_message.reply_text(config_text, parse_mode="HTML")
 
 
 async def cmd_testllm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -783,11 +786,14 @@ async def _show_clients_list_callback(query, page: int = 1) -> None:
         return
 
     text = f"👥 <b>Clientes</b> — Página {page}/{total_pages} (Total: {total})\n\nToca un cliente para ver su perfil y editarlo:"
-    await query.edit_message_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=clients_list_keyboard(clients, page, total_pages),
-    )
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=clients_list_keyboard(clients, page, total_pages),
+        )
+    except Exception:
+        pass  # Ignora MessageNotModified si el contenido no cambió
 
 
 async def _show_client_detail_callback(query, target_id: int) -> None:
@@ -813,10 +819,14 @@ async def _show_client_detail_callback(query, target_id: int) -> None:
         f"📋 <b>Últimas suscripciones ({len(subs)}):</b>\n"
     )
     for sub in subs[:5]:
-        platform = (sub.get("platforms") or {}).get("name", "?")
+        plat = sub.get("platforms") or {}
+        platform_name = f"{plat.get('icon_emoji', '')} {plat.get('name', '?')}".strip()
         plan = sub.get("plan_type", "?")
         sub_status = sub.get("status", "?")
-        text += f"  • {platform} ({plan}) - {sub_status}\n"
+        end_date = (sub.get("end_date") or "")[:10] or "N/A"
+        profile = sub.get("profiles") or {}
+        profile_name = profile.get("profile_name") or "—"
+        text += f"  • {platform_name} ({plan}) — {sub_status} | vence {end_date} | perfil: {profile_name}\n"
 
     await query.edit_message_text(
         text,
@@ -1123,7 +1133,24 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await _show_clients_list_callback(query, page=1)
     elif data == "admin:income":
         await query.answer()
-        await cmd_ingresos(update, context)
+        report = await get_income_report("month")
+        from utils.helpers import venezuela_now
+        now = venezuela_now()
+        by_platform_text = "\n".join([
+            f"  📺 {k}: ${v:.2f}" for k, v in (report.get("by_platform") or {}).items()
+        ])
+        by_plan_text = "\n".join([
+            f"  📅 {k}: ${v:.2f}" for k, v in (report.get("by_plan") or {}).items()
+        ])
+        text = (
+            f"💰 <b>Ingresos — {now.strftime('%B %Y')}</b>\n\n"
+            f"💵 Total USD: <b>${report.get('total_usd', 0):.2f}</b>\n"
+            f"💴 Total Bs: <b>Bs {report.get('total_bs', 0):,.2f}</b>\n"
+            f"🔢 Transacciones: <b>{report.get('transaction_count', 0)}</b>\n\n"
+            f"📊 Por plataforma:\n{by_platform_text or '  Sin datos'}\n\n"
+            f"📋 Por plan:\n{by_plan_text or '  Sin datos'}"
+        )
+        await query.edit_message_text(text, parse_mode="HTML")
     elif data.startswith("admin:approve:"):
         await handle_admin_approve_payment(update, context)
     elif data.startswith("admin:reject:"):
@@ -1188,7 +1215,16 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("admin:client_detail:"):
         await query.answer()
         target_id = int(data.split(":")[2])
-        await _show_client_detail_callback(query, target_id)
+        try:
+            await _show_client_detail_callback(query, target_id)
+        except Exception as e:
+            logger.error(f"client_detail error for {target_id}: {e}", exc_info=True)
+            await query.edit_message_text(
+                "❌ Error al cargar el cliente. Intenta de nuevo.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Lista clientes", callback_data="admin:clients")
+                ]])
+            )
 
     elif data == "admin:stock":
         await query.answer()
