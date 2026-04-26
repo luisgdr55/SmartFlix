@@ -14,15 +14,15 @@ async def get_dashboard_stats() -> dict:
     """Get all stats for the /admin dashboard."""
     try:
         import asyncio, json
-        from bot.middleware import _redis_client as redis_client
+        from bot.middleware import _get_redis
+        redis_client = _get_redis()
 
-        if redis_client is not None:
-            try:
-                cached = redis_client.get("cache:dashboard_stats")
-                if cached:
-                    return json.loads(cached)
-            except Exception:
-                pass
+        try:
+            cached = redis_client.get("cache:dashboard_stats")
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
 
         sb = get_supabase()
         now = venezuela_now()
@@ -74,11 +74,10 @@ async def get_dashboard_stats() -> dict:
             "platform_availability": availability,
         }
 
-        if redis_client is not None:
-            try:
-                redis_client.setex("cache:dashboard_stats", 60, json.dumps(result))
-            except Exception:
-                pass
+        try:
+            redis_client.setex("cache:dashboard_stats", 60, json.dumps(result))
+        except Exception:
+            pass
 
         return result
     except Exception as e:
@@ -88,9 +87,8 @@ async def get_dashboard_stats() -> dict:
 
 async def invalidate_dashboard_cache() -> None:
     try:
-        from bot.middleware import _redis_client as redis_client
-        if redis_client is not None:
-            redis_client.delete("cache:dashboard_stats")
+        from bot.middleware import _get_redis
+        _get_redis().delete("cache:dashboard_stats")
     except Exception:
         pass
 
