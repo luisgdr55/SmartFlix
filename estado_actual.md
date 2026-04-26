@@ -66,6 +66,17 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 11 (cont.) — Fase 3: Renovación manual vía Telegram
+
+#### Features implementadas
+
+| # | Feature | Archivos | Commit |
+|---|---------|----------|--------|
+| 3A | /renovar para admin — lista clientes, elige suscripción, genera ticket | `renovar.py`, `subscriptions.py`, `main.py` | a4e60d5 |
+| 3B | Compatible con clientes sin telegram_id — ticket solo al admin para copiar | `renovar.py` | a4e60d5 |
+
+---
+
 ### 2026-04-26 — Sesión 11 — Fase 2: Afiliación manual mejorada
 
 #### Features implementadas

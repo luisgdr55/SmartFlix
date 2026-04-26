@@ -334,8 +334,8 @@ Desde el panel web, el admin puede enviar mensajes segmentados a: todos los clie
 ### FASE 3 — Renovación manual vía Telegram
 | Sub-fase | Descripción | Archivos | Estado |
 |----------|-------------|----------|--------|
-| 3A | Comando /renovar para admin — selecciona cliente y servicio a renovar | `admin.py`, `subscriptions.py` | 📋 Pendiente |
-| 3B | Compatible con clientes sin telegram_id (afiliados manualmente) | `admin.py` | 📋 Pendiente |
+| 3A | Comando /renovar para admin — selecciona cliente y servicio a renovar | `renovar.py`, `subscriptions.py` | ✅ Implementado |
+| 3B | Compatible con clientes sin telegram_id (afiliados manualmente) | `renovar.py` | ✅ Implementado |
 
 ### FASE 4 — Afiliación y renovación vía Dashboard web
 | Sub-fase | Descripción | Archivos | Estado |
