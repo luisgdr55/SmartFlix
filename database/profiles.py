@@ -118,6 +118,27 @@ async def count_available_profiles(platform_id: str, profile_type: str = "monthl
         return 0
 
 
+async def get_available_profile_counts() -> dict[tuple[str, str], int]:
+    """Return {(platform_id, profile_type): count} for all platforms in one query."""
+    try:
+        sb = get_supabase()
+        now_iso = venezuela_now().isoformat()
+        result = (
+            sb.table("profiles")
+            .select("platform_id, profile_type")
+            .or_(f"status.eq.available,and(status.eq.reserved,reserved_until.lt.{now_iso})")
+            .execute()
+        )
+        counts: dict[tuple[str, str], int] = {}
+        for row in (result.data or []):
+            key = (row["platform_id"], row["profile_type"])
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+    except Exception as e:
+        logger.error(f"Error in get_available_profile_counts: {e}")
+        return {}
+
+
 async def get_profiles_by_account(account_id: str) -> list[dict]:
     """List all profiles for an account."""
     try:

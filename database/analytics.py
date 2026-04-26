@@ -13,64 +13,54 @@ logger = logging.getLogger(__name__)
 async def get_dashboard_stats() -> dict:
     """Get all stats for the /admin dashboard."""
     try:
+        import asyncio
         sb = get_supabase()
         now = venezuela_now()
-
-        # Total paying clients (exclude zero-purchase prospects)
-        users_result = sb.table("users").select("id", count="exact").gt("total_purchases", 0).execute()
-        total_users = users_result.count or 0
-
-        # Active subscriptions
-        active_result = sb.table("subscriptions").select("id", count="exact").eq("status", "active").execute()
-        active_subs = active_result.count or 0
-
-        # Pending payments
-        pending_result = sb.table("subscriptions").select("id", count="exact").eq("status", "pending_payment").execute()
-        pending_payments = pending_result.count or 0
-
-        # Revenue this month
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        revenue_result = (
-            sb.table("subscriptions")
-            .select("price_usd")
-            .eq("status", "active")
-            .gte("payment_confirmed_at", month_start.isoformat())
-            .execute()
-        )
-        monthly_revenue_usd = sum(row.get("price_usd", 0) or 0 for row in (revenue_result.data or []))
-
-        # Expiring in 3 days
-        three_days = now + timedelta(days=3)
-        expiring_result = (
-            sb.table("subscriptions")
-            .select("id", count="exact")
-            .eq("status", "active")
-            .lte("end_date", three_days.isoformat())
-            .gte("end_date", now.isoformat())
-            .execute()
-        )
-        expiring_soon = expiring_result.count or 0
-
-        # New users today
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        new_users_result = (
-            sb.table("users")
-            .select("id", count="exact")
-            .gte("created_at", today_start.isoformat())
-            .execute()
-        )
-        new_users_today = new_users_result.count or 0
+        three_days = now + timedelta(days=3)
 
-        # Platform availability
-        availability = await get_platform_availability()
+        (
+            users_result,
+            active_result,
+            pending_result,
+            revenue_result,
+            expiring_result,
+            new_users_result,
+            availability,
+        ) = await asyncio.gather(
+            asyncio.to_thread(lambda: sb.table("users").select(
+                "id", count="exact"
+            ).gt("total_purchases", 0).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id", count="exact"
+            ).eq("status", "active").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id", count="exact"
+            ).eq("status", "pending_payment").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "price_usd"
+            ).eq("status", "active").gte("payment_confirmed_at", month_start.isoformat()).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id", count="exact"
+            ).eq("status", "active").lte("end_date", three_days.isoformat()).gte(
+                "end_date", now.isoformat()
+            ).execute()),
+            asyncio.to_thread(lambda: sb.table("users").select(
+                "id", count="exact"
+            ).gte("created_at", today_start.isoformat()).execute()),
+            get_platform_availability(),
+        )
 
         return {
-            "total_users": total_users,
-            "active_subscriptions": active_subs,
-            "pending_payments": pending_payments,
-            "monthly_revenue_usd": round(monthly_revenue_usd, 2),
-            "expiring_soon": expiring_soon,
-            "new_users_today": new_users_today,
+            "total_users": users_result.count or 0,
+            "active_subscriptions": active_result.count or 0,
+            "pending_payments": pending_result.count or 0,
+            "monthly_revenue_usd": round(
+                sum(row.get("price_usd", 0) or 0 for row in (revenue_result.data or [])), 2
+            ),
+            "expiring_soon": expiring_result.count or 0,
+            "new_users_today": new_users_result.count or 0,
             "platform_availability": availability,
         }
     except Exception as e:
@@ -191,23 +181,27 @@ async def get_client_detail(identifier) -> Optional[dict]:
 async def get_platform_availability() -> list[dict]:
     """Get stock counts per platform."""
     try:
-        from database.platforms import get_active_platforms
-        from database.profiles import count_available_profiles
+        import asyncio
+        from database import get_supabase as _get_sb
+        from database.profiles import get_available_profile_counts
 
-        platforms = await get_active_platforms()
-        availability = []
-        for p in platforms:
-            monthly_count = await count_available_profiles(p["id"], "monthly")
-            express_count = await count_available_profiles(p["id"], "express")
-            availability.append({
+        platforms_res, counts = await asyncio.gather(
+            asyncio.to_thread(lambda: _get_sb().table("platforms").select(
+                "*"
+            ).eq("is_active", True).order("name").execute()),
+            get_available_profile_counts(),
+        )
+        return [
+            {
                 "platform_id": p["id"],
                 "name": p["name"],
                 "slug": p["slug"],
                 "icon_emoji": p.get("icon_emoji", ""),
-                "monthly_available": monthly_count,
-                "express_available": express_count,
-            })
-        return availability
+                "monthly_available": counts.get((p["id"], "monthly"), 0),
+                "express_available": counts.get((p["id"], "express"), 0),
+            }
+            for p in (platforms_res.data or [])
+        ]
     except Exception as e:
         logger.error(f"Error in get_platform_availability: {e}")
         return []
