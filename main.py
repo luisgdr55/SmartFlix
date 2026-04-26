@@ -51,6 +51,7 @@ def build_telegram_app() -> Application:
         cmd_testnotif, cmd_testverif, handle_admin_callback
     )
     from bot.handlers.afiliar import cmd_afiliar, handle_afiliar_callback
+    from bot.handlers.renovar import cmd_renovar, handle_renovar_callback
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
 
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
@@ -79,6 +80,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("testverif", cmd_testverif))
     app.add_handler(CommandHandler("precios", cmd_precios))
     app.add_handler(CommandHandler("afiliar", cmd_afiliar))
+    app.add_handler(CommandHandler("renovar", cmd_renovar))
 
     # =====================================================
     # CALLBACK QUERY HANDLERS
@@ -120,6 +122,9 @@ def build_telegram_app() -> Application:
 
     # Manual affiliation callbacks (afiliar:*)
     app.add_handler(CallbackQueryHandler(handle_afiliar_callback, pattern="^afiliar:"))
+
+    # Manual renewal callbacks (renovar:*)
+    app.add_handler(CallbackQueryHandler(handle_renovar_callback, pattern="^renovar:"))
 
     # Price management callbacks (prices:*)
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))

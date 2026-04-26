@@ -502,6 +502,24 @@ async def get_active_subscriptions_by_user(user_id: str) -> list[dict]:
         return []
 
 
+async def get_renewable_subscriptions_by_user(user_id: str) -> list[dict]:
+    """Get active and expired subscriptions for renewal selection."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("subscriptions")
+            .select("*, platforms(name, slug, icon_emoji), profiles(profile_name, pin)")
+            .eq("user_id", user_id)
+            .in_("status", ["active", "expired"])
+            .order("end_date", desc=True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error in get_renewable_subscriptions_by_user: {e}")
+        return []
+
+
 async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
     """
     Get subscriptions that are effectively expired:
