@@ -946,8 +946,6 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
                 f"✅ Renovación #{short_id(sub_id)} aprobada.\n"
                 f"Nueva fecha de corte: {format_datetime_vzla(new_end_date)}"
             )
-            from database.analytics import invalidate_dashboard_cache
-            await invalidate_dashboard_cache()
             return
 
         # ── NEW SUBSCRIPTION PATH ──────────────────────────────────────
@@ -1000,8 +998,6 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
             await send_to_user(user_tid, access_text)
 
         await query.edit_message_text(f"✅ Pago #{short_id(sub_id)} aprobado y acceso enviado.")
-        from database.analytics import invalidate_dashboard_cache
-        await invalidate_dashboard_cache()
     except Exception as e:
         logger.error(f"Error in handle_admin_approve_payment: {e}")
         await query.edit_message_text(f"Error al aprobar: {e}")
@@ -1062,8 +1058,6 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
             )
 
         await query.edit_message_text(f"❌ Pago #{short_id(sub_id)} rechazado — cliente notificado con opción de reiniciar.")
-        from database.analytics import invalidate_dashboard_cache
-        await invalidate_dashboard_cache()
     except Exception as e:
         logger.error(f"Error in handle_admin_reject_payment: {e}")
         await query.edit_message_text(f"Error al rechazar: {e}")

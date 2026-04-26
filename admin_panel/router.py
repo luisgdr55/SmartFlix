@@ -117,9 +117,7 @@ async def dashboard(request: Request):
         from database import get_supabase
         from utils.helpers import venezuela_now
 
-        import time, json
-        from bot.middleware import _get_redis
-        redis_client = _get_redis()
+        import time
         sb = get_supabase()
         now = venezuela_now()
         today_str = now.strftime("%Y-%m-%d")
@@ -146,83 +144,47 @@ async def dashboard(request: Request):
         t4 = time.perf_counter()
         logger.info(f"Dashboard get_current_rate done: {t4 - t0:.3f}s")
 
-        queries_cached = None
-        try:
-            raw = redis_client.get("cache:dashboard_queries")
-            if raw:
-                queries_cached = json.loads(raw)
-        except Exception:
-            pass
-
-        if queries_cached:
-            last_subs      = queries_cached["last_subs"]
-            revenue_rows   = queries_cached["revenue"]
-            express_active = queries_cached["express_count"]
-            expiring_alert = queries_cached["expiring"]
-            accounts_due   = queries_cached["accounts"]
-            expired_subs   = queries_cached["expired"]
-            logger.info(f"Dashboard direct queries: cache hit {time.perf_counter() - t0:.3f}s")
-        else:
-            (
-                last_subs_res,
-                revenue_res,
-                express_res,
-                expiring_res,
-                accounts_res,
-                expired_res,
-            ) = await asyncio.gather(
-                asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                    "*, users(name, username), platforms(name, icon_emoji)"
-                ).order("created_at", desc=True).limit(5).execute()),
-                asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                    "price_usd, payment_confirmed_at"
-                ).in_("status", ["active", "expired"]).gte(
-                    "payment_confirmed_at", revenue_since.isoformat()
-                ).lte("payment_confirmed_at", now.isoformat()).execute()),
-                asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                    "id", count="exact"
-                ).eq("status", "active").eq("plan_type", "express").execute()),
-                asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                    "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
-                ).eq("status", "active").gte("end_date", now.isoformat()).lte(
-                    "end_date", in_3_days.isoformat()
-                ).order("end_date").execute()),
-                asyncio.to_thread(lambda: sb.table("accounts").select(
-                    "id, email, billing_date, platforms(name, icon_emoji)"
-                ).eq("status", "active").not_.is_("billing_date", "null").lte(
-                    "billing_date", in_3_days_str
-                ).order("billing_date").execute()),
-                asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                    "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
-                ).in_("status", ["active", "expired"]).lt(
-                    "end_date", now.isoformat()
-                ).order("end_date").limit(30).execute()),
-            )
-            t5 = time.perf_counter()
-            logger.info(f"Dashboard direct queries gather done: {t5 - t0:.3f}s")
-
-            last_subs      = last_subs_res.data or []
-            revenue_rows   = revenue_res.data or []
-            express_active = express_res.count or 0
-            expiring_alert = expiring_res.data or []
-            accounts_due   = accounts_res.data or []
-            expired_subs   = expired_res.data or []
-
-            try:
-                redis_client.setex("cache:dashboard_queries", 60, json.dumps({
-                    "last_subs":     last_subs,
-                    "revenue":       revenue_rows,
-                    "express_count": express_active,
-                    "expiring":      expiring_alert,
-                    "accounts":      accounts_due,
-                    "expired":       expired_subs,
-                }))
-            except Exception:
-                pass
+        (
+            last_subs_res,
+            revenue_res,
+            express_res,
+            expiring_res,
+            accounts_res,
+            expired_res,
+        ) = await asyncio.gather(
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "*, users(name, username), platforms(name, icon_emoji)"
+            ).order("created_at", desc=True).limit(5).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "price_usd, payment_confirmed_at"
+            ).in_("status", ["active", "expired"]).gte(
+                "payment_confirmed_at", revenue_since.isoformat()
+            ).lte("payment_confirmed_at", now.isoformat()).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id", count="exact"
+            ).eq("status", "active").eq("plan_type", "express").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
+            ).eq("status", "active").gte("end_date", now.isoformat()).lte(
+                "end_date", in_3_days.isoformat()
+            ).order("end_date").execute()),
+            asyncio.to_thread(lambda: sb.table("accounts").select(
+                "id, email, billing_date, platforms(name, icon_emoji)"
+            ).eq("status", "active").not_.is_("billing_date", "null").lte(
+                "billing_date", in_3_days_str
+            ).order("billing_date").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
+            ).in_("status", ["active", "expired"]).lt(
+                "end_date", now.isoformat()
+            ).order("end_date").limit(30).execute()),
+        )
+        t5 = time.perf_counter()
+        logger.info(f"Dashboard direct queries gather done: {t5 - t0:.3f}s")
 
         # Aggregate revenue by day in Python (replaces 7 individual queries)
         revenue_by_day: dict[str, float] = {}
-        for row in revenue_rows:
+        for row in (revenue_res.data or []):
             confirmed = (row.get("payment_confirmed_at") or "")[:10]
             if confirmed:
                 revenue_by_day[confirmed] = revenue_by_day.get(confirmed, 0) + (row.get("price_usd") or 0)
@@ -239,14 +201,14 @@ async def dashboard(request: Request):
             "stats": stats,
             "pending_count": len(pending),
             "rate_data": rate_data,
-            "last_subs": last_subs,
-            "express_active": express_active,
+            "last_subs": last_subs_res.data or [],
+            "express_active": express_res.count or 0,
             "daily_labels": daily_labels,
             "daily_values": daily_values,
             "platform_availability": stats.get("platform_availability", []),
-            "expiring_alert": expiring_alert,
-            "accounts_due": accounts_due,
-            "expired_subs": expired_subs,
+            "expiring_alert": expiring_res.data or [],
+            "accounts_due": accounts_res.data or [],
+            "expired_subs": expired_res.data or [],
             "today_str": today_str,
             "now_ve": now,
         }

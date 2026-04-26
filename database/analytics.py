@@ -13,17 +13,7 @@ logger = logging.getLogger(__name__)
 async def get_dashboard_stats() -> dict:
     """Get all stats for the /admin dashboard."""
     try:
-        import asyncio, json
-        from bot.middleware import _get_redis
-        redis_client = _get_redis()
-
-        try:
-            cached = redis_client.get("cache:dashboard_stats")
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass
-
+        import asyncio
         sb = get_supabase()
         now = venezuela_now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -62,7 +52,7 @@ async def get_dashboard_stats() -> dict:
             get_platform_availability(),
         )
 
-        result = {
+        return {
             "total_users": users_result.count or 0,
             "active_subscriptions": active_result.count or 0,
             "pending_payments": pending_result.count or 0,
@@ -73,24 +63,9 @@ async def get_dashboard_stats() -> dict:
             "new_users_today": new_users_result.count or 0,
             "platform_availability": availability,
         }
-
-        try:
-            redis_client.setex("cache:dashboard_stats", 60, json.dumps(result))
-        except Exception:
-            pass
-
-        return result
     except Exception as e:
         logger.error(f"Error in get_dashboard_stats: {e}")
         return {}
-
-
-async def invalidate_dashboard_cache() -> None:
-    try:
-        from bot.middleware import _get_redis
-        _get_redis().delete("cache:dashboard_stats", "cache:dashboard_queries")
-    except Exception:
-        pass
 
 
 async def get_income_report(period: str = "month") -> dict:
