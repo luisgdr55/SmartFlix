@@ -1,4 +1,4 @@
-"""Session management for StreamVip Admin Panel using itsdangerous."""
+"""Session management for SmartFlixVE Admin Panel using itsdangerous."""
 from __future__ import annotations
 
 import os
@@ -27,7 +27,7 @@ def _get_secret_key() -> str:
         except Exception:
             key = ""
         if not key:
-            key = os.environ.get("SECRET_KEY", "streamvip_admin_secret_key_2025")
+            key = os.environ.get("SECRET_KEY", "smartflixve_admin_secret_key_2025")
         _SECRET_KEY = key
     return _SECRET_KEY
 
@@ -44,7 +44,7 @@ def _get_admin_password() -> str:
             return pwd
     except Exception:
         pass
-    return os.environ.get("ADMIN_PANEL_PASSWORD", "streamvip2025")
+    return os.environ.get("ADMIN_PANEL_PASSWORD", "smartflixve2025")
 
 
 def create_session(response: Response) -> None:

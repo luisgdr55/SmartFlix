@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(../venv/Scripts/python -c \"from config import settings; print\\(''Config OK''\\)\")",
+      "Bash(../venv/Scripts/python -c \":*)"
+    ]
+  }
+}

@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     IMAP_HOST: str = "imap.gmail.com"
     IMAP_PORT: int = 993
     APP_URL: str
-    WEBHOOK_SECRET: str = "streamvip_secret"
+    WEBHOOK_SECRET: str = "smartflixve_secret"
     DEBUG: bool = False
-    SECRET_KEY: str = "streamvip_admin_secret_key_2025"
-    ADMIN_PANEL_PASSWORD: str = "streamvip2025"
+    SECRET_KEY: str = "smartflixve_admin_secret_key_2025"
+    ADMIN_PANEL_PASSWORD: str = "smartflixve2025"
 
     class Config:
         env_file = ".env"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 WELCOME_NEW_USER = (
-    "¡Hola! 👋 Bienvenido/a a <b>StreamVip Venezuela</b> 🇻🇪\n\n"
+    "¡Hola! 👋 Bienvenido/a a <b>SmartFlixVE Venezuela</b> 🇻🇪\n\n"
     "Somos tu servicio de confianza para perfiles de streaming:\n"
     "🎬 Netflix • ✨ Disney+ • 💜 Max • ⭐ Paramount+ • 🎯 Prime Video\n\n"
     "Para empezar, <b>¿cómo te llamas?</b> 😊"
@@ -256,7 +256,7 @@ PAYMENT_INVALID = (
 )
 
 ADMIN_DASHBOARD = (
-    "🎛️ <b>Panel de Administración - StreamVip</b>\n\n"
+    "🎛️ <b>Panel de Administración - SmartFlixVE</b>\n\n"
     "📊 <b>Estadísticas del día:</b>\n"
     "👥 Usuarios totales: <b>{total_users}</b>\n"
     "🆕 Nuevos hoy: <b>{new_users_today}</b>\n"

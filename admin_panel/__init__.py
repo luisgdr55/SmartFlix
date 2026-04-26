@@ -1,1 +1,1 @@
-"""StreamVip Admin Panel package."""
+"""SmartFlixVE Admin Panel package."""

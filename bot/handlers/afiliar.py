@@ -554,7 +554,7 @@ async def _execute_affiliation(
 
         ticket = (
             f"═══════════════════════════\n"
-            f"🎬 <b>ACCESO STREAMVIP</b>\n"
+            f"🎬 <b>ACCESO SMARTFLIXVE</b>\n"
             f"═══════════════════════════\n"
             f"👤 <b>Cliente:</b> {nombre}\n"
             f"📱 <b>Contacto:</b> {contacto}\n"

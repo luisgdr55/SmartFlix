@@ -167,11 +167,11 @@ async def create_flyer(
         cta_y = FLYER_SIZE[1] - 180
         draw.rounded_rectangle([40, cta_y, 440, cta_y + 70], radius=15, fill=primary_color)
         cta_font = _load_font(30)
-        draw.text((70, cta_y + 15), "▶ Ver ahora en StreamVip", fill="white", font=cta_font)
+        draw.text((70, cta_y + 15), "▶ Ver ahora en SmartFlixVE", fill="white", font=cta_font)
 
         # 10. Footer
         footer_font = _load_font(22)
-        draw.text((40, FLYER_SIZE[1] - 80), "🇻🇪 StreamVip Venezuela | @StreamVipVE", fill=(180, 180, 180), font=footer_font)
+        draw.text((40, FLYER_SIZE[1] - 80), "🇻🇪 SmartFlixVE Venezuela | @SmartFlixVE", fill=(180, 180, 180), font=footer_font)
 
         # Save to bytes
         output = io.BytesIO()

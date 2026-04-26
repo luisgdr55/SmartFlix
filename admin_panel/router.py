@@ -1,4 +1,4 @@
-"""StreamVip Admin Panel — FastAPI router with all panel routes."""
+"""SmartFlixVE Admin Panel — FastAPI router with all panel routes."""
 from __future__ import annotations
 
 import logging

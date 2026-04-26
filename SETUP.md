@@ -1,4 +1,4 @@
-# StreamVip Bot - Complete Setup Guide
+# SmartFlixVE Bot - Complete Setup Guide
 
 ## Prerequisites
 

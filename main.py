@@ -493,7 +493,7 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     global _telegram_app
 
-    logger.info("Starting StreamVip Bot...")
+    logger.info("Starting SmartFlixVE Bot...")
 
     # Build telegram application
     _telegram_app = build_telegram_app()
@@ -523,7 +523,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("Shutting down StreamVip Bot...")
+    logger.info("Shutting down SmartFlixVE Bot...")
     sched.shutdown(wait=False)
     await _telegram_app.stop()
     await _telegram_app.shutdown()
@@ -531,7 +531,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="StreamVip Bot",
+    title="SmartFlixVE Bot",
     description="Telegram bot for streaming profile rental in Venezuela",
     version="1.0.0",
     lifespan=lifespan,
@@ -565,7 +565,7 @@ async def health_check() -> dict:
     from utils.helpers import venezuela_now
     return {
         "status": "ok",
-        "service": "StreamVip Bot",
+        "service": "SmartFlixVE Bot",
         "timestamp": venezuela_now().isoformat(),
         "bot_running": _telegram_app is not None,
     }
@@ -574,7 +574,7 @@ async def health_check() -> dict:
 @app.get("/")
 async def root() -> dict:
     """Root endpoint."""
-    return {"service": "StreamVip Bot", "status": "running"}
+    return {"service": "SmartFlixVE Bot", "status": "running"}
 
 
 if __name__ == "__main__":

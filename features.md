@@ -1,4 +1,4 @@
-# StreamVip Bot — Features Planificadas
+# SmartFlixVE Bot — Features Planificadas
 
 > Documento de roadmap. Cada feature incluye descripción, impacto estimado,
 > complejidad de implementación y archivos principales a modificar.
@@ -94,7 +94,7 @@ CREATE TABLE referral_rewards (
 Cada lunes a las 9AM (hora Venezuela), el bot envía al admin un resumen por Telegram con: ingresos de la semana, clientes nuevos, renovaciones realizadas, clientes que vencen esa semana, plataforma más vendida y clientes con deuda activa.
 
 **Ejemplo de mensaje:**
-📊 Reporte semanal StreamVip
+📊 Reporte semanal SmartFlixVE
 Semana del 21 al 27 de abril
 💰 Ingresos: $45.00
 👥 Clientes nuevos: 3

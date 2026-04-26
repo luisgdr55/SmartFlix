@@ -47,8 +47,8 @@ async def _call(
     headers = {
         "Authorization": f"Bearer {settings.GEMINI_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://streamvip.app",
-        "X-Title": "StreamVip Bot",
+        "HTTP-Referer": "https://smartflixve.app",
+        "X-Title": "SmartFlixVE Bot",
     }
     payload = {
         "model": MODEL,
@@ -198,7 +198,7 @@ async def generate_personalized_message(
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Eres el dueño de StreamVip Venezuela.\n"
+                    f"Eres el dueño de SmartFlixVE Venezuela.\n"
                     f"Escribe un mensaje personal y cercano para tu cliente '{name}' "
                     f"recomendándole contenido en {platform}.\n\n"
                     f"REGLAS:\n"
@@ -356,7 +356,7 @@ async def generate_troubleshooting_response(
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Eres soporte técnico de StreamVip Venezuela para {platform}.\n"
+                    f"Eres soporte técnico de SmartFlixVE Venezuela para {platform}.\n"
                     f"El cliente reporta: {problem_description}\n\n"
                     f"Proporciona pasos claros para resolver el problema en lenguaje venezolano amigable. "
                     f"Máximo 5 pasos numerados con emojis. "

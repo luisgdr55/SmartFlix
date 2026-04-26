@@ -1,4 +1,4 @@
-# StreamVip Bot — Estado del Sistema
+# SmartFlixVE Bot — Estado del Sistema
 
 ## Stack
 - Runtime: Python 3.11+, FastAPI + Uvicorn
