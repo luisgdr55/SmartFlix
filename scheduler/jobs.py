@@ -251,11 +251,13 @@ async def job_daily_admin_report() -> None:
         report_text = (
             f"📊 <b>Reporte Diario - {format_date_vzla(venezuela_now())}</b>\n\n"
             f"👥 Usuarios totales: <b>{stats.get('total_users', 0)}</b>\n"
-            f"🆕 Nuevos hoy: <b>{stats.get('new_users_today', 0)}</b>\n"
+            f"🆕 Nuevos (últimos 7 días): <b>{stats.get('new_users_week', 0)}</b>\n"
             f"✅ Suscripciones activas: <b>{stats.get('active_subscriptions', 0)}</b>\n"
             f"⏳ Pagos pendientes: <b>{stats.get('pending_payments', 0)}</b>\n"
             f"⚠️ Vencen en 3 días: <b>{stats.get('expiring_soon', 0)}</b>\n"
-            f"💵 Ingresos del mes: <b>${stats.get('monthly_revenue_usd', 0):.2f} USD</b>\n\n"
+            f"💰 Ingresos brutos: <b>${stats.get('monthly_revenue_usd', 0):.2f} USD</b>\n"
+            f"💸 Costos estimados: <b>${stats.get('monthly_cost_usd', 0):.2f} USD</b>\n"
+            f"📈 Ganancia neta: <b>${stats.get('monthly_profit_usd', 0):.2f} USD</b>\n\n"
             f"📦 Stock:\n{avail_text}"
         )
 

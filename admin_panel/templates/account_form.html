@@ -52,6 +52,15 @@
         <p class="text-xs text-slate-500 mt-1">Fecha en que se renueva la suscripción de la cuenta</p>
       </div>
 
+      <div>
+        <label class="form-label">Costo mensual (USD)</label>
+        <input type="number" name="cost_usd_monthly" step="0.01" min="0"
+          value="{{ account.get('cost_usd_monthly', 0) if account else 0 }}"
+          placeholder="0.00"
+          class="form-input" />
+        <p class="text-xs text-slate-500 mt-1">Costo que pagas por esta cuenta al proveedor</p>
+      </div>
+
       {% if account %}
       <div>
         <label class="form-label">Estado</label>

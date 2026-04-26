@@ -18,6 +18,7 @@ async def get_dashboard_stats() -> dict:
         now = venezuela_now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = now - timedelta(days=7)
         three_days = now + timedelta(days=3)
 
         (
@@ -26,7 +27,9 @@ async def get_dashboard_stats() -> dict:
             pending_result,
             revenue_result,
             expiring_result,
-            new_users_result,
+            new_users_today_result,
+            new_users_week_result,
+            cost_result,
             availability,
         ) = await asyncio.gather(
             asyncio.to_thread(lambda: sb.table("users").select(
@@ -49,18 +52,32 @@ async def get_dashboard_stats() -> dict:
             asyncio.to_thread(lambda: sb.table("users").select(
                 "id", count="exact"
             ).gte("created_at", today_start.isoformat()).execute()),
+            asyncio.to_thread(lambda: sb.table("users").select(
+                "id", count="exact"
+            ).gte("created_at", week_start.isoformat()).execute()),
+            asyncio.to_thread(lambda: sb.table("accounts").select(
+                "cost_usd_monthly"
+            ).eq("status", "active").execute()),
             get_platform_availability(),
+        )
+
+        monthly_revenue = round(
+            sum(row.get("price_usd", 0) or 0 for row in (revenue_result.data or [])), 2
+        )
+        monthly_cost = round(
+            sum(row.get("cost_usd_monthly", 0) or 0 for row in (cost_result.data or [])), 2
         )
 
         return {
             "total_users": users_result.count or 0,
             "active_subscriptions": active_result.count or 0,
             "pending_payments": pending_result.count or 0,
-            "monthly_revenue_usd": round(
-                sum(row.get("price_usd", 0) or 0 for row in (revenue_result.data or [])), 2
-            ),
+            "monthly_revenue_usd": monthly_revenue,
+            "monthly_cost_usd": monthly_cost,
+            "monthly_profit_usd": round(monthly_revenue - monthly_cost, 2),
             "expiring_soon": expiring_result.count or 0,
-            "new_users_today": new_users_result.count or 0,
+            "new_users_today": new_users_today_result.count or 0,
+            "new_users_week": new_users_week_result.count or 0,
             "platform_availability": availability,
         }
     except Exception as e:

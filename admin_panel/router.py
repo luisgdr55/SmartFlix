@@ -361,6 +361,7 @@ async def account_edit_save(
     billing_date: str = Form(default=""),
     notes: str = Form(default=""),
     status: str = Form(default="active"),
+    cost_usd_monthly: float = Form(default=0.0),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -373,6 +374,7 @@ async def account_edit_save(
             "email": email,
             "password": password,
             "status": status,
+            "cost_usd_monthly": cost_usd_monthly,
         }
         if billing_date:
             data["billing_date"] = billing_date
