@@ -66,6 +66,22 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 10 — Fase 1: Reportes mejorados y costos
+
+#### Features implementadas
+
+| # | Feature | Archivos | Commit |
+|---|---------|----------|--------|
+| 1A | Reporte diario muestra nuevos clientes últimos 7 días (antes solo hoy) | `analytics.py`, `jobs.py` | ffe7433 |
+| 1B | Ganancia neta real en reporte diario — campo cost_usd_monthly por cuenta, cálculo automático ingreso-costo | `analytics.py`, `jobs.py`, `router.py`, `account_form.html` | ffe7433 |
+
+#### Notas operativas
+- Entrar costos mensuales por cuenta en Panel → Cuentas → Editar
+- Netflix 4K estimado: $8.53 USD/mes (gift card $16 USDT / 1.875 meses)
+- La ganancia neta se calcula: ingresos confirmados del mes - suma de costos de cuentas activas
+
+---
+
 ### 2026-04-26 — Sesión 9 — Recuperación de bot caído por cambio de dominio Railway
 
 #### Problema

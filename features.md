@@ -316,6 +316,41 @@ Desde el panel web, el admin puede enviar mensajes segmentados a: todos los clie
 
 ---
 
+## Fases de implementación prioritaria
+
+### FASE 1 — Correcciones urgentes
+| Sub-fase | Descripción | Archivos | Estado |
+|----------|-------------|----------|--------|
+| 1A | Reporte diario: clientes de últimos 7 días en vez de hoy | `analytics.py` | ✅ Implementado |
+| 1B | Reporte de ganancia neta real del mes | `jobs.py` | ✅ Implementado |
+
+### FASE 2 — Afiliación manual mejorada vía Telegram
+| Sub-fase | Descripción | Archivos | Estado |
+|----------|-------------|----------|--------|
+| 2A | /afiliar pregunta si es cliente nuevo o existente + lista de clientes | `afiliar.py` | 📋 Pendiente |
+| 2B | Selección manual de perfil disponible en vez de asignación automática | `afiliar.py`, `profiles.py` | 📋 Pendiente |
+| 2C | Ticket detallado copiable al finalizar afiliación | `afiliar.py` | 📋 Pendiente |
+
+### FASE 3 — Renovación manual vía Telegram
+| Sub-fase | Descripción | Archivos | Estado |
+|----------|-------------|----------|--------|
+| 3A | Comando /renovar para admin — selecciona cliente y servicio a renovar | `admin.py`, `subscriptions.py` | 📋 Pendiente |
+| 3B | Compatible con clientes sin telegram_id (afiliados manualmente) | `admin.py` | 📋 Pendiente |
+
+### FASE 4 — Afiliación y renovación vía Dashboard web
+| Sub-fase | Descripción | Archivos | Estado |
+|----------|-------------|----------|--------|
+| 4A | Botón "Agregar suscripción" en ficha de cliente del panel web | `router.py`, templates | 📋 Pendiente |
+| 4B | Botón "Renovar" por suscripción en ficha de cliente del panel web | `router.py`, templates | 📋 Pendiente |
+
+### FASE 5 — Migración de cuenta Netflix
+| Sub-fase | Descripción | Archivos | Estado |
+|----------|-------------|----------|--------|
+| 5A | Comando /migrar para admin — cambia account_id del perfil asignado | `admin.py`, `profiles.py` | 📋 Pendiente |
+| 5B | Notificación automática al cliente con nuevas credenciales | `notification_service.py` | 📋 Pendiente |
+
+---
+
 ## Notas de implementación
 
 - Todas las features de broadcast deben incluir rate limiting (máx 30 mensajes/segundo) para respetar límites de Telegram Bot API
