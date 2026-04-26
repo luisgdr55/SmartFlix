@@ -105,7 +105,7 @@ async def get_user_platform_active_subscription(user_id: str, platform_id: str) 
         sb = get_supabase()
         result = (
             sb.table("subscriptions")
-            .select("*, profiles(id, profile_name, pin, account_id)")
+            .select("*, profiles(id, profile_name, pin, account_id, accounts(email, password))")
             .eq("user_id", user_id)
             .eq("platform_id", platform_id)
             .in_("status", ["active", "expired", "cancelled"])
@@ -366,7 +366,7 @@ async def get_expired_express_subscriptions() -> list[dict]:
         now = venezuela_now()
         result = (
             sb.table("subscriptions")
-            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id)")
+            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name, pin, account_id, accounts(email, password))")
             .eq("status", "active")
             .eq("plan_type", "express")
             .lte("end_date", now.isoformat())

@@ -82,6 +82,8 @@ async def job_express_release() -> None:
                 profile = sub.get("profiles") or {}
                 profile_id = profile.get("id")
                 profile_name = profile.get("profile_name", "—")
+                old_pin = profile.get("pin", "—")
+                account = profile.get("accounts") or {}
                 platform_id = str(sub.get("platform_id", ""))
                 platform = sub.get("platforms") or {}
                 platform_name = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
@@ -118,9 +120,13 @@ async def job_express_release() -> None:
                     f"⚡ <b>Express liberado</b>\n\n"
                     f"🎬 Plataforma: <b>{platform_name}</b>\n"
                     f"👤 Perfil: <b>{profile_name}</b>\n"
-                    f"👥 Cliente: <b>{client_name}</b>\n"
-                    f"🔢 PIN nuevo: <code>{new_pin}</code>\n\n"
-                    f"El perfil ya está disponible para el próximo cliente."
+                    f"👥 Cliente: <b>{client_name}</b>\n\n"
+                    f"🔐 <b>Datos de la cuenta:</b>\n"
+                    f"📧 Email: <code>{account.get('email', '—')}</code>\n"
+                    f"🔑 Contraseña: <code>{account.get('password', '—')}</code>\n"
+                    f"🔢 PIN anterior: <code>{old_pin}</code>\n"
+                    f"🔄 PIN nuevo asignado: <code>{new_pin}</code>\n\n"
+                    f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
                 )
                 await send_to_admin(admin_msg)
 

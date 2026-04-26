@@ -917,14 +917,30 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
 
             if user_tid:
                 await increment_user_purchases(user_tid)
-                renewal_msg = (
+                from bot.messages import ACCESS_DELIVERED, ACCESS_INSTRUCTIONS, PIN_LINE
+
+                renewal_account = profile.get("accounts") or {}
+                pin_line = PIN_LINE.format(pin=profile.get("pin")) if profile.get("pin") else ""
+                platform_slug = (platform or {}).get("slug", "netflix")
+                instructions_tpl = ACCESS_INSTRUCTIONS.get(platform_slug, "")
+                instructions = instructions_tpl.format(profile_name=profile.get("profile_name", ""))
+
+                renewal_confirmed_msg = (
                     f"✅ <b>¡Renovación confirmada!</b>\n\n"
                     f"Tu suscripción de <b>{platform_label}</b> ha sido renovada.\n\n"
-                    f"👤 Perfil: <b>{profile.get('profile_name', '')}</b>\n"
                     f"📅 Nueva fecha de corte: <b>{format_datetime_vzla(new_end_date)}</b>\n\n"
-                    f"¡Gracias por tu preferencia! 🙌 Disfruta el streaming. 🎬"
+                    f"A continuación tus datos de acceso 👇"
                 )
-                await send_to_user(user_tid, renewal_msg)
+                renewal_access_text = ACCESS_DELIVERED.format(
+                    platform=platform_label,
+                    profile_name=profile.get("profile_name", ""),
+                    email=renewal_account.get("email", ""),
+                    password=renewal_account.get("password", ""),
+                    pin_line=pin_line,
+                    instructions=instructions,
+                )
+                await send_to_user(user_tid, renewal_confirmed_msg)
+                await send_to_user(user_tid, renewal_access_text)
 
             await query.edit_message_text(
                 f"✅ Renovación #{short_id(sub_id)} aprobada.\n"
