@@ -66,6 +66,35 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 8 — Optimización de rendimiento del dashboard
+
+#### Mejoras aplicadas
+
+| Cambio | Antes | Después | Commit |
+|--------|-------|---------|--------|
+| get_dashboard_stats | 6 queries sync seriales | asyncio.gather paralelo | 5bf76cb |
+| get_platform_availability | loop N×2+1 queries | 1 query bulk + agrupación Python | 5bf76cb |
+| Revenue chart | 7 queries (loop diario) | 1 query + agrupación Python | 83d44ce |
+| Sweep auto-expire | Bloqueante en cada carga | Scheduler Job 10 cada 15 min | 83d44ce |
+| Timing logs | Sin métricas | Dashboard gather/stats/queries loggeados | ac57cde |
+
+#### Intento de caché Redis — revertido
+
+| Commit | Razón |
+|--------|-------|
+| 07401a3, 3f344f0, 0a4b60d | Error HTTP/2 de Supabase al leer keys vacías en arranque — dashboard mostraba todos los datos en 0 |
+| a986199 | Revert a versión estable ac57cde |
+
+#### Estado actual del dashboard
+- Tiempo de carga: ~2-3s (latencia de red Railway → Supabase)
+- Todas las queries corren en paralelo (asyncio.gather)
+- El caché Redis queda pendiente — requiere inicialización de keys al arrancar el servidor, no en el primer request
+
+#### Notas para retomar el caché
+- El error fue: caché devuelve datos vacíos antes de que Redis tenga las keys
+- Solución correcta: warm-up del caché en el lifespan de FastAPI al arrancar
+- No implementar en el request handler directamente
+
 ### 2026-04-12 — Sesión 7 — Optimización de rendimiento del dashboard
 
 #### Mejoras de rendimiento
