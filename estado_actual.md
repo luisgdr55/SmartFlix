@@ -66,6 +66,16 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-12 — Sesión 7 — Optimización de rendimiento del dashboard
+
+#### Mejoras de rendimiento
+
+| Cambio | Antes | Después | Commit |
+|--------|-------|---------|--------|
+| Queries del dashboard | 17 seriales | 9 en paralelo (asyncio.gather) | 83d44ce |
+| Revenue chart | 7 queries (loop) | 1 query + agrupación en Python | 83d44ce |
+| Sweep de suscripciones vencidas | Bloqueante en cada carga | Scheduler cada 15 min (Job 10) | 83d44ce |
+
 ### 2026-04-12 — Sesión 6 — Express y credenciales en renovación
 
 #### Bugs corregidos
