@@ -251,3 +251,32 @@ async def log_admin_action(admin_telegram_id: int, action: str, details: dict) -
     except Exception as e:
         logger.error(f"Error in log_admin_action: {e}")
         return False
+
+
+async def get_user_by_id(user_id: str) -> Optional[dict]:
+    """Get user by UUID."""
+    try:
+        sb = get_supabase()
+        result = sb.table("users").select("*").eq("id", user_id).limit(1).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error in get_user_by_id: {e}")
+        return None
+
+
+async def get_all_clients_for_admin(page: int = 0, page_size: int = 10) -> tuple[list[dict], int]:
+    """Return paginated users list for admin affiliation. Returns (rows, total_count)."""
+    try:
+        sb = get_supabase()
+        offset = page * page_size
+        result = (
+            sb.table("users")
+            .select("id, name, username, phone, telegram_id", count="exact")
+            .order("name", nullsfirst=False)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        return result.data or [], result.count or 0
+    except Exception as e:
+        logger.error(f"Error in get_all_clients_for_admin: {e}")
+        return [], 0
