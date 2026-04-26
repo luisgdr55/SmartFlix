@@ -318,6 +318,20 @@ async def job_release_expired_reservations() -> None:
         logger.error(f"Error in job_release_expired_reservations: {e}")
 
 
+# ============================================================
+# JOB 10: Auto-expire overdue subscriptions - every 15 min
+# ============================================================
+async def job_auto_expire() -> None:
+    """Mark active-but-overdue subscriptions as expired."""
+    try:
+        from database.subscriptions import auto_expire_overdue_subscriptions
+        count = await auto_expire_overdue_subscriptions()
+        if count:
+            logger.info(f"job_auto_expire: expired {count} overdue subscription(s)")
+    except Exception as e:
+        logger.error(f"Error in job_auto_expire: {e}")
+
+
 def setup_scheduler() -> AsyncIOScheduler:
     """Configure and return the scheduler with all jobs."""
     # Job 1: Expiry reminders - daily at 10:00 AM Venezuela time
@@ -402,5 +416,14 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured with 9 jobs")
+    # Job 10: Auto-expire overdue subscriptions - every 15 minutes
+    scheduler.add_job(
+        job_auto_expire,
+        IntervalTrigger(minutes=15),
+        id="auto_expire",
+        name="Auto Expire Overdue Subscriptions",
+        replace_existing=True,
+    )
+
+    logger.info("Scheduler configured with 10 jobs")
     return scheduler

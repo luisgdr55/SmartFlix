@@ -110,74 +110,74 @@ async def dashboard(request: Request):
     if guard:
         return guard
     try:
+        import asyncio
         from database.analytics import get_dashboard_stats
-        from database.subscriptions import get_pending_subscriptions, auto_expire_overdue_subscriptions
+        from database.subscriptions import get_pending_subscriptions
         from services.exchange_service import get_current_rate
-
-        # Sweep: mark active-but-overdue subs as expired before rendering dashboard
-        await auto_expire_overdue_subscriptions()
-
-        stats = await get_dashboard_stats()
-        pending = await get_pending_subscriptions()
-        rate_data = await get_current_rate()
-
-        # Last 5 subscriptions
         from database import get_supabase
-        sb = get_supabase()
-        last_subs = sb.table("subscriptions").select(
-            "*, users(name, username), platforms(name, icon_emoji)"
-        ).order("created_at", desc=True).limit(5).execute()
-
-        # Revenue last 7 days for chart
         from utils.helpers import venezuela_now
+
+        sb = get_supabase()
         now = venezuela_now()
+        today_str = now.strftime("%Y-%m-%d")
+        in_3_days = now + timedelta(days=3)
+        in_3_days_str = in_3_days.strftime("%Y-%m-%d")
+        revenue_since = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        (
+            stats,
+            pending,
+            rate_data,
+            last_subs_res,
+            revenue_res,
+            express_res,
+            expiring_res,
+            accounts_res,
+            expired_res,
+        ) = await asyncio.gather(
+            get_dashboard_stats(),
+            get_pending_subscriptions(),
+            get_current_rate(),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "*, users(name, username), platforms(name, icon_emoji)"
+            ).order("created_at", desc=True).limit(5).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "price_usd, payment_confirmed_at"
+            ).in_("status", ["active", "expired"]).gte(
+                "payment_confirmed_at", revenue_since.isoformat()
+            ).lte("payment_confirmed_at", now.isoformat()).execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id", count="exact"
+            ).eq("status", "active").eq("plan_type", "express").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
+            ).eq("status", "active").gte("end_date", now.isoformat()).lte(
+                "end_date", in_3_days.isoformat()
+            ).order("end_date").execute()),
+            asyncio.to_thread(lambda: sb.table("accounts").select(
+                "id, email, billing_date, platforms(name, icon_emoji)"
+            ).eq("status", "active").not_.is_("billing_date", "null").lte(
+                "billing_date", in_3_days_str
+            ).order("billing_date").execute()),
+            asyncio.to_thread(lambda: sb.table("subscriptions").select(
+                "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
+            ).in_("status", ["active", "expired"]).lt(
+                "end_date", now.isoformat()
+            ).order("end_date").limit(30).execute()),
+        )
+
+        # Aggregate revenue by day in Python (replaces 7 individual queries)
+        revenue_by_day: dict[str, float] = {}
+        for row in (revenue_res.data or []):
+            confirmed = (row.get("payment_confirmed_at") or "")[:10]
+            if confirmed:
+                revenue_by_day[confirmed] = revenue_by_day.get(confirmed, 0) + (row.get("price_usd") or 0)
         daily_labels = []
         daily_values = []
         for i in range(6, -1, -1):
             day = now - timedelta(days=i)
-            day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
-            rev_res = sb.table("subscriptions").select("price_usd").in_(
-                "status", ["active", "expired"]
-            ).gte("payment_confirmed_at", day_start.isoformat()).lte(
-                "payment_confirmed_at", day_end.isoformat()
-            ).execute()
-            daily_total = sum(r.get("price_usd", 0) or 0 for r in (rev_res.data or []))
             daily_labels.append(day.strftime("%d/%m"))
-            daily_values.append(round(daily_total, 2))
-
-        # Express active count
-        express_result = sb.table("subscriptions").select("id", count="exact").eq(
-            "status", "active"
-        ).eq("plan_type", "express").execute()
-        express_active = express_result.count or 0
-
-        # Expiring subscriptions (clients) within 3 days
-        import pytz
-        tz_ve = pytz.timezone("America/Caracas")
-        now_ve = venezuela_now()
-        today_str = now_ve.strftime("%Y-%m-%d")
-        in_3_days_str = (now_ve + timedelta(days=3)).strftime("%Y-%m-%d")
-        in_3_days = now_ve + timedelta(days=3)
-        expiring_alert = sb.table("subscriptions").select(
-            "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
-        ).eq("status", "active").gte("end_date", now_ve.isoformat()).lte(
-            "end_date", in_3_days.isoformat()
-        ).order("end_date").execute()
-
-        # Accounts with billing_date today or overdue (past due or within 3 days)
-        accounts_due = sb.table("accounts").select(
-            "id, email, billing_date, platforms(name, icon_emoji)"
-        ).eq("status", "active").not_.is_("billing_date", "null").lte(
-            "billing_date", in_3_days_str
-        ).order("billing_date").execute()
-
-        # Client subscriptions already expired (active past end_date OR status=expired)
-        expired_subs = sb.table("subscriptions").select(
-            "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
-        ).in_("status", ["active", "expired"]).lt(
-            "end_date", now_ve.isoformat()
-        ).order("end_date").limit(30).execute()
+            daily_values.append(round(revenue_by_day.get(day.strftime("%Y-%m-%d"), 0), 2))
 
         context = {
             "request": request,
@@ -185,16 +185,16 @@ async def dashboard(request: Request):
             "stats": stats,
             "pending_count": len(pending),
             "rate_data": rate_data,
-            "last_subs": last_subs.data or [],
-            "express_active": express_active,
+            "last_subs": last_subs_res.data or [],
+            "express_active": express_res.count or 0,
             "daily_labels": daily_labels,
             "daily_values": daily_values,
             "platform_availability": stats.get("platform_availability", []),
-            "expiring_alert": expiring_alert.data or [],
-            "accounts_due": accounts_due.data or [],
-            "expired_subs": expired_subs.data or [],
+            "expiring_alert": expiring_res.data or [],
+            "accounts_due": accounts_res.data or [],
+            "expired_subs": expired_res.data or [],
             "today_str": today_str,
-            "now_ve": now_ve,
+            "now_ve": now,
         }
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
