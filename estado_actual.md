@@ -66,6 +66,28 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 9 (cont.) — Rebranding y cierre de sesión
+
+#### Cambios aplicados
+
+| Cambio | Detalle | Commit |
+|--------|---------|--------|
+| Rebranding completo | StreamVip → SmartFlixVE en 28 archivos de producción | 9eee871 |
+
+#### Archivos actualizados en rebranding
+- Templates HTML del panel web
+- bot/messages.py, afiliar.py, renovar.py — tickets con SMARTFLIXVE
+- config.py, auth.py — defaults actualizados
+- services/flyer_service.py — @SmartFlixVE
+- services/gemini_service.py — https://smartflixve.app
+- main.py, estado_actual.md, features.md, SETUP.md
+
+#### Pendiente para próxima sesión
+- Fase 4: Afiliación y renovación vía Dashboard web
+- Fase 5: Migración de cuenta Netflix
+
+---
+
 ### 2026-04-26 — Sesión 11 (cont.) — Fase 3: Renovación manual vía Telegram
 
 #### Features implementadas
