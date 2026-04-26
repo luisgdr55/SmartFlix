@@ -126,10 +126,25 @@ async def dashboard(request: Request):
         revenue_since = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         t0 = time.perf_counter()
+        stats_task = asyncio.create_task(get_dashboard_stats())
+        pending_task = asyncio.create_task(get_pending_subscriptions())
+        rate_task = asyncio.create_task(get_current_rate())
+        t1 = time.perf_counter()
+        logger.info(f"Dashboard tasks created: {t1 - t0:.3f}s")
+
+        stats = await stats_task
+        t2 = time.perf_counter()
+        logger.info(f"Dashboard get_dashboard_stats done: {t2 - t0:.3f}s")
+
+        pending = await pending_task
+        t3 = time.perf_counter()
+        logger.info(f"Dashboard get_pending_subscriptions done: {t3 - t0:.3f}s")
+
+        rate_data = await rate_task
+        t4 = time.perf_counter()
+        logger.info(f"Dashboard get_current_rate done: {t4 - t0:.3f}s")
+
         (
-            stats,
-            pending,
-            rate_data,
             last_subs_res,
             revenue_res,
             express_res,
@@ -137,9 +152,6 @@ async def dashboard(request: Request):
             accounts_res,
             expired_res,
         ) = await asyncio.gather(
-            get_dashboard_stats(),
-            get_pending_subscriptions(),
-            get_current_rate(),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
                 "*, users(name, username), platforms(name, icon_emoji)"
             ).order("created_at", desc=True).limit(5).execute()),
@@ -167,8 +179,8 @@ async def dashboard(request: Request):
                 "end_date", now.isoformat()
             ).order("end_date").limit(30).execute()),
         )
-        t1 = time.perf_counter()
-        logger.info(f"Dashboard gather: {t1 - t0:.2f}s")
+        t5 = time.perf_counter()
+        logger.info(f"Dashboard direct queries gather done: {t5 - t0:.3f}s")
 
         # Aggregate revenue by day in Python (replaces 7 individual queries)
         revenue_by_day: dict[str, float] = {}
