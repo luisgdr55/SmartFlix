@@ -66,6 +66,18 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 11 — Fase 2: Afiliación manual mejorada
+
+#### Features implementadas
+
+| # | Feature | Archivos | Commit |
+|---|---------|----------|--------|
+| 2A | /afiliar pregunta cliente nuevo o existente con lista paginada | `afiliar.py`, `users.py` | eaf55b3 |
+| 2B | Selección manual de perfil con nombre y PIN visibles | `afiliar.py` | eaf55b3 |
+| 2C | Ticket detallado copiable al finalizar con credenciales completas | `afiliar.py` | eaf55b3 |
+
+---
+
 ### 2026-04-26 — Sesión 10 — Fase 1: Reportes mejorados y costos
 
 #### Features implementadas

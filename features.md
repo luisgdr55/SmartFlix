@@ -327,9 +327,9 @@ Desde el panel web, el admin puede enviar mensajes segmentados a: todos los clie
 ### FASE 2 — Afiliación manual mejorada vía Telegram
 | Sub-fase | Descripción | Archivos | Estado |
 |----------|-------------|----------|--------|
-| 2A | /afiliar pregunta si es cliente nuevo o existente + lista de clientes | `afiliar.py` | 📋 Pendiente |
-| 2B | Selección manual de perfil disponible en vez de asignación automática | `afiliar.py`, `profiles.py` | 📋 Pendiente |
-| 2C | Ticket detallado copiable al finalizar afiliación | `afiliar.py` | 📋 Pendiente |
+| 2A | /afiliar pregunta si es cliente nuevo o existente + lista de clientes | `afiliar.py` | ✅ Implementado |
+| 2B | Selección manual de perfil disponible en vez de asignación automática | `afiliar.py`, `profiles.py` | ✅ Implementado |
+| 2C | Ticket detallado copiable al finalizar afiliación | `afiliar.py` | ✅ Implementado |
 
 ### FASE 3 — Renovación manual vía Telegram
 | Sub-fase | Descripción | Archivos | Estado |
