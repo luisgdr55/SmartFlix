@@ -117,6 +117,7 @@ async def dashboard(request: Request):
         from database import get_supabase
         from utils.helpers import venezuela_now
 
+        import time
         sb = get_supabase()
         now = venezuela_now()
         today_str = now.strftime("%Y-%m-%d")
@@ -124,6 +125,7 @@ async def dashboard(request: Request):
         in_3_days_str = in_3_days.strftime("%Y-%m-%d")
         revenue_since = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
+        t0 = time.perf_counter()
         (
             stats,
             pending,
@@ -165,6 +167,8 @@ async def dashboard(request: Request):
                 "end_date", now.isoformat()
             ).order("end_date").limit(30).execute()),
         )
+        t1 = time.perf_counter()
+        logger.info(f"Dashboard gather: {t1 - t0:.2f}s")
 
         # Aggregate revenue by day in Python (replaces 7 individual queries)
         revenue_by_day: dict[str, float] = {}
@@ -196,6 +200,8 @@ async def dashboard(request: Request):
             "today_str": today_str,
             "now_ve": now,
         }
+        t2 = time.perf_counter()
+        logger.info(f"Dashboard render prep: {t2 - t1:.2f}s")
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         from utils.helpers import venezuela_now as _ve_now
