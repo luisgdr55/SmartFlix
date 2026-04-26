@@ -66,6 +66,38 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-26 — Sesión 9 — Recuperación de bot caído por cambio de dominio Railway
+
+#### Problema
+Bot de Telegram sin responder y webhook retornando 404. Causa raíz: Railway reasignó el dominio del servicio de `smartflix-production.up.railway.app` a `smartflixve.up.railway.app`. El webhook quedó apuntando a la URL vieja.
+
+#### Diagnóstico
+- `getWebhookInfo` → `last_error_message: "Wrong response from the webhook: 404"`
+- `curl /health` al dominio viejo → `{"status":"error","code":404,"message":"Application not found"}` (respuesta del router de Railway, no de FastAPI)
+- App corriendo internamente (confirmado por Railway logs con requests desde IPs `100.64.x.x`)
+- Código sin errores — el revert de la sesión 8 fue limpio
+
+#### Solución aplicada
+
+| Paso | Acción |
+|------|--------|
+| 1 | Usuario actualizó `APP_URL` en Railway dashboard → `https://smartflixve.up.railway.app` |
+| 2 | Re-registro manual del webhook: `setWebhook` con URL nueva + `WEBHOOK_SECRET=smartflix2025ve` |
+| 3 | Commit vacío para forzar redeploy (lifespan re-registra webhook automáticamente al arrancar) |
+
+#### Commits
+| Commit | Descripción |
+|--------|-------------|
+| 6d4113b | fix: force redeploy — webhook URL actualizada a smartflixve.up.railway.app |
+
+#### Notas de infraestructura
+- `APP_URL` en Railway debe coincidir exactamente con el dominio activo del servicio
+- `WEBHOOK_SECRET` del proyecto: `smartflix2025ve` (Railway env var)
+- Al arrancar, el `lifespan` re-registra el webhook automáticamente — no requiere intervención manual si `APP_URL` es correcto
+- Si Railway vuelve a cambiar el dominio: actualizar `APP_URL` en Railway vars y pushear cualquier commit
+
+---
+
 ### 2026-04-26 — Sesión 8 — Optimización de rendimiento del dashboard
 
 #### Mejoras aplicadas
