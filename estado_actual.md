@@ -66,6 +66,16 @@
 | 2 | Notificaciones de vencimiento D-3 y D+0 ahora llegan también al admin vía Telegram | `notification_service.py` | (sesión anterior) |
 | 3 | Cancelación manual de suscripción activa desde /admin con liberación de perfil y rotación de PIN | `admin.py`, `keyboards.py`, `subscriptions.py` | (sesión anterior) |
 
+### 2026-04-12 — Sesión 6 — Express y credenciales en renovación
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Express liberado: admin no recibía PIN anterior ni credenciales de cuenta | `jobs.py`, `subscriptions.py` | 1896ee4 |
+| 2 | Renovación aprobada: cliente no recibía credenciales completas, solo perfil y fecha | `admin.py`, `subscriptions.py` | 1896ee4 |
+| 3 | Cliente con aviso D-3 no podía renovar — sistema solo permitía renovar suscripciones ya vencidas | `subscriptions.py` | (commit anterior) |
+
 ### 2026-04-12 — Sesión 5 — Reserva temporal de perfiles
 
 #### Mejora añadida
