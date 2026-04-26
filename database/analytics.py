@@ -88,7 +88,7 @@ async def get_dashboard_stats() -> dict:
 async def invalidate_dashboard_cache() -> None:
     try:
         from bot.middleware import _get_redis
-        _get_redis().delete("cache:dashboard_stats")
+        _get_redis().delete("cache:dashboard_stats", "cache:dashboard_queries")
     except Exception:
         pass
 
