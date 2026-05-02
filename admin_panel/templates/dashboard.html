@@ -80,6 +80,11 @@
         <span class="text-xs font-mono text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">📅 {{ sub['end_date'] | fmt_date }}</span>
         {% endif %}
         {% set _tg = user.get('telegram_id') %}
+        {% set _name = user.get('name') or '—' %}
+        {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
+        {% set _fecha = sub['end_date'] | fmt_date %}
+        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
+        {% set _ticket = "📺 *SmartFlixVE* — Recordatorio de Renovación\n\nHola *" ~ _name ~ "* 👋\n\nTe recordamos que tu suscripción de *" ~ _plat ~ "* vence el " ~ _fecha ~ ".\n\nPara renovar y seguir disfrutando sin interrupciones, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
         <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-reminder',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Aviso enviado':'❌ Error al enviar')})"
           class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
@@ -89,17 +94,11 @@
           class="text-xs bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 px-2 py-1 rounded-lg transition-colors font-medium">
           🤖 Ir al bot
         </a>
-        {% else %}
-        {% set _name = user.get('name') or '—' %}
-        {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
-        {% set _fecha = sub['end_date'] | fmt_date %}
-        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
-        {% set _ticket = "📺 *SmartFlixVE* — Recordatorio de Renovación\n\nHola *" ~ _name ~ "* 👋\n\nTe recordamos que tu suscripción de *" ~ _plat ~ "* vence el " ~ _fecha ~ ".\n\nPara renovar y seguir disfrutando sin interrupciones, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
-        <button @click.stop="$dispatch('open-ticket', {{ _ticket | tojson }})"
+        {% endif %}
+        <button @click.stop='$dispatch("open-ticket", {{ _ticket | tojson }})'
           class="text-xs bg-green-50 hover:bg-green-100 border border-green-200 text-green-700 px-2 py-1 rounded-lg transition-colors font-medium">
           📋 Ver ticket
         </button>
-        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -143,6 +142,11 @@
         </div>
         <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full whitespace-nowrap">🔴 {{ sub.get('end_date') | fmt_date }}</span>
         {% set _tg = user.get('telegram_id') %}
+        {% set _name = user.get('name') or '—' %}
+        {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
+        {% set _fecha = sub.get('end_date') | fmt_date %}
+        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
+        {% set _ticket = "📺 *SmartFlixVE* — Aviso de Vencimiento\n\nHola *" ~ _name ~ "* 👋\n\nTu suscripción de *" ~ _plat ~ "* *venció* el " ~ _fecha ~ ".\n\nPara reactivar tu acceso, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
         <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-expiry',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Enviado':'❌ Error')})"
           class="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 px-2 py-1 rounded-lg transition-colors font-medium">
@@ -152,17 +156,11 @@
           class="text-xs bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 px-2 py-1 rounded-lg transition-colors font-medium">
           🤖 Bot
         </a>
-        {% else %}
-        {% set _name = user.get('name') or '—' %}
-        {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
-        {% set _fecha = sub.get('end_date') | fmt_date %}
-        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
-        {% set _ticket = "📺 *SmartFlixVE* — Aviso de Vencimiento\n\nHola *" ~ _name ~ "* 👋\n\nTu suscripción de *" ~ _plat ~ "* *venció* el " ~ _fecha ~ ".\n\nPara reactivar tu acceso, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
-        <button @click.stop="$dispatch('open-ticket', {{ _ticket | tojson }})"
+        {% endif %}
+        <button @click.stop='$dispatch("open-ticket", {{ _ticket | tojson }})'
           class="text-xs bg-green-50 hover:bg-green-100 border border-green-200 text-green-700 px-2 py-1 rounded-lg transition-colors font-medium">
           📋 Ticket WA
         </button>
-        {% endif %}
         {% if has_profile %}
         <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
           onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
