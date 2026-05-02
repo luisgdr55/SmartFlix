@@ -214,20 +214,37 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
         if not telegram_id:
             client_name = user.get("name") or "Sin nombre"
             client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
-            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            platform_emoji = platform.get('icon_emoji', '')
+            platform_name = platform.get('name', '')
+            plan_type = sub.get('plan_type', 'monthly')
+            plan_label = {"monthly": "Mensual (30 días)", "express": "Express (24h)"}.get(plan_type, plan_type)
+            price_usd = sub.get("price_usd", 0)
             end_fmt = format_datetime_vzla(end_dt) if end_dt else "pronto"
             message = (
                 f"⏰ <b>Recordatorio — Cliente Externo</b>\n\n"
-                f"El siguiente cliente sin Telegram está por vencer en <b>{days_left} día(s)</b>.\n"
-                f"Notifícalo por su medio de contacto.\n\n"
                 f"👤 <b>Cliente:</b> {client_name}\n"
                 f"📞 <b>Contacto:</b> {client_contact}\n"
-                f"📺 <b>Plataforma:</b> {platform_label}\n"
-                f"📅 <b>Plan:</b> {sub.get('plan_type', 'mensual')}\n"
-                f"📆 <b>Vence:</b> {end_fmt}\n\n"
-                f"<i>Este cliente no tiene Telegram. Avísale tú directamente.</i>"
+                f"📺 <b>Plataforma:</b> {platform_emoji} {platform_name}\n"
+                f"📅 <b>Plan:</b> {plan_label}\n"
+                f"📆 <b>Vence:</b> {end_fmt}\n"
+                f"⏳ <b>Días restantes:</b> {days_left}\n\n"
+                f"👇 <i>Ticket listo para copiar y enviar por WhatsApp:</i>"
+            )
+            ticket_wa = (
+                f"📺 *SmartFlixVE* — Recordatorio de Renovación\n\n"
+                f"Hola *{client_name}* 👋\n\n"
+                f"Te recordamos que tu suscripción de "
+                f"*{platform_emoji} {platform_name}* vence en "
+                f"*{days_left} día(s)* ({end_fmt}).\n\n"
+                f"Para renovar y seguir disfrutando sin interrupciones, "
+                f"realiza tu pago de:\n\n"
+                f"💰 *${price_usd:.2f} USD*\n\n"
+                f"📲 Escríbenos para confirmar tu renovación.\n"
+                f"¡Gracias por preferirnos! 🙏"
             )
             success = await send_to_admin(message)
+            if success:
+                await send_to_admin(ticket_wa)
             if success:
                 await mark_reminder_sent(subscription_id)
             return bool(success)
@@ -278,21 +295,35 @@ async def send_expiry_notification(subscription_id: str) -> bool:
         if not telegram_id:
             client_name = user.get("name") or "Sin nombre"
             client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
-            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
+            platform_emoji = platform.get('icon_emoji', '')
+            platform_name = platform.get('name', '')
+            plan_type = sub.get('plan_type', 'monthly')
+            plan_label = {"monthly": "Mensual (30 días)", "express": "Express (24h)"}.get(plan_type, plan_type)
+            price_usd = sub.get("price_usd", 0)
             end_date_str = sub.get("end_date", "")
             end_fmt = end_date_str[:10] if end_date_str else "N/A"
             message = (
                 f"🔴 <b>Suscripción Vencida — Cliente Externo</b>\n\n"
-                f"La suscripción del siguiente cliente sin Telegram acaba de vencer.\n"
-                f"Notifícalo por su medio de contacto para que renueve.\n\n"
                 f"👤 <b>Cliente:</b> {client_name}\n"
                 f"📞 <b>Contacto:</b> {client_contact}\n"
-                f"📺 <b>Plataforma:</b> {platform_label}\n"
-                f"📅 <b>Plan:</b> {sub.get('plan_type', 'mensual')}\n"
+                f"📺 <b>Plataforma:</b> {platform_emoji} {platform_name}\n"
+                f"📅 <b>Plan:</b> {plan_label}\n"
                 f"📆 <b>Venció:</b> {end_fmt}\n\n"
-                f"<i>Tiene 6 días de gracia antes de que se libere el perfil.</i>"
+                f"👇 <i>Ticket listo para copiar y enviar por WhatsApp:</i>"
+            )
+            ticket_wa = (
+                f"📺 *SmartFlixVE* — Aviso de Vencimiento\n\n"
+                f"Hola *{client_name}* 👋\n\n"
+                f"Tu suscripción de *{platform_emoji} {platform_name}* "
+                f"*venció* el {end_fmt}.\n\n"
+                f"Para reactivar tu acceso, realiza tu pago de:\n\n"
+                f"💰 *${price_usd:.2f} USD*\n\n"
+                f"📲 Escríbenos para confirmar tu renovación.\n"
+                f"¡Gracias por preferirnos! 🙏"
             )
             success = await send_to_admin(message)
+            if success:
+                await send_to_admin(ticket_wa)
             if success:
                 await mark_expiry_notified(subscription_id)
             return bool(success)
