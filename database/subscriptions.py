@@ -149,7 +149,6 @@ async def get_user_attention_subscriptions(user_id: str) -> dict:
     try:
         sb = get_supabase()
         now = venezuela_now()
-        today = now.strftime("%Y-%m-%d")
         three_days_later = (now + timedelta(days=3)).strftime("%Y-%m-%d")
         result = (
             sb.table("subscriptions")
@@ -162,9 +161,12 @@ async def get_user_attention_subscriptions(user_id: str) -> dict:
         pending = [s for s in subs if s.get("status") in ("pending_payment", "expired_payment")]
         expired = [
             s for s in subs
-            if s.get("status") in ("active", "expired")
-            and s.get("end_date")
-            and s["end_date"][:10] <= three_days_later
+            if s.get("status") == "expired"
+            or (
+                s.get("status") == "active"
+                and s.get("end_date")
+                and s["end_date"][:10] <= three_days_later
+            )
         ]
         return {"pending": pending, "expired": expired}
     except Exception as e:
