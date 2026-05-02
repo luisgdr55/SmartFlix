@@ -257,6 +257,27 @@ Bot de Telegram sin responder y webhook retornando 404. Causa raíz: Railway rea
 
 ---
 
+### 2026-05-02 — Sesión 10 — Dashboard mejorado y notificaciones
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Banners de alertas tapaban el dashboard y no hacían scroll en móvil | `dashboard.html`, `base.html` | 12cf7d2 |
+| 2 | Cliente con suscripción activa no podía renovar aunque recibiera aviso D-3 | `subscriptions.py` | ee8bd8f |
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Alertas rediseñadas como tarjetas colapsables en grid 3 columnas con badge contador | `dashboard.html`, `base.html` | 12cf7d2 |
+| 2 | Ticket WhatsApp copiable para clientes externos en recordatorios de vencimiento | `notification_service.py` | af3ff2d |
+| 3 | Botones de notificación por Telegram y ticket WhatsApp en cada alerta del dashboard | `dashboard.html`, `router.py` | 26b5e5c |
+| 4 | Modal de ticket WhatsApp con botón copiar al portapapeles | `dashboard.html` | 26b5e5c |
+| 5 | Deep link 🤖 Bot hacia SmartFlixVEBot para llevar cliente directo a renovación | `dashboard.html` | 26b5e5c |
+
+---
+
 ## Bugs conocidos pendientes
 _Ninguno al cierre de esta sesión._
 
