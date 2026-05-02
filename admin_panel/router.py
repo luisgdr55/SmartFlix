@@ -164,7 +164,7 @@ async def dashboard(request: Request):
                 "id", count="exact"
             ).eq("status", "active").eq("plan_type", "express").execute()),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                "id, end_date, plan_type, users(name, username), platforms(name, icon_emoji)"
+                "id, end_date, plan_type, price_usd, users(name, username, telegram_id), platforms(name, icon_emoji)"
             ).eq("status", "active").gte("end_date", now.isoformat()).lte(
                 "end_date", in_3_days.isoformat()
             ).order("end_date").execute()),
@@ -174,7 +174,7 @@ async def dashboard(request: Request):
                 "billing_date", in_3_days_str
             ).order("billing_date").execute()),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
-                "id, end_date, plan_type, profile_id, user_id, users(id, name, username), platforms(name, icon_emoji)"
+                "id, end_date, plan_type, price_usd, profile_id, user_id, users(id, name, username, telegram_id), platforms(name, icon_emoji)"
             ).in_("status", ["active", "expired"]).lt(
                 "end_date", now.isoformat()
             ).order("end_date").limit(30).execute()),
@@ -1203,6 +1203,34 @@ async def subscription_delete(request: Request, sub_id: str):
         return RedirectResponse(url=referer, status_code=302)
     except Exception as e:
         return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+
+
+@panel_router.post("/subscriptions/{sub_id}/notify-reminder")
+async def subscription_notify_reminder(request: Request, sub_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    try:
+        from services.notification_service import send_expiry_reminder
+        await send_expiry_reminder(sub_id)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.error(f"notify-reminder error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@panel_router.post("/subscriptions/{sub_id}/notify-expiry")
+async def subscription_notify_expiry(request: Request, sub_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    try:
+        from services.notification_service import send_expiry_notification
+        await send_expiry_notification(sub_id)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.error(f"notify-expiry error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
