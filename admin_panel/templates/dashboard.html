@@ -9,126 +9,147 @@
 </div>
 {% endif %}
 
-{% if accounts_due %}
-<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-danger overflow-y-auto">
-  <div class="flex items-center gap-3 px-5 py-3 border-b border-red-100">
-    <span class="text-lg">💳</span>
-    <p class="text-sm font-semibold alert-error-text">
-      {{ accounts_due | length }} cuenta(s) con fecha de renovación vencida o próxima
-    </p>
-    <a href="/panel/accounts" class="ml-auto text-xs text-red-600 hover:text-red-800 font-medium underline">Ver cuentas →</a>
-  </div>
-  <div class="divide-y divide-red-100">
-    {% for acc in accounts_due %}
-    {% set bd = acc.get('billing_date','')[:10] %}
-    {% set platform = acc.get('platforms') or {} %}
-    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-red-50 transition-colors">
-      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
-      <div class="flex-1 min-w-0">
-        <span class="text-sm text-slate-700 font-medium font-mono">{{ acc.get('email', '—') }}</span>
-        <span class="text-slate-300 mx-1">·</span>
-        <span class="text-sm text-slate-500">{{ platform.get('name', '—') }}</span>
-      </div>
-      {% if bd <= today_str %}
-      <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full animate-pulse">🔴 VENCIDA</span>
-      {% else %}
-      <span class="text-xs font-mono text-amber-700 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">📅 {{ acc.get('billing_date') | fmt_date }}</span>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
+{% if accounts_due or expiring_alert or expired_subs %}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mx-3 mt-3 md:mx-6 md:mt-4">
 
-{% if expiring_alert %}
-<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-warning overflow-y-auto">
-  <div class="flex items-center gap-3 px-5 py-3 border-b border-amber-100">
-    <span class="text-lg">🔔</span>
-    <p class="text-sm font-semibold alert-warning-text">
-      {{ expiring_alert | length }} cliente(s) vencen hoy o en los próximos 3 días
-    </p>
-    <a href="/panel/subscriptions" class="ml-auto text-xs text-amber-700 hover:text-amber-900 font-medium underline">Ver todas →</a>
-  </div>
-  <div class="divide-y divide-amber-100">
-    {% for sub in expiring_alert %}
-    {% set ed = sub['end_date'][:10] %}
-    {% set platform = sub.get('platforms') or {} %}
-    {% set user = sub.get('users') or {} %}
-    <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-amber-50 transition-colors">
-      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
-      <div class="flex-1 min-w-0">
-        <span class="text-sm text-slate-700 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
-        <span class="text-slate-300 mx-1">·</span>
-        <span class="text-sm text-slate-500">{{ platform.get('name', '—') }}</span>
+  {# --- Tarjeta 1: Cuentas por vencer --- #}
+  {% if accounts_due %}
+  <div x-data="{ open: false }" class="alert-card-danger">
+    <div @click="open = !open" class="alert-card-header cursor-pointer">
+      <div class="flex items-center gap-2">
+        <span class="text-base">💳</span>
+        <span class="text-sm font-semibold alert-error-text">Cuentas por vencer</span>
+        <span class="badge-count-danger">{{ accounts_due | length }}</span>
       </div>
-      {% if ed <= today_str %}
-      <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full animate-pulse">⚠️ Vence HOY</span>
-      {% else %}
-      <span class="text-xs font-mono text-amber-700 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">📅 {{ sub['end_date'] | fmt_date }}</span>
-      {% endif %}
+      <div class="flex items-center gap-2">
+        <a href="/panel/accounts" @click.stop class="text-xs text-red-600 hover:text-red-800 font-medium underline">Ver cuentas →</a>
+        <span x-text="open ? '▲' : '▼'" class="text-xs text-red-400"></span>
+      </div>
     </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-{% if expired_subs %}
-<div class="mx-3 mt-3 md:mx-6 md:mt-4 alert-danger overflow-y-auto">
-  <div class="flex items-center gap-3 px-5 py-3 border-b border-red-100">
-    <span class="text-lg">🔴</span>
-    <p class="text-sm font-semibold alert-error-text">
-      {{ expired_subs | length }} cliente(s) con suscripción vencida sin renovar
-    </p>
-    <a href="/panel/payments" class="ml-auto text-xs text-red-600 hover:text-red-800 font-medium underline">Ver pagos →</a>
-  </div>
-  <div class="divide-y divide-red-100">
-    {% for sub in expired_subs %}
-    {% set ed = sub.get('end_date','')[:10] %}
-    {% set platform = sub.get('platforms') or {} %}
-    {% set user = sub.get('users') or {} %}
-    {% set uid = user.get('id') %}
-    {% set has_profile = sub.get('profile_id') %}
-    <div class="flex flex-wrap items-center gap-2 px-5 py-2.5 hover:bg-red-50 transition-colors">
-      <span class="text-base">{{ platform.get('icon_emoji', '📺') }}</span>
-      <div class="flex-1 min-w-0">
-        {% if uid %}
-        <a href="/panel/users/{{ uid }}" class="text-sm text-slate-700 font-medium hover:text-slate-900 transition-colors">
-          {{ user.get('name') or user.get('username') or '—' }}
-        </a>
+    <div x-show="open" x-collapse class="alert-card-body divide-y divide-red-100">
+      {% for acc in accounts_due %}
+      {% set bd = acc.get('billing_date','')[:10] %}
+      {% set platform = acc.get('platforms') or {} %}
+      <div class="flex items-center gap-3 px-4 py-2 hover:bg-red-50 transition-colors">
+        <span class="text-sm">{{ platform.get('icon_emoji', '📺') }}</span>
+        <div class="flex-1 min-w-0">
+          <span class="text-sm text-slate-700 font-medium font-mono truncate block">{{ acc.get('email', '—') }}</span>
+          <span class="text-xs text-slate-500">{{ platform.get('name', '—') }}</span>
+        </div>
+        {% if bd <= today_str %}
+        <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full animate-pulse whitespace-nowrap">🔴 VENCIDA</span>
         {% else %}
-        <span class="text-sm text-slate-700 font-medium">{{ user.get('name') or user.get('username') or '—' }}</span>
+        <span class="text-xs font-mono text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">📅 {{ acc.get('billing_date') | fmt_date }}</span>
         {% endif %}
-        <span class="text-slate-300 mx-1">·</span>
-        <span class="text-sm text-slate-500">{{ platform.get('name', '—') }}</span>
       </div>
-      <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2.5 py-0.5 rounded-full">🔴 {{ sub.get('end_date') | fmt_date }}</span>
-      {% if has_profile %}
-      <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
-        onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
-        <button type="submit" title="Corte suave: cambia el PIN, el perfil queda asignado"
-          class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2.5 py-1 rounded-lg transition-colors font-medium">
-          🔒 Corte suave
-        </button>
-      </form>
-      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
-        onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
-        <button type="submit" title="Liberar perfil: lo devuelve al pool de disponibles"
-          class="text-xs bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 px-2.5 py-1 rounded-lg transition-colors font-medium">
-          📤 Liberar
-        </button>
-      </form>
-      {% else %}
-      <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
-        onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
-        <button type="submit" title="Sin perfil asignado — solo marca como expirada"
-          class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 px-2.5 py-1 rounded-lg transition-colors font-medium">
-          ✓ Cerrar
-        </button>
-      </form>
-      {% endif %}
+      {% endfor %}
     </div>
-    {% endfor %}
   </div>
+  {% else %}
+  <div></div>
+  {% endif %}
+
+  {# --- Tarjeta 2: Clientes vencen en 3 días --- #}
+  {% if expiring_alert %}
+  <div x-data="{ open: false }" class="alert-card-warning">
+    <div @click="open = !open" class="alert-card-header cursor-pointer">
+      <div class="flex items-center gap-2">
+        <span class="text-base">🔔</span>
+        <span class="text-sm font-semibold alert-warning-text">Vencen en 3 días</span>
+        <span class="badge-count-warning">{{ expiring_alert | length }}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="/panel/subscriptions" @click.stop class="text-xs text-amber-700 hover:text-amber-900 font-medium underline">Ver todas →</a>
+        <span x-text="open ? '▲' : '▼'" class="text-xs text-amber-400"></span>
+      </div>
+    </div>
+    <div x-show="open" x-collapse class="alert-card-body divide-y divide-amber-100">
+      {% for sub in expiring_alert %}
+      {% set ed = sub['end_date'][:10] %}
+      {% set platform = sub.get('platforms') or {} %}
+      {% set user = sub.get('users') or {} %}
+      <div class="flex items-center gap-3 px-4 py-2 hover:bg-amber-50 transition-colors">
+        <span class="text-sm">{{ platform.get('icon_emoji', '📺') }}</span>
+        <div class="flex-1 min-w-0">
+          <span class="text-sm text-slate-700 font-medium truncate block">{{ user.get('name') or user.get('username') or '—' }}</span>
+          <span class="text-xs text-slate-500">{{ platform.get('name', '—') }}</span>
+        </div>
+        {% if ed <= today_str %}
+        <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full animate-pulse whitespace-nowrap">⚠️ HOY</span>
+        {% else %}
+        <span class="text-xs font-mono text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">📅 {{ sub['end_date'] | fmt_date }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div></div>
+  {% endif %}
+
+  {# --- Tarjeta 3: Vencidas sin renovar --- #}
+  {% if expired_subs %}
+  <div x-data="{ open: false }" class="alert-card-danger">
+    <div @click="open = !open" class="alert-card-header cursor-pointer">
+      <div class="flex items-center gap-2">
+        <span class="text-base">🔴</span>
+        <span class="text-sm font-semibold alert-error-text">Vencidas sin renovar</span>
+        <span class="badge-count-danger">{{ expired_subs | length }}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="/panel/payments" @click.stop class="text-xs text-red-600 hover:text-red-800 font-medium underline">Ver pagos →</a>
+        <span x-text="open ? '▲' : '▼'" class="text-xs text-red-400"></span>
+      </div>
+    </div>
+    <div x-show="open" x-collapse class="alert-card-body divide-y divide-red-100">
+      {% for sub in expired_subs %}
+      {% set ed = sub.get('end_date','')[:10] %}
+      {% set platform = sub.get('platforms') or {} %}
+      {% set user = sub.get('users') or {} %}
+      {% set uid = user.get('id') %}
+      {% set has_profile = sub.get('profile_id') %}
+      <div class="flex flex-wrap items-center gap-2 px-4 py-2 hover:bg-red-50 transition-colors">
+        <span class="text-sm">{{ platform.get('icon_emoji', '📺') }}</span>
+        <div class="flex-1 min-w-0">
+          {% if uid %}
+          <a href="/panel/users/{{ uid }}" class="text-sm text-slate-700 font-medium hover:text-slate-900 transition-colors truncate block">
+            {{ user.get('name') or user.get('username') or '—' }}
+          </a>
+          {% else %}
+          <span class="text-sm text-slate-700 font-medium truncate block">{{ user.get('name') or user.get('username') or '—' }}</span>
+          {% endif %}
+          <span class="text-xs text-slate-500">{{ platform.get('name', '—') }}</span>
+        </div>
+        <span class="text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full whitespace-nowrap">🔴 {{ sub.get('end_date') | fmt_date }}</span>
+        {% if has_profile %}
+        <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
+          onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
+          <button type="submit" class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
+            🔒 Corte suave
+          </button>
+        </form>
+        <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+          onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
+          <button type="submit" class="text-xs bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 px-2 py-1 rounded-lg transition-colors font-medium">
+            📤 Liberar
+          </button>
+        </form>
+        {% else %}
+        <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
+          onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
+          <button type="submit" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg transition-colors font-medium">
+            ✓ Cerrar
+          </button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div></div>
+  {% endif %}
+
 </div>
 {% endif %}
 {% endblock %}

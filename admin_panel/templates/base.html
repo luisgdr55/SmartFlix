@@ -27,6 +27,7 @@
       }
     }
   </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
@@ -118,6 +119,51 @@
     .alert-warning-text { color: #92400E; }
     .alert-divider-danger  { border-color: #FEE2E2; }
     .alert-divider-warning { border-color: #FEF3C7; }
+
+    /* Alert cards colapsables */
+    .alert-card-danger {
+      border-radius: 0.75rem;
+      border: 1px solid #FECACA;
+      border-left: 4px solid #DC2626;
+      background: #FFF5F5;
+      overflow: hidden;
+    }
+    .alert-card-warning {
+      border-radius: 0.75rem;
+      border: 1px solid #FDE68A;
+      border-left: 4px solid #F59E0B;
+      background: #FFFBEB;
+      overflow: hidden;
+    }
+    .alert-card-header {
+      padding: 0.75rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .alert-card-body {
+      max-height: 200px;
+      overflow-y: auto;
+      border-top: 1px solid rgba(0,0,0,0.08);
+    }
+    .badge-count-danger {
+      background: #DC2626;
+      color: white;
+      border-radius: 9999px;
+      padding: 0.1rem 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .badge-count-warning {
+      background: #D97706;
+      color: white;
+      border-radius: 9999px;
+      padding: 0.1rem 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body class="h-full" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
