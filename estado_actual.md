@@ -13,6 +13,29 @@
 
 ## Historial de cambios
 
+### 2026-06-03 — Sesión 12 — Fix de costos en reporte diario y reporte mensual de cierre
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | `cost_usd_monthly` no existía en tabla `accounts` — costos siempre $0.00 en reporte diario | `supabase_schema.sql` + Supabase SQL Editor | (este commit) |
+| 2 | `debt_reminder_count` no existía en tabla `subscriptions` — recordatorio de deuda siempre enviaba "Día 1" y nunca cortaba el servicio | `supabase_schema.sql` + Supabase SQL Editor | (este commit) |
+| 3 | `monthly_revenue_usd` excluía suscripciones expiradas del mes — ingresos subestimados | `analytics.py` | (este commit) |
+| 4 | `monthly_cost_usd` sumaba costo total de todas las cuentas sin prorratear — comparación injusta a mitad de mes | `analytics.py` | (este commit) |
+
+#### Mejoras añadidas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Reporte diario: costos prorrateados por días transcurridos del mes (`days_elapsed / days_in_month`) | `analytics.py` | (este commit) |
+| 2 | Reporte diario: label cambiado a "Costos al día de hoy" para reflejar el prorrateo | `jobs.py` | (este commit) |
+| 3 | Reporte mensual de cierre — Job 11 — se ejecuta el día 1 de cada mes a las 9:00 AM: ingresos reales, costos completos, ganancia neta, margen, desglose por plataforma y cuenta, nuevos clientes, renovaciones y no-renovaciones | `database/monthly_report.py` (nuevo), `scheduler/jobs.py` | (este commit) |
+
+#### Notas operativas
+- Entrar el costo mensual de cada cuenta en Panel → Cuentas → Editar (campo `cost_usd_monthly`) para que los reportes muestren costos reales
+- El reporte mensual calcula el mes ANTERIOR completo — los costos no se prorratean porque el cliente ya pagó 30 días por adelantado
+
 ### 2026-04-05 — Sesión de debugging masivo
 
 #### Bugs corregidos

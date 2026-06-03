@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from calendar import monthrange
 from datetime import timedelta
 from typing import Optional
 
@@ -43,7 +44,7 @@ async def get_dashboard_stats() -> dict:
             ).eq("status", "pending_payment").execute()),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
                 "price_usd"
-            ).eq("status", "active").gte("payment_confirmed_at", month_start.isoformat()).execute()),
+            ).in_("status", ["active", "expired"]).gte("payment_confirmed_at", month_start.isoformat()).execute()),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
                 "id", count="exact"
             ).eq("status", "active").lte("end_date", three_days.isoformat()).gte(
@@ -64,9 +65,10 @@ async def get_dashboard_stats() -> dict:
         monthly_revenue = round(
             sum(row.get("price_usd", 0) or 0 for row in (revenue_result.data or [])), 2
         )
-        monthly_cost = round(
-            sum(row.get("cost_usd_monthly", 0) or 0 for row in (cost_result.data or [])), 2
-        )
+        monthly_cost_raw = sum(row.get("cost_usd_monthly", 0) or 0 for row in (cost_result.data or []))
+        days_in_month = monthrange(now.year, now.month)[1]
+        days_elapsed = now.day
+        monthly_cost = round(monthly_cost_raw * (days_elapsed / days_in_month), 2)
 
         return {
             "total_users": users_result.count or 0,

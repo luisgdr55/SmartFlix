@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     gmail_api_enabled BOOLEAN DEFAULT FALSE,
     gmail_credentials JSONB,
     status VARCHAR(50) DEFAULT 'active',
+    cost_usd_monthly DECIMAL(10,2) DEFAULT 0.00,
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     payment_confirmed_at TIMESTAMPTZ,
     reminder_sent BOOLEAN DEFAULT FALSE,
     expiry_notified BOOLEAN DEFAULT FALSE,
+    debt_reminder_count INT DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

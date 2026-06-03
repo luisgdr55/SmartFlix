@@ -256,7 +256,7 @@ async def job_daily_admin_report() -> None:
             f"⏳ Pagos pendientes: <b>{stats.get('pending_payments', 0)}</b>\n"
             f"⚠️ Vencen en 3 días: <b>{stats.get('expiring_soon', 0)}</b>\n"
             f"💰 Ingresos brutos: <b>${stats.get('monthly_revenue_usd', 0):.2f} USD</b>\n"
-            f"💸 Costos estimados: <b>${stats.get('monthly_cost_usd', 0):.2f} USD</b>\n"
+            f"💸 Costos al día de hoy: <b>${stats.get('monthly_cost_usd', 0):.2f} USD</b>\n"
             f"📈 Ganancia neta: <b>${stats.get('monthly_profit_usd', 0):.2f} USD</b>\n\n"
             f"📦 Stock:\n{avail_text}"
         )
@@ -332,6 +332,68 @@ async def job_auto_expire() -> None:
             logger.info(f"job_auto_expire: expired {count} overdue subscription(s)")
     except Exception as e:
         logger.error(f"Error in job_auto_expire: {e}")
+
+
+async def job_monthly_closing_report():
+    """Job 11 — Monthly closing report. Runs 1st of each month at 9:00 AM Venezuela."""
+    logger.info("Job 11: Sending monthly closing report")
+    try:
+        from database.monthly_report import get_monthly_closing_report
+        from services.notification_service import send_to_admin
+        data = await get_monthly_closing_report()
+        if not data:
+            await send_to_admin("⚠️ Error al generar el reporte mensual de cierre.")
+            return
+
+        profit      = data["net_profit_usd"]
+        profit_icon = "📈" if profit >= 0 else "📉"
+        margin_str  = f"{data['margin_pct']}%" if data["total_revenue_usd"] > 0 else "N/A"
+
+        platform_lines = ""
+        for platform, amount in sorted(
+            data["by_platform"].items(), key=lambda x: x[1], reverse=True
+        ):
+            platform_lines += f"  • {platform}: <b>${amount:.2f}</b>\n"
+
+        cost_lines = ""
+        for acc in sorted(
+            data["account_breakdown"], key=lambda x: x["cost"], reverse=True
+        ):
+            cost_lines += f"  • {acc['platform']} ({acc['email']}): <b>${acc['cost']:.2f}</b>\n"
+        if not cost_lines:
+            cost_lines = "  • Sin costos registrados — actualiza en Panel → Cuentas → Editar\n"
+
+        msg = (
+            f"📅 <b>CIERRE MENSUAL — {data['month_label'].upper()}</b>\n"
+            f"{'═' * 32}\n\n"
+            f"💰 <b>INGRESOS</b>\n"
+            f"  Total cobrado: <b>${data['total_revenue_usd']:.2f} USD</b>\n"
+            f"  Transacciones: {data['total_transactions']}\n"
+            f"  Express: {data['express_count']} cobros (${data['express_revenue']:.2f})\n\n"
+            f"📊 <b>Por plataforma:</b>\n{platform_lines}\n"
+            f"💸 <b>COSTOS DEL MES</b>\n"
+            f"{cost_lines}\n"
+            f"  Total costos: <b>${data['total_cost_usd']:.2f} USD</b>\n\n"
+            f"{profit_icon} <b>RESULTADO</b>\n"
+            f"  Ganancia neta: <b>${profit:.2f} USD</b>\n"
+            f"  Margen: <b>{margin_str}</b>\n\n"
+            f"👥 <b>CLIENTES</b>\n"
+            f"  Nuevos este mes: {data['new_clients']}\n"
+            f"  Renovaciones: {data['renewals']}\n"
+            f"  No renovaron: {data['non_renewals']}\n"
+        )
+
+        await send_to_admin(msg)
+        logger.info(
+            f"Monthly closing report sent — {data['month_label']}: "
+            f"revenue=${data['total_revenue_usd']} "
+            f"cost=${data['total_cost_usd']} "
+            f"profit=${data['net_profit_usd']}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in job_monthly_closing_report: {e}")
+        await send_to_admin(f"⚠️ Error en reporte mensual: {e}")
 
 
 def setup_scheduler() -> AsyncIOScheduler:
@@ -427,5 +489,15 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured with 10 jobs")
+    # Job 11 — Monthly closing report (día 1 de cada mes, 9:00 AM Venezuela)
+    scheduler.add_job(
+        job_monthly_closing_report,
+        CronTrigger(day=1, hour=9, minute=0, timezone=VENEZUELA_TZ),
+        id="job_monthly_closing_report",
+        name="Monthly Closing Report",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    logger.info("Scheduler configured with 11 jobs")
     return scheduler
