@@ -13,6 +13,33 @@
 
 ## Historial de cambios
 
+### 2026-06-03 — Sesión 13 — Fix flujo de renovación y corte automático
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Suscripción pending_payment cancelada a los 45 min — admin no podía aprobar si tardaba más | `subscriptions.py`, `jobs.py` | (este commit) |
+| 2 | Carrito de renovación incluía subs activas próximas a vencer — sistema reportaba "pago múltiple" incorrectamente | `subscriptions.py`, `subscription.py` | (este commit) |
+| 3 | Cliente sin acceso directo a renovar — tenía que usar /start para ver el botón | `main.py` | (este commit) |
+| 4 | Corte automático día 7 nunca se ejecutaba — PART 2 de job_debt_reminders_and_cuts faltaba completamente | `jobs.py` | (este commit) |
+| 5 | Notificación de corte al admin sin email ni password de la cuenta | `subscriptions.py`, `jobs.py` | (este commit) |
+| 6 | get_subscriptions_past_grace_period() no incluía pin ni accounts en el join — admin recibía "—" en credenciales | `subscriptions.py` | (este commit) |
+
+#### Mejoras añadidas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | TTL de pending_payment extendido de 45 min a 4 horas | `subscriptions.py`, `jobs.py` | (este commit) |
+| 2 | Subs "próximas a vencer" separadas de "expiradas" — aviso informativo sin interferir en el carrito | `subscriptions.py`, `subscription.py` | (este commit) |
+| 3 | Cliente puede escribir "renovar" o "pagar" en cualquier momento para acceder al flujo de renovación | `main.py` | (este commit) |
+| 4 | Corte día 7: rota PIN, libera perfil, notifica cliente y admin con email + password + PIN anterior + PIN nuevo | `jobs.py`, `subscriptions.py` | (este commit) |
+
+#### Notas operativas
+- Un cliente con 10+ días cortado puede renovar escribiendo "renovar" — el sistema detecta su sub cancelada y abre el carrito
+- El corte automático corre diariamente con job_debt_reminders_and_cuts — días 1-6 aviso, día 7 corte real
+- Las subs que vencen en 3 días muestran aviso informativo pero NO van al carrito de renovación anticipada
+
 ### 2026-06-03 — Sesión 12 — Fix de costos en reporte diario y reporte mensual de cierre
 
 #### Bugs corregidos

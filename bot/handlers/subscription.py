@@ -46,9 +46,25 @@ async def show_subscription_platforms(update: Update, context: ContextTypes.DEFA
             user = await _get_or_create(tg.id, tg.username, tg.full_name)
         if user:
             attention = await get_user_attention_subscriptions(str(user["id"]))
-            expired = attention.get("expired", [])
-            if expired:
-                await _show_renewal_cart(query, context, user, expired)
+            expired_subs = attention.get("expired", [])
+            expiring_soon = attention.get("expiring_soon", [])
+
+            if expired_subs:
+                # Subs realmente vencidas → carrito de renovación
+                await _show_renewal_cart(query, context, user, expired_subs)
+                return
+            elif expiring_soon:
+                # Subs activas próximas a vencer → aviso + opción de renovar anticipado
+                names = ", ".join(
+                    (s.get("platforms") or {}).get("name", "?")
+                    for s in expiring_soon
+                )
+                await (query.edit_message_text if query else message.reply_text)(
+                    f"⚠️ Tu suscripción de <b>{names}</b> vence pronto.\n\n"
+                    f"Puedes renovarla anticipadamente o esperar a que venza.",
+                    parse_mode="HTML",
+                    reply_markup=main_menu_keyboard(),
+                )
                 return
 
         availability = await get_platform_availability()

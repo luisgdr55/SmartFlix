@@ -223,6 +223,10 @@ async def _text_message_router(update: Update, context) -> None:
         await _handle_admin_edit_client_flow(update, context, state)
     elif state and state.startswith("admin:verif:send:"):
         await _handle_admin_verif_send_flow(update, context, state)
+    elif update.message and update.message.text and \
+            update.message.text.strip().lower() in ("renovar", "pagar", "renovación", "renovacion"):
+        from bot.handlers.subscription import show_subscription_platforms
+        await show_subscription_platforms(update, context)
     else:
         from utils.validators import is_admin as _is_admin
         if _is_admin(telegram_id, __import__("config").settings.ADMIN_TELEGRAM_IDS):

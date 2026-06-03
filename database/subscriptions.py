@@ -162,13 +162,14 @@ async def get_user_attention_subscriptions(user_id: str) -> dict:
         expired = [
             s for s in subs
             if s.get("status") == "expired"
-            or (
-                s.get("status") == "active"
-                and s.get("end_date")
-                and s["end_date"][:10] <= three_days_later
-            )
         ]
-        return {"pending": pending, "expired": expired}
+        expiring_soon = [
+            s for s in subs
+            if s.get("status") == "active"
+            and s.get("end_date")
+            and s["end_date"][:10] <= three_days_later
+        ]
+        return {"pending": pending, "expired": expired, "expiring_soon": expiring_soon}
     except Exception as e:
         logger.error(f"Error in get_user_attention_subscriptions: {e}")
         return {"pending": [], "expired": []}
@@ -446,7 +447,7 @@ async def get_subscriptions_past_grace_period() -> list[dict]:
         now = venezuela_now()
         result = (
             sb.table("subscriptions")
-            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name)")
+            .select("*, users(telegram_id, name, username), platforms(name, slug, icon_emoji), profiles(id, profile_name, pin, account_id, accounts(email, password))")
             .eq("status", "active")
             .eq("plan_type", "monthly")
             .lt("end_date", now.isoformat())
@@ -627,7 +628,7 @@ async def cancel_expired_pending_subscriptions() -> int:
     """Cancel pending subscriptions older than 45 minutes. Returns count of cancelled."""
     try:
         sb = get_supabase()
-        cutoff = venezuela_now() - timedelta(minutes=45)
+        cutoff = venezuela_now() - timedelta(hours=4)
         result = (
             sb.table("subscriptions")
             .select("id")

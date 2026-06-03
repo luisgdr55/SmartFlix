@@ -302,6 +302,86 @@ async def job_debt_reminders_and_cuts() -> None:
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Error sending debt reminder for {sub.get('id')}: {e}")
+
+        # ── PART 2: Cut service for subscriptions past grace period (day 7+) ──
+        from database.subscriptions import (
+            get_subscriptions_past_grace_period,
+            cancel_subscription,
+        )
+        from database.profiles import release_profile
+        from services.notification_service import send_to_user, send_to_admin
+
+        import random
+        import string
+
+        past_grace = await get_subscriptions_past_grace_period()
+        logger.info(f"Found {len(past_grace)} subscriptions past grace period — cutting")
+
+        for sub in past_grace:
+            try:
+                sub_id = str(sub["id"])
+                profile = sub.get("profiles") or {}
+                profile_id = str(profile.get("id", "")) if profile.get("id") else None
+                profile_name = profile.get("profile_name", "—")
+                old_pin = profile.get("pin", "—")
+                platform = sub.get("platforms") or {}
+                platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
+                user = sub.get("users") or {}
+                client_tid = user.get("telegram_id")
+                client_name = user.get("name") or "Sin nombre"
+
+                # 1. Cancelar suscripción primero (guard anti-doble corte)
+                cancelled_ok = await cancel_subscription(sub_id)
+                if not cancelled_ok:
+                    logger.warning(f"job_debt_cuts: cancel_subscription failed for {sub_id}, skipping")
+                    continue
+
+                # 2. Rotar PIN y liberar perfil
+                new_pin = "—"
+                if profile_id:
+                    new_pin = "".join(random.choices(string.digits, k=4))
+                    from database import get_supabase
+                    from utils.helpers import venezuela_now
+                    sb = get_supabase()
+                    sb.table("profiles").update({
+                        "pin": new_pin,
+                        "status": "available",
+                        "last_released": venezuela_now().isoformat(),
+                        "reserved_for": None,
+                        "reserved_until": None,
+                    }).eq("id", profile_id).execute()
+
+                # 3. Notificar al cliente (si tiene Telegram)
+                if client_tid:
+                    await send_to_user(
+                        client_tid,
+                        f"😔 <b>Tu suscripción de {platform_name} ha sido cancelada</b>\n\n"
+                        f"No recibimos tu pago de renovación después de 7 días.\n"
+                        f"Tu perfil ha sido liberado.\n\n"
+                        f"Cuando quieras reactivar tu servicio, escribe <b>renovar</b> "
+                        f"o visita el menú principal. 🙏"
+                    )
+
+                # 4. Notificar al admin con credenciales completas
+                account = profile.get("accounts") or {}
+                await send_to_admin(
+                    f"✂️ <b>Corte automático día 7</b>\n\n"
+                    f"🎬 Plataforma: <b>{platform_name}</b>\n"
+                    f"👤 Perfil: <b>{profile_name}</b>\n"
+                    f"👥 Cliente: <b>{client_name}</b>\n\n"
+                    f"🔐 <b>Datos de la cuenta:</b>\n"
+                    f"📧 Email: <code>{account.get('email', '—')}</code>\n"
+                    f"🔑 Contraseña: <code>{account.get('password', '—')}</code>\n"
+                    f"🔢 PIN anterior: <code>{old_pin}</code>\n"
+                    f"🔄 PIN nuevo asignado: <code>{new_pin}</code>\n\n"
+                    f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
+                )
+
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"Error cutting subscription {sub.get('id')}: {e}")
+
     except Exception as e:
         logger.error(f"Error in job_debt_reminders_and_cuts: {e}")
 
@@ -443,10 +523,10 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Job 6: Pending payment cleanup - every 45 minutes
+    # Job 6: Pending payment cleanup - every 4 hours
     scheduler.add_job(
         job_pending_payment_cleanup,
-        IntervalTrigger(minutes=45),
+        IntervalTrigger(hours=4),
         id="pending_payment_cleanup",
         name="Pending Payment Cleanup",
         replace_existing=True,
