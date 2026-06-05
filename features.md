@@ -526,7 +526,7 @@ CREATE TABLE featured_content (
 | ✅ Fase 3 | /renovar para admin | Implementado |
 | 📋 Fase 4 | Afiliación y renovación vía Dashboard web | Pendiente |
 | 📋 Fase 5 | Migración de cuenta Netflix vía Telegram | Pendiente |
-| 📋 Fase 6 | Módulo de soporte y tickets + planes Netflix | Pendiente |
+| ⚠️ Fase 6 | Módulo de soporte y tickets + planes Netflix | Parcial — 6A.1 Módulo hogar implementado. Pendiente: 6A.2 soporte por foto, 6B planes Netflix diferenciados |
 | 📋 Fase 7 | PWA SmartFlixVE completa | Pendiente |
 
 ---

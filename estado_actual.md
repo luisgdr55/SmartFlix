@@ -13,6 +13,71 @@
 
 ## Historial de cambios
 
+### 2026-06-05 — Sesión 14 — Módulo Soporte Hogar Netflix
+
+#### Features implementadas
+
+| # | Feature | Archivos | Commit |
+|---|---------|----------|--------|
+| 1 | Flujo cliente autoservicio hogar Netflix (foto → Gemini → código/migración) | `bot/handlers/hogar.py` | 0ce35f6 |
+| 2 | Comando /hogar admin — lista paginada de clientes Netflix activos | `bot/handlers/hogar.py` | 9c4e5f7 |
+| 3 | Búsqueda de código/link en Gmail maestro con filtro por cuenta | `services/gmail_service.py` | 0ce35f6 |
+| 4 | Análisis de pantalla Netflix con Gemini Vision (first_warning/second_warning) | `services/gemini_service.py` | 10193eb |
+| 5 | Migración express automática con cooling 45 días | `bot/handlers/hogar.py`, `database/hogar.py` | f528fd3 |
+| 6 | Migración con historial — ticket admin + flujo de completado | `bot/handlers/hogar.py` | 0ce35f6 |
+| 7 | Sistema de salud de cuentas (healthy/warning/restricted) | `database/hogar.py` | 9e7a005 |
+| 8 | Notificaciones admin detalladas con nombre, teléfono y credenciales | `bot/handlers/hogar.py` | 03cb959 |
+| 9 | Botón "Restricción de Hogar Netflix" en menú de soporte | `bot/keyboards.py`, `main.py` | cb5db9f |
+| 10 | Soporte email tipo código directo (662727) y tipo link | `services/gmail_service.py` | 0ce35f6 |
+
+#### Cambios en BD
+```sql
+ALTER TABLE accounts ADD COLUMN household_incidents INT DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN account_health VARCHAR(20) DEFAULT 'healthy';
+ALTER TABLE accounts ADD COLUMN last_incident_at TIMESTAMPTZ;
+
+CREATE TABLE household_incidents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id),
+    account_id UUID REFERENCES accounts(id),
+    profile_id UUID REFERENCES profiles(id),
+    subscription_id UUID REFERENCES subscriptions(id),
+    stage VARCHAR(20),
+    type VARCHAR(30),
+    new_profile_id UUID REFERENCES profiles(id),
+    new_account_id UUID REFERENCES accounts(id),
+    gmail_link TEXT,
+    admin_notes TEXT,
+    resolved BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+```
+
+#### Variables de entorno nuevas
+- `GMAIL_MASTER_CREDENTIALS_JSON` — JSON OAuth2 del Gmail maestro smartflixve.codigos@gmail.com
+
+#### Archivos nuevos
+- `bot/handlers/hogar.py`
+- `database/hogar.py`
+
+#### Archivos modificados
+- `services/gmail_service.py` — get_netflix_household_link, get_netflix_access_code
+- `services/gemini_service.py` — analyze_netflix_screen
+- `database/profiles.py` — get_profile_by_subscription
+- `database/users.py` — search_users
+- `bot/keyboards.py` — botón hogar en support_keyboard
+- `main.py` — registro de handlers hogar
+- `scheduler/jobs.py` — job_account_health_alerts
+
+#### Notas operativas
+- El flujo de "Estoy de viaje" (link) está implementado pero pendiente prueba con cliente real con Smart TV
+- El modelo OpenRouter activo es google/gemini-2.5-flash-lite
+- El token OAuth2 del Gmail maestro se refresca automáticamente en cada uso
+- El cooling de 45 días aplica por relación usuario-perfil, no por perfil global
+
+---
+
 ### 2026-06-03 — Sesión 13 — Fix flujo de renovación y corte automático
 
 #### Bugs corregidos
