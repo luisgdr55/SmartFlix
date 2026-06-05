@@ -17,7 +17,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "google/gemini-2.0-flash-001"
+MODEL = "google/gemini-2.5-flash-preview"
 CONV_TTL = 7200        # 2 horas de contexto en Redis
 MAX_CONV_MESSAGES = 10
 
