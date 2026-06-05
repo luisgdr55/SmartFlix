@@ -116,6 +116,8 @@ async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE
         'account_email': account['email'],
     }
     _set_state(telegram_id, STATE_WAITING_PHOTO, session)
+    saved_state = get_state(telegram_id)
+    logger.info(f"[hogar] state set for tid={telegram_id}: '{saved_state}'")
 
     instructions = (
         "🔒 *Soporte — Restricción de Hogar Netflix*\n\n"
@@ -139,7 +141,9 @@ async def handle_hogar_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     Retorna True si la foto fue procesada por este módulo.
     """
     telegram_id = update.effective_user.id
-    if get_state(telegram_id) != STATE_WAITING_PHOTO:
+    current_state = get_state(telegram_id)
+    logger.info(f"[hogar] handle_hogar_photo tid={telegram_id} state='{current_state}'")
+    if current_state != STATE_WAITING_PHOTO:
         return False
 
     session = _get_session(telegram_id)
