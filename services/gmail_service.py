@@ -192,3 +192,91 @@ async def get_netflix_household_link(account_email: str, master_credentials_json
     except Exception as e:
         logger.error(f"[gmail] get_netflix_household_link: {e}", exc_info=True)
         return None
+
+
+async def get_netflix_access_code(account_email: str, master_credentials_json: str) -> dict:
+    """
+    Busca en Gmail maestro el código o link de acceso de Netflix para hogar/viaje.
+    Retorna: {'type': 'code'|'link'|None, 'value': '662727'|'https://...'|None}
+    """
+    import json, re
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as GoogleRequest
+    from googleapiclient.discovery import build
+
+    if not master_credentials_json:
+        logger.warning("[gmail] GMAIL_MASTER_CREDENTIALS_JSON no configurado")
+        return {'type': None, 'value': None}
+
+    try:
+        creds_data = json.loads(master_credentials_json)
+        creds = Credentials(
+            token=creds_data.get('token'),
+            refresh_token=creds_data.get('refresh_token'),
+            token_uri=creds_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
+            client_id=creds_data.get('client_id'),
+            client_secret=creds_data.get('client_secret'),
+            scopes=creds_data.get('scopes', ['https://www.googleapis.com/auth/gmail.readonly']),
+        )
+        if creds.expired or not creds.valid:
+            creds.refresh(GoogleRequest())
+
+        service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
+        logger.info(f"[gmail] get_netflix_access_code para: {account_email}")
+
+        query = 'from:info@account.netflix.com newer_than:1h'
+        results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
+        messages = results.get('messages', [])
+        logger.info(f"[gmail] Emails Netflix encontrados: {len(messages)}")
+
+        link_patterns = [
+            r'https://www\.netflix\.com/account/travel/[^\s"\'<>\]]+',
+            r'https://www\.netflix\.com[^\s"\'<>\]]*travel[^\s"\'<>\]]*',
+        ]
+        code_patterns = [
+            r'[Cc]ódigo(?:\s+de\s+verificaci[oó]n)?[:\s]+([0-9]{6})\b',
+            r'[Vv]erification\s+[Cc]ode[:\s]+([0-9]{6})\b',
+            r'(?:^|\n)\s*([0-9]{6})\s*(?:\n|$)',
+        ]
+
+        for msg_ref in messages:
+            msg = service.users().messages().get(
+                userId='me', id=msg_ref['id'], format='full'
+            ).execute()
+
+            headers = msg.get('payload', {}).get('headers', [])
+            to_header = next(
+                (h['value'] for h in headers if h['name'].lower() == 'to'), ''
+            )
+            if account_email.lower() not in to_header.lower():
+                continue
+
+            body = _extract_email_body(msg)
+            logger.info(f"[gmail] Body preview: {body[:300]}")
+
+            # Buscar link primero (email tipo "Obtener código")
+            for pattern in link_patterns:
+                match = re.search(pattern, body)
+                if match:
+                    link = match.group(0).rstrip('.')
+                    logger.info(f"[gmail] Link encontrado: {link}")
+                    return {'type': 'link', 'value': link}
+
+            # Si no hay link, buscar código de 6 dígitos (email tipo "Código de verificación")
+            for cp in code_patterns:
+                code_match = re.search(cp, body, re.MULTILINE)
+                if code_match:
+                    code = code_match.group(1)
+                    # Excluir si está en línea con SRC: del footer
+                    code_pos = code_match.start()
+                    surrounding = body[max(0, code_pos-30):code_pos+40]
+                    if 'SRC:' in surrounding or 'src:' in surrounding:
+                        continue
+                    logger.info(f"[gmail] Código encontrado: {code}")
+                    return {'type': 'code', 'value': code}
+
+        return {'type': None, 'value': None}
+
+    except Exception as e:
+        logger.error(f"[gmail] get_netflix_access_code: {e}", exc_info=True)
+        return {'type': None, 'value': None}

@@ -227,10 +227,11 @@ async def _search_and_deliver_gmail(edit_func, context, session: dict, telegram_
     except Exception:
         pass
 
-    from services.gmail_service import get_netflix_household_link
-    link = await get_netflix_household_link(account_email, master_creds)
+    from services.gmail_service import get_netflix_access_code
+    result = await get_netflix_access_code(account_email, master_creds)
+    found = result.get('type') is not None
 
-    if link:
+    if found:
         from database.hogar import create_incident, update_account_health
         incident = await create_incident(
             user_id=session['user_id'], account_id=session['account_id'],
@@ -245,12 +246,20 @@ async def _search_and_deliver_gmail(edit_func, context, session: dict, telegram_
             [InlineKeyboardButton("✅ Sí, ya funciona", callback_data=f"hogar:resolved:{telegram_id}")],
             [InlineKeyboardButton("❌ Sigo bloqueado", callback_data=f"hogar:not_resolved:{telegram_id}")],
         ]
-        msg = (
-            "✅ *¡Tu código está listo!*\n\n"
-            f"🔗 Haz clic aquí para obtener tu código de 4 dígitos:\n{link}\n\n"
-            "⏰ Tienes *15 minutos* para usarlo.\n\n"
-            "Introdúcelo en tu TV y dime si pudiste acceder:"
-        )
+        if result['type'] == 'code':
+            msg = (
+                "✅ *¡Tu código de acceso está listo!*\n\n"
+                f"🔢 Tu código es: *`{result['value']}`*\n\n"
+                "⏰ Tienes *15 minutos* para usarlo.\n\n"
+                "Introdúcelo en tu TV y dime si pudiste acceder:"
+            )
+        else:
+            msg = (
+                "✅ *¡Tu código está listo!*\n\n"
+                f"🔗 Haz clic aquí para obtener tu código de 4 dígitos:\n{result['value']}\n\n"
+                "⏰ Tienes *15 minutos* para usarlo.\n\n"
+                "Introdúcelo en tu TV y dime si pudiste acceder:"
+            )
         try:
             await edit_func(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
         except Exception:
@@ -917,16 +926,23 @@ async def _admin_search_gmail(query, context, admin_tid: int, client_tid: int):
     session = json.loads(session_raw)
     account_email = session.get('account_email', '')
     await query.edit_message_text("⏳ Buscando en Gmail maestro...")
-    from services.gmail_service import get_netflix_household_link
-    link = await get_netflix_household_link(account_email, os.environ.get("GMAIL_MASTER_CREDENTIALS_JSON", ""))
-    if link:
-        wa_msg = (f"Hola! Aquí tu link de código Netflix:\n\n{link}\n\n"
-                  f"Tienes 15 min. Haz clic, copia el código de 4 dígitos e introdúcelo en tu TV.")
-        kb = [[InlineKeyboardButton("🔗 Abrir link", url=link)]]
-        await query.edit_message_text(
-            f"✅ *Link encontrado*\n\n🔗 {link}\n\n📋 *Para WhatsApp:*\n`{wa_msg}`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb),
-        )
+    from services.gmail_service import get_netflix_access_code
+    result = await get_netflix_access_code(account_email, os.environ.get("GMAIL_MASTER_CREDENTIALS_JSON", ""))
+    if result.get('type'):
+        if result['type'] == 'code':
+            wa_msg = f"Hola! Tu código Netflix es: *{result['value']}*\nTienes 15 min para introducirlo en tu TV."
+            await query.edit_message_text(
+                f"✅ *Código encontrado*\n\n🔢 Código: `{result['value']}`\n\n📋 *Para WhatsApp:*\n`{wa_msg}`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            wa_msg = (f"Hola! Aquí tu link Netflix:\n\n{result['value']}\n\n"
+                      f"Tienes 15 min. Haz clic, copia el código e introdúcelo en tu TV.")
+            kb = [[InlineKeyboardButton("🔗 Abrir link", url=result['value'])]]
+            await query.edit_message_text(
+                f"✅ *Link encontrado*\n\n🔗 {result['value']}\n\n📋 *Para WhatsApp:*\n`{wa_msg}`",
+                parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb),
+            )
     else:
         kb = [
             [InlineKeyboardButton("🔄 Buscar de nuevo", callback_data=f"hogar:search_gmail:{client_tid}")],
