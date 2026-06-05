@@ -407,18 +407,27 @@ async def analyze_netflix_screen(image_bytes: bytes) -> dict:
                 {
                     "type": "text",
                     "text": (
-                        "Analiza esta captura de pantalla de Netflix. "
+                        "Eres un asistente que analiza capturas de pantalla de Netflix en TVs. "
+                        "La imagen puede ser una foto tomada con celular de un televisor, "
+                        "por lo que puede tener reflejo, ángulo o baja calidad.\n\n"
+                        "Analiza la imagen y determina qué tipo de pantalla de Netflix muestra. "
                         "Responde SOLO con JSON válido, sin texto adicional ni markdown:\n"
                         "{\n"
                         '  "screen_type": "first_warning" | "second_warning" | "unknown",\n'
                         '  "has_travel_option": true | false,\n'
                         '  "has_update_household": true | false,\n'
-                        '  "description": "texto breve"\n'
+                        '  "description": "texto breve de lo que ves"\n'
                         "}\n\n"
-                        "Definiciones:\n"
-                        '- "first_warning": muestra "¿Entendemos mal?" CON botón "Estoy de viaje"\n'
-                        '- "second_warning": muestra opciones pero SOLO "Actualizar Hogar con Netflix" (sin "Estoy de viaje")\n'
-                        '- "unknown": no es una pantalla de restricción de hogar reconocible'
+                        "Reglas de clasificación:\n"
+                        '- "first_warning": la pantalla muestra "¿Entendemos mal?" o similar '
+                        'Y tiene botón "Estoy de viaje" visible\n'
+                        '- "second_warning": la pantalla muestra "¿Entendemos mal?" o similar '
+                        'pero SOLO tiene botón "Actualizar Hogar con Netflix" (sin "Estoy de viaje"). '
+                        'También clasifica aquí si ves "Tu TV no forma parte del Hogar" con '
+                        'opciones limitadas.\n'
+                        '- "unknown": no parece ser ninguna de las pantallas anteriores\n\n'
+                        "IMPORTANTE: Si el texto es parcialmente legible pero puedes inferir "
+                        "el tipo de pantalla, clasifícala. Prefiere clasificar sobre devolver unknown."
                     )
                 }
             ]
