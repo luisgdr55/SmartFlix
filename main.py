@@ -114,7 +114,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(handle_support_troubleshooting, pattern="^support:troubleshooting$"))
     app.add_handler(CallbackQueryHandler(handle_support_profile_status, pattern="^support:profile_status$"))
     app.add_handler(CallbackQueryHandler(handle_contact_admin, pattern="^support:contact_admin$"))
-    app.add_handler(CallbackQueryHandler(handle_support_platform_selected, pattern="^support:platform:"))
+    app.add_handler(CallbackQueryHandler(handle_support_platform_selected, pattern="^sup:plt:"))
 
     # Express queue
     app.add_handler(CallbackQueryHandler(handle_queue_join, pattern="^queue:join:"))
