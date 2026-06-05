@@ -146,11 +146,21 @@ async def get_netflix_household_link(account_email: str, master_credentials_json
             client_secret=creds_data.get('client_secret'),
             scopes=creds_data.get('scopes', ['https://www.googleapis.com/auth/gmail.readonly']),
         )
-        service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
 
-        query = 'from:info@account.netflix.com subject:"código de acceso temporal" newer_than:1h'
-        results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
+        # Forzar refresh del token antes de usarlo
+        from google.auth.transport.requests import Request as GoogleRequest
+        if creds.expired or not creds.valid:
+            logger.info("[gmail] Token expirado, refrescando...")
+            creds.refresh(GoogleRequest())
+            logger.info("[gmail] Token refrescado exitosamente")
+
+        service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
+        logger.info(f"[gmail] Buscando email Netflix para cuenta: {account_email}")
+
+        query = 'from:info@account.netflix.com newer_than:1h'
+        results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
         messages = results.get('messages', [])
+        logger.info(f"[gmail] Emails Netflix encontrados en bandeja: {len(messages)}")
 
         link_patterns = [
             r'https://www\.netflix\.com/account/travel/[^\s"\'<>\]]+',
@@ -167,6 +177,8 @@ async def get_netflix_household_link(account_email: str, master_credentials_json
                 (h['value'] for h in headers if h['name'].lower() == 'to'), ''
             )
 
+            # Validar que este email es para la cuenta del cliente
+            logger.info(f"[gmail] Email To: '{to_header}' vs cuenta: '{account_email}'")
             if account_email.lower() not in to_header.lower():
                 continue
 
@@ -178,5 +190,5 @@ async def get_netflix_household_link(account_email: str, master_credentials_json
 
         return None
     except Exception as e:
-        logger.error(f"[gmail] get_netflix_household_link: {e}")
+        logger.error(f"[gmail] get_netflix_household_link: {e}", exc_info=True)
         return None
