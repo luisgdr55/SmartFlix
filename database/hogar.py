@@ -95,7 +95,7 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
         restricted_ids = [r['profile_id'] for r in (restricted_result.data or []) if r.get('profile_id')]
 
         query = _client().table('profiles').select(
-            'id, name, pin, account_id, last_released,'
+            'id, profile_name, pin, account_id, last_released,'
             'accounts!inner(id, email, account_health, household_incidents)'
         ).eq('status', 'available').eq('profile_type', 'monthly')
 
@@ -128,7 +128,7 @@ async def get_netflix_subscription_for_user(user_id: str) -> Optional[dict]:
     try:
         result = _client().table('subscriptions').select(
             'id, end_date, profile_id,'
-            'profiles!inner(id, name, pin, account_id,'
+            'profiles!inner(id, profile_name, pin, account_id,'
             '  accounts!inner(id, email, account_health, household_incidents)),'
             'platforms!inner(name)'
         ).eq('user_id', str(user_id)).eq('status', 'active') \

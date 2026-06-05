@@ -324,7 +324,7 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
         await update_account_health(session['account_id'])
 
         new_email = target_profile.get('accounts', {}).get('email', '—')
-        new_name = target_profile.get('name', '—')
+        new_name = target_profile.get('profile_name', '—')
         new_pin = target_profile.get('pin', '—')
 
         sub_result = get_supabase().table('subscriptions').select('end_date') \
@@ -672,7 +672,7 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
         result = get_supabase().table('subscriptions').select(
             'id, end_date,'
             'users!inner(id, name, telegram_id, phone),'
-            'profiles!inner(id, name, account_id,'
+            'profiles!inner(id, profile_name, account_id,'
             '  accounts!inner(email, account_health)),'
             'platforms!inner(name)'
         ).eq('status', 'active').execute()
@@ -857,7 +857,7 @@ async def _admin_show_profiles_for_express(query, context, admin_tid: int, clien
         health = p.get('accounts', {}).get('account_health', 'healthy')
         h_e = {'healthy': '🟢', 'warning': '🟡'}.get(health, '⚪')
         kb.append([InlineKeyboardButton(
-            f"{h_e} {email[:28]} — {p.get('name', '—')}",
+            f"{h_e} {email[:28]} — {p.get('profile_name', '—')}",
             callback_data=f"hogar:select_profile:{client_tid}:auto:{p['id']}"
         )])
     kb.append([InlineKeyboardButton("❌ Cancelar", callback_data=f"hogar:cancel:{client_tid}")])
@@ -875,7 +875,7 @@ async def _admin_execute_express(query, context, admin_tid: int, client_tid: int
     session = json.loads(session_raw)
     from database import get_supabase
     p_result = get_supabase().table('profiles').select(
-        'id, name, pin, account_id, accounts!inner(id, email, account_health)'
+        'id, profile_name, pin, account_id, accounts!inner(id, email, account_health)'
     ).eq('id', profile_id).execute()
     if not p_result.data:
         await query.edit_message_text("❌ Perfil no encontrado.")
@@ -942,7 +942,7 @@ async def _admin_finalize_history(query, context, admin_tid: int, client_tid: in
         health = p.get('accounts', {}).get('account_health', 'healthy')
         h_e = {'healthy': '🟢', 'warning': '🟡'}.get(health, '⚪')
         kb.append([InlineKeyboardButton(
-            f"{h_e} {email[:28]} — {p.get('name', '—')}",
+            f"{h_e} {email[:28]} — {p.get('profile_name', '—')}",
             callback_data=f"hogar:finalize_history:{client_tid}:{incident_id}:{p['id']}"
         )])
     kb.append([InlineKeyboardButton(
@@ -969,7 +969,7 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
 
     if profile_id and profile_id != 'none':
         p_result = get_supabase().table('profiles').select(
-            'id, name, pin, account_id, accounts!inner(id, email, account_health)'
+            'id, profile_name, pin, account_id, accounts!inner(id, email, account_health)'
         ).eq('id', profile_id).execute()
         if not p_result.data:
             await query.edit_message_text("❌ Perfil no encontrado.")
@@ -988,7 +988,7 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
             ).eq('id', str(subscription_id)).execute()
 
         new_email = target.get('accounts', {}).get('email', '—')
-        new_name = target.get('name', '—')
+        new_name = target.get('profile_name', '—')
         new_pin = target.get('pin', '—')
 
         if incident_id and incident_id != 'N/A':
