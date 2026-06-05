@@ -105,11 +105,11 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
         result = query.execute()
         profiles = result.data or []
 
-        # Filtrar restringidos para este usuario y cuentas en estado restricted
+        # 3. Filtro Python: excluir restringidos y cuentas restricted
         profiles = [
             p for p in profiles
             if p['id'] not in restricted_ids
-            and p.get('accounts', {}).get('account_health') in ('healthy', 'warning')
+            and p.get('accounts', {}).get('account_health') not in ('restricted',)
         ]
 
         # Ordenar: cuentas healthy primero, luego por last_released más antiguo
@@ -117,6 +117,8 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
             0 if p.get('accounts', {}).get('account_health') == 'healthy' else 1,
             p.get('last_released') or '',
         ))
+        logger.info(f"[hogar] profiles disponibles para migración: {len(profiles)} "
+                    f"(excluidos: {len(restricted_ids)} restringidos para este usuario)")
         return profiles
     except Exception as e:
         logger.error(f"[hogar] get_available_profiles_for_migration: {e}")
