@@ -216,16 +216,22 @@ async def handle_support_platform_selected(update: Update, context: ContextTypes
     await query.answer()
 
     parts = query.data.split(":")
-    # format: support:platform:{platform_id}:{sub_id}
+    # format: sup:plt:{p_short}:{s_short}  (8-char UUID prefixes)
     if len(parts) < 4:
         return
 
-    sub_id = parts[3]
+    s_short = parts[3]   # primeros 8 chars del sub UUID
     state = from_middleware_get_state(update.effective_user.id)
+    telegram_id = update.effective_user.id
 
     try:
-        from database.subscriptions import get_subscription_by_id
-        sub = await get_subscription_by_id(sub_id)
+        # Recuperar subs activas del usuario y localizar la que coincide con el prefijo
+        user = await get_user_by_telegram_id(telegram_id)
+        if not user:
+            await query.edit_message_text("Error de usuario. Usa /start.")
+            return
+        subs = await get_user_active_subscriptions(str(user["id"]))
+        sub = next((s for s in subs if str(s.get("id", "")).startswith(s_short)), None)
         if not sub:
             await query.edit_message_text("Suscripción no encontrada.")
             return

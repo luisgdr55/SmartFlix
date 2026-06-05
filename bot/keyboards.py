@@ -160,8 +160,11 @@ def platform_select_for_support(subscriptions: list[dict]) -> InlineKeyboardMark
         seen.add(p_id)
         icon = platform.get("icon_emoji", "📺")
         name = platform.get("name", "?")
+        # Usar solo los primeros 8 chars de cada UUID para no superar 64 bytes
+        p_short = str(p_id)[:8] if p_id else "none"
+        s_short = str(sub.get('id', ''))[:8]
         buttons.append([
-            InlineKeyboardButton(f"{icon} {name}", callback_data=f"support:platform:{p_id}:{sub['id']}")
+            InlineKeyboardButton(f"{icon} {name}", callback_data=f"sup:plt:{p_short}:{s_short}")
         ])
     buttons.append([InlineKeyboardButton("🔙 Soporte", callback_data="menu:support")])
     return InlineKeyboardMarkup(buttons)
