@@ -379,12 +379,38 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
 
         for admin_id in _get_admin_ids():
             try:
+                # Obtener datos completos del cliente
+                _sb = get_supabase()
+                user_result = _sb.table('users').select(
+                    'name, phone, username'
+                ).eq('id', str(session['user_id'])).execute()
+                user_data = user_result.data[0] if user_result.data else {}
+
+                # Obtener credenciales de la cuenta origen
+                origin_result = _sb.table('accounts').select(
+                    'email, password'
+                ).eq('id', str(session['account_id'])).execute()
+                origin_data = origin_result.data[0] if origin_result.data else {}
+
+                client_name = user_data.get('name') or user_data.get('username') or 'Sin nombre'
+                client_phone = user_data.get('phone') or '—'
+                origin_email = origin_data.get('email', '—')
+                origin_password = origin_data.get('password', '—')
+
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=(
                         f"🔄 *Migración Express Ejecutada*\n\n"
-                        f"👤 Cliente TID: `{telegram_id}`\n"
-                        f"📤 Perfil origen liberado\n📥 Destino: `{new_email}` — {new_name}\n\n"
+                        f"👤 Cliente: *{client_name}*\n"
+                        f"📱 Teléfono: {client_phone}\n"
+                        f"🆔 TID: `{telegram_id}`\n\n"
+                        f"📤 *Cuenta origen liberada:*\n"
+                        f"  📧 Email: `{origin_email}`\n"
+                        f"  🔑 Clave: `{origin_password}`\n\n"
+                        f"📥 *Destino asignado:*\n"
+                        f"  📧 Email: `{new_email}`\n"
+                        f"  👤 Perfil: {new_name}\n"
+                        f"  🔢 PIN: `{new_pin}`\n\n"
                         f"📋 *Ticket WhatsApp:*\n`{wa_ticket}`"
                     ),
                     parse_mode=ParseMode.MARKDOWN,
