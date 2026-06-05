@@ -53,7 +53,7 @@ def build_telegram_app() -> Application:
     from bot.handlers.afiliar import cmd_afiliar, handle_afiliar_callback
     from bot.handlers.renovar import cmd_renovar, handle_renovar_callback
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
-    from bot.handlers.hogar import cmd_hogar, handle_hogar_callback, handle_hogar_photo
+    from bot.handlers.hogar import cmd_hogar, handle_hogar_callback, handle_hogar_photo, start_hogar_support
 
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
 
@@ -108,6 +108,7 @@ def build_telegram_app() -> Application:
 
     # Support
     app.add_handler(CallbackQueryHandler(show_support_menu, pattern="^menu:support$"))
+    app.add_handler(CallbackQueryHandler(start_hogar_support, pattern=r"^support:hogar$"))
     app.add_handler(CallbackQueryHandler(handle_support_credentials, pattern="^support:credentials$"))
     app.add_handler(CallbackQueryHandler(handle_support_verification_code, pattern="^support:verification_code$"))
     app.add_handler(CallbackQueryHandler(handle_support_troubleshooting, pattern="^support:troubleshooting$"))
@@ -236,8 +237,11 @@ async def _text_message_router(update: Update, context) -> None:
     elif await _handle_hogar_admin_search_route(update, context, telegram_id):
         pass  # handled by hogar admin search
     elif update.message and update.message.text and \
-            update.message.text.strip().lower() in ("soporte hogar", "hogar netflix", "restriccion hogar",
-                                                     "restricción hogar", "bloqueo hogar"):
+            any(kw in update.message.text.lower().strip() for kw in {
+                "hogar", "hogar netflix", "soporte hogar",
+                "restriccion hogar", "soporte netflix",
+                "bloqueo hogar", "netflix bloqueado",
+            }):
         from bot.handlers.hogar import start_hogar_support
         await start_hogar_support(update, context)
     elif update.message and update.message.text and \

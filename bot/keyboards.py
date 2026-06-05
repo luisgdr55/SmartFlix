@@ -84,6 +84,7 @@ def support_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔐 Código de verificación", callback_data="support:verification_code")],
         [InlineKeyboardButton("🔧 Guía de problemas", callback_data="support:troubleshooting")],
         [InlineKeyboardButton("📊 Estado de mi perfil", callback_data="support:profile_status")],
+        [InlineKeyboardButton("🏠 Restricción de Hogar Netflix", callback_data="support:hogar")],
         [InlineKeyboardButton("👨‍💼 Hablar con soporte", callback_data="support:contact_admin")],
         [InlineKeyboardButton("🔙 Menú principal", callback_data="menu:main")],
     ])

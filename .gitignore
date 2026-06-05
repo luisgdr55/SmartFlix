@@ -1,5 +1,6 @@
 # Credenciales — NUNCA subir
 .env
+generate_gmail_token.py
 
 # Python
 __pycache__/
