@@ -443,6 +443,7 @@ async def analyze_netflix_screen(image_bytes: bytes) -> dict:
     for attempt in range(2):
         try:
             response = await _call(messages, temperature=0.1, max_tokens=200)
+            logger.info(f"[gemini] raw response (attempt {attempt+1}): {response[:500]}")
             clean = response.strip()
             # Limpiar posible markdown
             if '```' in clean:
