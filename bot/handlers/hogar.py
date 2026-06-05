@@ -71,27 +71,40 @@ def _get_admin_ids() -> list[int]:
 # ════════════════════════════════════════════════════════════════
 
 async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Punto de entrada cuando el cliente escribe 'soporte', 'bloqueo', etc."""
+    """Punto de entrada: mensaje directo o callback query del menú de soporte."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+
     telegram_id = update.effective_user.id
 
-    from database.users import get_user_by_telegram_id
+    from database.users import get_or_create_user
     from database.hogar import get_netflix_subscription_for_user
 
-    user = await get_user_by_telegram_id(telegram_id)
+    tg_user = update.effective_user
+    user = await get_or_create_user(telegram_id, tg_user.username, tg_user.full_name)
     if not user:
-        await update.message.reply_text("❌ No pude identificar tu cuenta. Intenta de nuevo.")
+        msg = "❌ No pude identificar tu cuenta. Intenta de nuevo."
+        if query:
+            await query.edit_message_text(msg)
+        else:
+            await update.message.reply_text(msg)
         return
 
     sub = await get_netflix_subscription_for_user(str(user['id']))
 
     if not sub:
-        kb = [[InlineKeyboardButton("🔄 Ver planes", callback_data="menu:subscribe")]]
-        await update.message.reply_text(
+        kb = [[InlineKeyboardButton("🔄 Renovar suscripción", callback_data="menu:subscribe")]]
+        msg = (
             "⚠️ *Sin suscripción Netflix activa*\n\n"
-            "Para recibir soporte primero debes tener un servicio activo.",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(kb),
+            "Para recibir soporte primero debes tener un servicio activo."
         )
+        if query:
+            await query.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN,
+                                           reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN,
+                                             reply_markup=InlineKeyboardMarkup(kb))
         return
 
     account = sub['profiles']['accounts']
@@ -104,7 +117,7 @@ async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE
     }
     _set_state(telegram_id, STATE_WAITING_PHOTO, session)
 
-    await update.message.reply_text(
+    instructions = (
         "🔒 *Soporte — Restricción de Hogar Netflix*\n\n"
         "Sigue estos pasos antes de enviarme la foto:\n\n"
         "1️⃣ En tu TV verás: *\"Tu TV no forma parte del Hogar...\"*\n"
@@ -112,9 +125,12 @@ async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE
         "3️⃣ Aparecerá una segunda pantalla con opciones\n"
         "4️⃣ Toma una foto clara de esa *segunda pantalla*\n"
         "5️⃣ Envíame esa foto aquí\n\n"
-        "📸 *Cuando tengas la foto lista, envíala en este chat.*",
-        parse_mode=ParseMode.MARKDOWN,
+        "📸 *Cuando tengas la foto lista, envíala en este chat.*"
     )
+    if query:
+        await query.edit_message_text(instructions, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(instructions, parse_mode=ParseMode.MARKDOWN)
 
 
 async def handle_hogar_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
