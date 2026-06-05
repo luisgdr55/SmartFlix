@@ -395,56 +395,75 @@ async def analyze_netflix_screen(image_bytes: bytes) -> dict:
     Analiza una captura de pantalla de Netflix para determinar el tipo de
     restricción de hogar. Retorna un dict con screen_type y flags.
     """
+    # Detectar MIME type real de la imagen
+    if image_bytes[:4] == b'\x89PNG':
+        mime_type = "image/png"
+    elif image_bytes[:2] == b'\xff\xd8':
+        mime_type = "image/jpeg"
+    elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+        mime_type = "image/webp"
+    else:
+        mime_type = "image/jpeg"  # fallback
+
     image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+
     messages = [
         {
             "role": "user",
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                    "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}
                 },
                 {
                     "type": "text",
                     "text": (
-                        "Eres un asistente que analiza capturas de pantalla de Netflix en TVs. "
-                        "La imagen puede ser una foto tomada con celular de un televisor, "
-                        "por lo que puede tener reflejo, ángulo o baja calidad.\n\n"
-                        "Analiza la imagen y determina qué tipo de pantalla de Netflix muestra. "
-                        "Responde SOLO con JSON válido, sin texto adicional ni markdown:\n"
-                        "{\n"
-                        '  "screen_type": "first_warning" | "second_warning" | "unknown",\n'
-                        '  "has_travel_option": true | false,\n'
-                        '  "has_update_household": true | false,\n'
-                        '  "description": "texto breve de lo que ves"\n'
-                        "}\n\n"
-                        "Reglas de clasificación:\n"
-                        '- "first_warning": la pantalla muestra "¿Entendemos mal?" o similar '
-                        'Y tiene botón "Estoy de viaje" visible\n'
-                        '- "second_warning": la pantalla muestra "¿Entendemos mal?" o similar '
-                        'pero SOLO tiene botón "Actualizar Hogar con Netflix" (sin "Estoy de viaje"). '
-                        'También clasifica aquí si ves "Tu TV no forma parte del Hogar" con '
-                        'opciones limitadas.\n'
-                        '- "unknown": no parece ser ninguna de las pantallas anteriores\n\n'
-                        "IMPORTANTE: Si el texto es parcialmente legible pero puedes inferir "
-                        "el tipo de pantalla, clasifícala. Prefiere clasificar sobre devolver unknown."
+                        "Eres un asistente que analiza fotos de pantallas de Netflix en TVs. "
+                        "La imagen es una foto tomada con celular de un televisor, "
+                        "puede tener reflejo, ángulo o baja iluminación.\n\n"
+                        "Analiza y responde SOLO con JSON válido sin markdown:\n"
+                        '{"screen_type":"first_warning"|"second_warning"|"unknown",'
+                        '"has_travel_option":true|false,'
+                        '"has_update_household":true|false,'
+                        '"description":"texto breve"}\n\n'
+                        "Clasificación:\n"
+                        '- "first_warning": ves "¿Entendemos mal?" CON botón "Estoy de viaje"\n'
+                        '- "second_warning": ves "¿Entendemos mal?" con SOLO "Actualizar Hogar con Netflix" '
+                        'sin opción de viaje. O ves "Tu TV no forma parte del Hogar" con opciones limitadas.\n'
+                        '- "unknown": no es ninguna pantalla de restricción de hogar Netflix\n\n'
+                        "Si el texto es parcialmente legible pero puedes inferir el tipo, clasifícalo. "
+                        "Prefiere clasificar antes que devolver unknown."
                     )
                 }
             ]
         }
     ]
-    try:
-        response = await _call(messages, temperature=0.1, max_tokens=150)
-        clean = response.strip().replace('```json', '').replace('```', '').strip()
-        return json.loads(clean)
-    except Exception as e:
-        logger.error(f"[gemini] analyze_netflix_screen: {e}")
-        return {
-            "screen_type": "unknown",
-            "has_travel_option": False,
-            "has_update_household": False,
-            "description": "Error al analizar"
-        }
+
+    # Retry hasta 2 veces si falla
+    for attempt in range(2):
+        try:
+            response = await _call(messages, temperature=0.1, max_tokens=200)
+            clean = response.strip()
+            # Limpiar posible markdown
+            if '```' in clean:
+                clean = clean.split('```')[1]
+                if clean.startswith('json'):
+                    clean = clean[4:]
+            clean = clean.strip()
+            result = json.loads(clean)
+            logger.info(f"[gemini] analyze_netflix_screen: {result}")
+            return result
+        except json.JSONDecodeError as e:
+            logger.error(f"[gemini] analyze_netflix_screen JSON parse error (attempt {attempt+1}): {e} | raw: {response[:200]}")
+        except Exception as e:
+            logger.error(f"[gemini] analyze_netflix_screen error (attempt {attempt+1}): {e}")
+
+    return {
+        "screen_type": "unknown",
+        "has_travel_option": False,
+        "has_update_household": False,
+        "description": "Error al analizar"
+    }
 
 
 def get_conversation_context(telegram_id: int) -> list[dict]:
