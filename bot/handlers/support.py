@@ -104,12 +104,12 @@ async def _send_credentials(query, sub: dict) -> None:
             await query.edit_message_text("No hay perfil asignado a este servicio.")
             return
 
-        profile = await get_profile_by_id(str(profile_id))
+        profile = sub.get("profiles") or {}
         if not profile:
             await query.edit_message_text("No se encontró el perfil.")
             return
 
-        account = await get_account_by_id(str(profile.get("account_id", "")))
+        account = profile.get("accounts") or {}
         if not account:
             await query.edit_message_text("No se encontró la cuenta.")
             return
@@ -117,7 +117,6 @@ async def _send_credentials(query, sub: dict) -> None:
         platform_str = f"{platform.get('icon_emoji','')} {platform.get('name','')}"
 
         if profile.get("is_extra_member") and profile.get("extra_email"):
-            # Cupo adicional de hogar — tiene sus propias credenciales
             credentials_text = (
                 f"🏠 <b>Cupo Adicional de Hogar</b>\n"
                 f"📺 Plataforma: {platform_str}\n\n"
@@ -141,8 +140,8 @@ async def _send_credentials(query, sub: dict) -> None:
             reply_markup=support_keyboard(),
         )
     except Exception as e:
-        logger.error(f"Error in _send_credentials: {e}")
-        await query.edit_message_text("Error al obtener credenciales.")
+        logger.error(f"Error in _send_credentials: {e}", exc_info=True)
+        await query.edit_message_text("Error al obtener credenciales. Contacta a soporte.")
 
 
 async def handle_support_verification_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

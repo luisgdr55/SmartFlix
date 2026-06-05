@@ -85,7 +85,7 @@ async def get_user_active_subscriptions(user_id: str) -> list[dict]:
         sb = get_supabase()
         result = (
             sb.table("subscriptions")
-            .select("*, platforms(name, slug, icon_emoji), profiles(profile_name, pin, account_id, accounts(email))")
+            .select("*, platforms(name, slug, icon_emoji), profiles(profile_name, pin, account_id, is_extra_member, extra_email, extra_password, accounts(email, password))")
             .eq("user_id", user_id)
             .in_("status", ["active", "pending_payment"])
             .order("end_date", desc=False)
