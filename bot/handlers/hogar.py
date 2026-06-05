@@ -490,13 +490,64 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     elif action == "not_resolved":
+        # Notificar a todos los admins con contexto completo del cliente
+        session = _get_session(client_tid)
+        subscription_id = session.get("subscription_id") if session else None
+        incident_id     = session.get("incident_id")     if session else None
+
+        client_name  = "Desconocido"
+        client_phone = "N/A"
+        acc_email    = "N/A"
+
+        try:
+            db = get_supabase()
+            u_res = db.table('users').select('name, phone').eq('telegram_id', str(client_tid)).limit(1).execute()
+            if u_res.data:
+                client_name  = u_res.data[0].get('name')  or client_name
+                client_phone = u_res.data[0].get('phone') or client_phone
+
+            if subscription_id:
+                s_res = db.table('subscriptions').select(
+                    'profiles!inner(accounts!inner(email))'
+                ).eq('id', str(subscription_id)).limit(1).execute()
+                if s_res.data:
+                    acc_email = (s_res.data[0]
+                                 .get('profiles', {})
+                                 .get('accounts', {})
+                                 .get('email', acc_email))
+        except Exception as exc:
+            logger.error(f"[hogar] not_resolved: error obteniendo datos para admin: {exc}")
+
+        admin_msg = (
+            f"⚠️ *Cliente sigue con problemas tras migración*\n\n"
+            f"👤 *Cliente:* {client_name}\n"
+            f"📞 *Teléfono:* {client_phone}\n"
+            f"🆔 *Telegram ID:* `{client_tid}`\n"
+            f"📧 *Cuenta origen:* `{acc_email}`\n"
+            f"🎫 *Incidente ID:* `{incident_id or 'N/A'}`\n\n"
+            f"El cliente indicó que el problema *no fue resuelto*. "
+            f"Por favor revisa y contacta manualmente."
+        )
+        for admin_id in _get_admin_ids():
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=admin_msg,
+                    parse_mode="Markdown"
+                )
+            except Exception as exc:
+                logger.error(f"[hogar] not_resolved: no se pudo notificar admin {admin_id}: {exc}")
+
         kb = [
             [InlineKeyboardButton("🔄 Buscar código de nuevo", callback_data=f"hogar:retry_gmail:{client_tid}")],
-            [InlineKeyboardButton("🔄 Migrar perfil", callback_data=f"hogar:no_travel:{client_tid}")],
-            [InlineKeyboardButton("👨‍💼 Hablar con admin", callback_data=f"hogar:escalate:{client_tid}")],
+            [InlineKeyboardButton("🔄 Migrar perfil",          callback_data=f"hogar:no_travel:{client_tid}")],
+            [InlineKeyboardButton("👨‍💼 Hablar con admin",       callback_data=f"hogar:escalate:{client_tid}")],
         ]
-        await query.edit_message_text("😔 Entendido. ¿Qué deseas hacer?",
-                                       reply_markup=InlineKeyboardMarkup(kb))
+        await query.edit_message_text(
+            "😔 Entendido. Ya notifiqué a un administrador para que te contacte.\n"
+            "¿Qué más deseas intentar?",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
     elif action == "escalate":
         session = _get_session(client_tid)
