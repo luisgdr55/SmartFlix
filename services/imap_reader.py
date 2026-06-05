@@ -60,6 +60,7 @@ def _imap_search_once(
     imap_password: str,
     imap_host: str,
     imap_port: int,
+    account_email: str = "",
 ) -> Optional[str]:
     """
     Blocking IMAP call — always run via asyncio.to_thread().
@@ -119,6 +120,12 @@ def _imap_search_once(
                 from_header = msg.get("From", "").lower()
                 if senders and not any(domain in from_header for domain in senders):
                     continue
+
+                # 3. Filtro por destinatario (To:) — solo si se especificó account_email
+                if account_email:
+                    to_header = msg.get("To", "").lower()
+                    if account_email.lower() not in to_header:
+                        continue
 
                 # Extract plain-text body
                 body = _extract_body(msg)
@@ -181,6 +188,7 @@ async def poll_for_code(
     platform_slug: str,
     since_ts: float,
     timeout: int = FALLBACK_TIMEOUT_SECONDS,
+    account_email: str = "",
 ) -> Optional[str]:
     """
     Async IMAP poller.
@@ -204,6 +212,7 @@ async def poll_for_code(
             imap_password,
             imap_host,
             imap_port,
+            account_email,
         )
         if code:
             logger.info(f"Verification code found for '{platform_slug}': {code}")

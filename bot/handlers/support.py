@@ -179,9 +179,17 @@ async def handle_support_verification_code(update: Update, context: ContextTypes
             active_subs.append(s)
 
         if not active_subs:
+            from telegram import InlineKeyboardMarkup, InlineKeyboardButton
             await query.edit_message_text(
-                "No tienes suscripciones activas.",
-                reply_markup=support_keyboard(),
+                "⚠️ *No tienes suscripciones activas*\n\n"
+                "Para solicitar un código de verificación necesitas "
+                "tener un servicio activo y vigente.\n\n"
+                "¿Deseas renovar?",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Renovar", callback_data="menu:subscribe"),
+                    InlineKeyboardButton("🔙 Volver", callback_data="support:back"),
+                ]])
             )
             return
 
@@ -297,7 +305,12 @@ async def _fetch_verification_code(query, sub: dict, telegram_id: int) -> None:
     # Background task: poll IMAP then notify client or escalate to admin
     async def _bg_task():
         try:
-            code = await poll_for_code(platform_slug, since_ts, timeout=240)
+            # Extraer email de la cuenta del cliente para filtrar por To:
+            profile_data = sub.get("profiles") or {}
+            account_data = profile_data.get("accounts") or {}
+            account_email = account_data.get("email", "")
+
+            code = await poll_for_code(platform_slug, since_ts, timeout=240, account_email=account_email)
         except Exception as e:
             logger.error(f"poll_for_code crashed for {platform_slug}: {e}", exc_info=True)
             code = None
