@@ -218,7 +218,7 @@ async def handle_hogar_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ── Gmail: buscar y entregar link ───────────────────────────────
 
 async def _search_and_deliver_gmail(edit_func, context, session: dict, telegram_id: int):
-    """Busca el link de Netflix en Gmail maestro y lo entrega (reintenta 3 veces c/90 seg)."""
+    """Busca el link de Netflix en Gmail maestro y lo entrega."""
     account_email = session.get('account_email', '')
     master_creds = os.environ.get("GMAIL_MASTER_CREDENTIALS_JSON", "")
 
@@ -228,17 +228,7 @@ async def _search_and_deliver_gmail(edit_func, context, session: dict, telegram_
         pass
 
     from services.gmail_service import get_netflix_household_link
-    link = None
-    for attempt in range(3):
-        if attempt > 0:
-            await asyncio.sleep(90)
-            try:
-                await edit_func(f"⏳ Reintento {attempt + 1}/3 — buscando código...")
-            except Exception:
-                pass
-        link = await get_netflix_household_link(account_email, master_creds)
-        if link:
-            break
+    link = await get_netflix_household_link(account_email, master_creds)
 
     if link:
         from database.hogar import create_incident, update_account_health
@@ -268,13 +258,22 @@ async def _search_and_deliver_gmail(edit_func, context, session: dict, telegram_
                                             parse_mode=ParseMode.MARKDOWN,
                                             reply_markup=InlineKeyboardMarkup(kb))
     else:
+        # No encontrado — dar opción de reintentar manualmente sin bloquear
+        kb = [
+            [InlineKeyboardButton("🔄 Buscar de nuevo", callback_data=f"hogar:retry_gmail:{telegram_id}")],
+            [InlineKeyboardButton("👨‍💼 Contactar admin", callback_data=f"hogar:escalate:{telegram_id}")],
+        ]
+        msg = (
+            "⏳ *El email aún no ha llegado*\n\n"
+            "Netflix puede tardar 1-2 minutos en enviar el código.\n\n"
+            "Espera un momento y pulsa *'Buscar de nuevo'*:"
+        )
         try:
-            await edit_func("⚠️ No encontré el email de Netflix tras 3 búsquedas. Notificando al administrador...")
+            await edit_func(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
         except Exception:
-            pass
-        await _notify_admin_escalation(context, session, telegram_id,
-                                        "Email de Netflix no llegó al Gmail maestro tras 3 intentos")
-        _clear_state(telegram_id)
+            await context.bot.send_message(chat_id=telegram_id, text=msg,
+                                            parse_mode=ParseMode.MARKDOWN,
+                                            reply_markup=InlineKeyboardMarkup(kb))
 
 
 # ── Escalación al admin ─────────────────────────────────────────
