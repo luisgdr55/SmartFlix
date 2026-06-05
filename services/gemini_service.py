@@ -457,7 +457,12 @@ async def analyze_netflix_screen(image_bytes: bytes) -> dict:
         except json.JSONDecodeError as e:
             logger.error(f"[gemini] analyze_netflix_screen JSON parse error (attempt {attempt+1}): {e} | raw: {response[:200]}")
         except Exception as e:
-            logger.error(f"[gemini] analyze_netflix_screen error (attempt {attempt+1}): {e}")
+            error_body = ""
+            try:
+                error_body = e.response.text if hasattr(e, 'response') else str(e)
+            except Exception:
+                error_body = str(e)
+            logger.error(f"[gemini] analyze_netflix_screen error (attempt {attempt+1}): {error_body}")
 
     return {
         "screen_type": "unknown",
