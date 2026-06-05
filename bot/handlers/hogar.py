@@ -634,6 +634,19 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
                                        reply_markup=InlineKeyboardMarkup(kb))
 
+    elif action == "list_page":
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        await _show_hogar_client_list(query, context, page=page)
+
+    elif action == "search_mode":
+        if not _is_admin(caller_tid):
+            return
+        _redis().setex(_ADMIN_SEARCH_KEY.format(tid=caller_tid), 300, "1")
+        await query.edit_message_text(
+            "🔍 Escribe el nombre, teléfono o Telegram ID del cliente:",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
     elif action == "cancel":
         _clear_state(client_tid)
         await query.edit_message_text("❌ Operación cancelada.")
@@ -644,15 +657,78 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
 # ════════════════════════════════════════════════════════════════
 
 async def cmd_hogar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /hogar — solo admin."""
+    """Comando /hogar — solo admin. Muestra lista de clientes Netflix activos."""
     telegram_id = update.effective_user.id
     if not _is_admin(telegram_id):
         return
-    _redis().setex(_ADMIN_SEARCH_KEY.format(tid=telegram_id), 300, "1")
-    await update.message.reply_text(
-        "🔒 *Soporte Hogar Netflix — Admin*\n\nIngresa nombre, teléfono o Telegram ID del cliente:",
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    await _show_hogar_client_list(update.message, context, page=0)
+
+
+async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
+    """Muestra lista paginada de clientes con suscripción Netflix activa."""
+    from database import get_supabase
+    PAGE_SIZE = 8
+    try:
+        result = get_supabase().table('subscriptions').select(
+            'id, end_date,'
+            'users!inner(id, name, telegram_id, phone),'
+            'profiles!inner(id, name, account_id,'
+            '  accounts!inner(email, account_health)),'
+            'platforms!inner(name)'
+        ).eq('status', 'active').execute()
+
+        subs = [s for s in (result.data or [])
+                if 'netflix' in (s.get('platforms', {}).get('name', '') or '').lower()]
+
+        total = len(subs)
+        page_subs = subs[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+        kb = []
+        for s in page_subs:
+            user = s.get('users', {})
+            name = user.get('name') or user.get('phone') or 'Sin nombre'
+            email = s.get('profiles', {}).get('accounts', {}).get('email', '—')
+            tid = user.get('telegram_id', '')
+            health = s.get('profiles', {}).get('accounts', {}).get('account_health', 'healthy')
+            h_e = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(health, '⚪')
+            kb.append([InlineKeyboardButton(
+                f"{h_e} {name[:20]} — {email[:22]}",
+                callback_data=f"hogar:admin_manage:{tid}"
+            )])
+
+        # Paginación
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"hogar:list_page:{page - 1}"))
+        if (page + 1) * PAGE_SIZE < total:
+            nav.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"hogar:list_page:{page + 1}"))
+        if nav:
+            kb.append(nav)
+
+        kb.append([InlineKeyboardButton("🔍 Buscar por nombre", callback_data="hogar:search_mode")])
+
+        total_pages = max(1, -(-total // PAGE_SIZE))
+        text = (
+            f"🏠 *Soporte Hogar Netflix — Admin*\n\n"
+            f"Clientes Netflix activos: {total}\n"
+            f"Página {page + 1}/{total_pages}\n\n"
+            f"Selecciona un cliente:"
+        )
+
+        if hasattr(msg_or_query, 'edit_message_text'):
+            await msg_or_query.edit_message_text(
+                text, parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+        else:
+            await msg_or_query.reply_text(
+                text, parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+    except Exception as e:
+        logger.error(f"[hogar] _show_hogar_client_list: {e}")
+        if hasattr(msg_or_query, 'reply_text'):
+            await msg_or_query.reply_text("❌ Error cargando lista de clientes.")
 
 
 async def handle_hogar_admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
