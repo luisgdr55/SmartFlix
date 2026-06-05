@@ -726,9 +726,11 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
                 reply_markup=InlineKeyboardMarkup(kb)
             )
     except Exception as e:
-        logger.error(f"[hogar] _show_hogar_client_list: {e}")
+        logger.error(f"[hogar] _show_hogar_client_list: {e}", exc_info=True)
         if hasattr(msg_or_query, 'reply_text'):
             await msg_or_query.reply_text("❌ Error cargando lista de clientes.")
+        elif hasattr(msg_or_query, 'edit_message_text'):
+            await msg_or_query.edit_message_text("❌ Error cargando lista de clientes.")
 
 
 async def handle_hogar_admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
