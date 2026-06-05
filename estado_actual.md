@@ -13,6 +13,34 @@
 
 ## Historial de cambios
 
+### 2026-06-05 — Sesión 15 — Módulo códigos de verificación + fix credenciales soporte
+
+#### Features implementadas
+
+| # | Feature | Archivos | Commit |
+|---|---------|----------|--------|
+| 1 | Filtro por email de cuenta en poll_for_code (IMAP) — evita entregar códigos de otras cuentas | `services/imap_reader.py` | d0e4d6e |
+| 2 | Validación de suscripción activa antes de entregar código de verificación | `bot/handlers/support.py` | d0e4d6e |
+| 3 | accounts(email, password) incluido en get_user_active_subscriptions | `database/subscriptions.py` | d0e4d6e |
+| 4 | _send_credentials sin queries extra — lee datos del join directamente | `bot/handlers/support.py` | bf5e23b |
+| 5 | Fix Button_data_invalid — callback_data dentro del límite 64 bytes | `bot/keyboards.py`, `main.py` | 00e0173 |
+| 6 | handle_support_platform_selected localiza sub por prefijo UUID | `bot/handlers/support.py` | 1103319 |
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Ver credenciales fallaba con "Error al obtener credenciales" — get_account_by_id innecesario | `bot/handlers/support.py` | bf5e23b |
+| 2 | Selección de plataforma no respondía — patrón callback_data no coincidía | `main.py` | 00e0173 |
+| 3 | Código de verificación podía entregarse de cuenta incorrecta — sin filtro To: | `services/imap_reader.py` | d0e4d6e |
+
+#### Notas operativas
+- El filtro por To: en IMAP requiere que los emails de plataformas estén reenviados a la bandeja central con el header To: original preservado
+- El módulo de códigos de verificación (IMAP) es independiente del flujo hogar (Gmail API)
+- Pendiente prueba real de códigos de verificación con cliente activo de cada plataforma
+
+---
+
 ### 2026-06-05 — Sesión 14 — Módulo Soporte Hogar Netflix
 
 #### Features implementadas

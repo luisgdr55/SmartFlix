@@ -18,7 +18,7 @@
 | 7 | Sistema de puntos por lealtad | Retención | 🟡 Media | 📋 Pendiente |
 | 8 | Recordatorio inteligente de actividad | Retención | 🟡 Media | 📋 Pendiente |
 | 9 | Planes familiares/compartidos | Adquisición | 🟠 Media-Alta | 📋 Pendiente |
-| 10 | Asistente de soporte con IA | Automatización | 🟡 Media | 📋 Pendiente |
+| 10 | Asistente de soporte con IA | Automatización | 🟡 Media | ⚠️ Parcial — códigos verificación IMAP y flujo hogar Gemini implementados (Sesión 15) |
 | 11 | Encuesta de satisfacción post-activación | Retención | 🟢 Baja | 📋 Pendiente |
 | 12 | Dashboard de métricas de negocio | Visibilidad admin | 🟢 Baja | 📋 Pendiente |
 | 13 | Segmentación CRM para broadcasts | Visibilidad admin | 🟡 Media | 📋 Pendiente |
