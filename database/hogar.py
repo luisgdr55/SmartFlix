@@ -96,7 +96,8 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
 
         query = _client().table('profiles').select(
             'id, profile_name, pin, account_id, last_released,'
-            'accounts!inner(id, email, account_health, household_incidents)'
+            'accounts!inner(id, email, account_health, household_incidents,'
+            '  platforms!inner(name))'
         ).eq('status', 'available').eq('profile_type', 'monthly')
 
         if exclude_account_id:
@@ -104,6 +105,14 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
 
         result = query.execute()
         profiles = result.data or []
+
+        # Filtrar solo perfiles de cuentas Netflix
+        profiles = [
+            p for p in profiles
+            if 'netflix' in (
+                p.get('accounts', {}).get('platforms', {}).get('name', '') or ''
+            ).lower()
+        ]
 
         # 3. Filtro Python: excluir restringidos y cuentas restricted
         profiles = [
