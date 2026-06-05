@@ -861,48 +861,52 @@ async def handle_hogar_admin_search(update: Update, context: ContextTypes.DEFAUL
 
 
 async def _show_admin_client_panel(msg_or_query, context, user: dict, admin_tid: int):
+    logger.info(f"[hogar] _show_admin_client_panel user={user.get('id')} admin={admin_tid}")
     from database.hogar import get_netflix_subscription_for_user, get_incident_history
-    client_tid = user.get('telegram_id', '')
-    sub = await get_netflix_subscription_for_user(str(user['id']))
-    incidents = await get_incident_history(str(user['id']))
+    try:
+        client_tid = user.get('telegram_id', '')
+        sub = await get_netflix_subscription_for_user(str(user['id']))
+        incidents = await get_incident_history(str(user['id']))
 
-    if not sub:
-        text = f"👤 *{user.get('name', 'Cliente')}*\n\n❌ Sin suscripción Netflix activa."
-    else:
-        account = sub['profiles']['accounts']
-        h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(
-            account.get('account_health', 'healthy'), '⚪'
-        )
-        text = (
-            f"👤 *{user.get('name', 'Cliente')}*\n"
-            f"📧 Cuenta: `{account.get('email', '—')}`\n"
-            f"🏥 Salud: {h_emoji} {account.get('account_health', '—').capitalize()} "
-            f"({account.get('household_incidents', 0)} incidentes)\n"
-            f"📅 Vence: {sub.get('end_date', '—')}\n"
-            f"🔁 Incidentes totales: {len(incidents)}"
-        )
-        session = {
-            'user_id': str(user['id']),
-            'client_tid': client_tid,
-            'subscription_id': str(sub['id']),
-            'account_id': str(account['id']),
-            'profile_id': str(sub['profiles']['id']),
-            'account_email': account.get('email', ''),
-        }
-        _redis().setex(_ADMIN_SESSION_KEY.format(tid=admin_tid), _TTL, json.dumps(session))
+        if not sub:
+            text = f"👤 *{user.get('name', 'Cliente')}*\n\n❌ Sin suscripción Netflix activa."
+        else:
+            account = sub['profiles']['accounts']
+            h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(
+                account.get('account_health', 'healthy'), '⚪'
+            )
+            text = (
+                f"👤 *{user.get('name', 'Cliente')}*\n"
+                f"📧 Cuenta: `{account.get('email', '—')}`\n"
+                f"🏥 Salud: {h_emoji} {account.get('account_health', '—').capitalize()} "
+                f"({account.get('household_incidents', 0)} incidentes)\n"
+                f"📅 Vence: {sub.get('end_date', '—')}\n"
+                f"🔁 Incidentes totales: {len(incidents)}"
+            )
+            session = {
+                'user_id': str(user['id']),
+                'client_tid': client_tid,
+                'subscription_id': str(sub['id']),
+                'account_id': str(account['id']),
+                'profile_id': str(sub['profiles']['id']),
+                'account_email': account.get('email', ''),
+            }
+            _redis().setex(_ADMIN_SESSION_KEY.format(tid=admin_tid), _TTL, json.dumps(session))
 
-    kb = [
-        [InlineKeyboardButton("🔑 Buscar código Gmail", callback_data=f"hogar:search_gmail:{client_tid}")],
-        [InlineKeyboardButton("🚀 Migrar Express", callback_data=f"hogar:do_express:{client_tid}"),
-         InlineKeyboardButton("📦 Con Historial", callback_data=f"hogar:do_history:{client_tid}")],
-        [InlineKeyboardButton("📋 Ver incidentes", callback_data=f"hogar:view_incidents:{client_tid}")],
-    ]
-    if hasattr(msg_or_query, 'edit_message_text'):
-        await msg_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
-                                              reply_markup=InlineKeyboardMarkup(kb))
-    else:
-        await msg_or_query.reply_text(text, parse_mode=ParseMode.MARKDOWN,
-                                       reply_markup=InlineKeyboardMarkup(kb))
+        kb = [
+            [InlineKeyboardButton("🔑 Buscar código Gmail", callback_data=f"hogar:search_gmail:{client_tid}")],
+            [InlineKeyboardButton("🚀 Migrar Express", callback_data=f"hogar:do_express:{client_tid}"),
+             InlineKeyboardButton("📦 Con Historial", callback_data=f"hogar:do_history:{client_tid}")],
+            [InlineKeyboardButton("📋 Ver incidentes", callback_data=f"hogar:view_incidents:{client_tid}")],
+        ]
+        if hasattr(msg_or_query, 'edit_message_text'):
+            await msg_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                                  reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await msg_or_query.reply_text(text, parse_mode=ParseMode.MARKDOWN,
+                                           reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.error(f"[hogar] _show_admin_client_panel error: {e}", exc_info=True)
 
 
 async def _admin_search_gmail(query, context, admin_tid: int, client_tid: int):
