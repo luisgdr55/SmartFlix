@@ -351,6 +351,186 @@ Desde el panel web, el admin puede enviar mensajes segmentados a: todos los clie
 
 ---
 
+### FASE 6 — Módulo de Soporte y Tickets (Netflix + General)
+
+#### 6A — Sistema de tickets de soporte vía Telegram
+**Descripción:** Cliente reporta problema (bloqueo de hogar, credenciales, etc.)
+El bot recopila evidencia y datos, genera ticket al admin.
+
+**Flujo completo:**
+1. Cliente escribe "bloqueo" / "problema" o pulsa botón de soporte
+2. Bot pregunta tipo de problema
+3. Si es bloqueo Netflix → ofrece las 3 opciones (ver 6B)
+4. Si es otro problema → recopila descripción + captura de pantalla opcional
+5. Ticket llega al admin con botones: [✅ En proceso] [🔧 Resolver] [❌ Rechazar]
+6. Admin pulsa "En proceso" → cliente recibe: 
+   "✅ Pago verificado. Tu solicitud está en proceso. 
+   Te notificaremos en cuanto esté lista. ⏱️ Tiempo estimado: minutos u horas."
+7. Admin resuelve → ingresa nuevas credenciales si aplica → 
+   cliente recibe ticket completo automáticamente
+
+**Cambios en BD:**
+```sql
+CREATE TABLE support_tickets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id),
+    type VARCHAR(50), -- home_restriction|credential_issue|premium_member|migration|other
+    status VARCHAR(20) DEFAULT 'open', -- open|in_progress|resolved|rejected
+    evidence_url TEXT,
+    details JSONB,
+    admin_notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+```
+
+**Archivos:**
+- `bot/handlers/soporte.py` — nuevo módulo
+- `database/tickets.py` — CRUD de tickets
+- `admin_panel/router.py` — endpoints de gestión de tickets
+- `admin_panel/templates/tickets.html` — vista de tickets en panel web
+- `main.py` — registro de handlers
+
+---
+
+#### 6B — Planes Netflix diferenciados con flujo de bloqueo de hogar
+
+**Los 3 planes Netflix:**
+
+| Plan | Precio | Descripción |
+|------|--------|-------------|
+| Netflix Estándar | $5/mes | Perfil compartido. Incluye 1 migración de perfil gratis si hay bloqueo de hogar. A partir de la 2da migración: $1 adicional. Conserva historial. |
+| Netflix Miembro Extra Premium | $7/mes | Perfil con TUS credenciales personales (email y PIN que tú eliges). Sin restricciones de hogar. Perfil 100% tuyo. |
+| Netflix Miembro Extra Premium + Migración de historial | $8/mes | Todo lo del plan Premium + migración de tu historial actual al nuevo perfil. |
+
+**Flujo cuando cliente reporta bloqueo (Estándar):**
+
+Bot detecta bloqueo → muestra opciones:
+1️⃣ MIGRACIÓN ESTÁNDAR GRATUITA (si es primera vez)
+Tu perfil con TODO tu historial pasa a otra cuenta.
+Sin costo adicional. ⏱️ Minutos u horas.
+2️⃣ UPGRADE A MIEMBRO EXTRA PREMIUM — $7/mes
+Tu propio perfil con tus credenciales.
+Nunca más bloqueos de hogar.
+📧 Email propio | 🔢 PIN que tú eliges
+3️⃣ UPGRADE PREMIUM + HISTORIAL — $8/mes
+Todo lo anterior + migramos tu historial actual.
+Conservas todo lo que has visto.
+
+**Si elige Premium o Premium+Historial:**
+Bot solicita en pasos:
+- 📧 Correo electrónico personal
+- 📱 Número de teléfono
+- 👤 Nombre de perfil deseado
+- 🔢 PIN deseado (4 dígitos)
+- 💳 Comprobante de pago
+
+Admin recibe ticket completo → aprueba pago → cliente recibe:
+*"✅ Pago verificado. Tu solicitud está en proceso..."*
+→ Admin configura → cierra ticket → cliente recibe credenciales automáticamente.
+
+**Archivos:**
+- `bot/handlers/soporte.py` — flujo de bloqueo Netflix
+- `database/tickets.py` — tipos de ticket Netflix
+- `database/platforms.py` — nuevos planes Netflix (3 variantes)
+
+---
+
+### FASE 7 — PWA SmartFlixVE (Portal Web del Cliente)
+
+#### 7A — Landing Page
+**Descripción:** Página pública de alto impacto visual
+
+**Secciones:**
+- **Hero animado** — banner con efecto parallax mostrando logos de plataformas disponibles, tagline y CTA "Suscríbete ahora"
+- **Precios en tiempo real** — cards por plataforma con precio calculado en Bs (tasa Binance live)
+- **¿Por qué SmartFlixVE?** — sección FAQ explicando diferencias vs competencia barata: estabilidad, historial conservado, soporte real, nivel corporativo
+- **Clientes fieles** — banner/carrusel animado con nombres o avatares de clientes más antiguos (con su permiso) o contador de clientes activos
+- **Recomendaciones de contenido** — sección visual de películas/series recomendadas, administrable desde el dashboard
+- **Planes Netflix explicados** — comparativa visual de los 3 planes con beneficios detallados
+- **Testimonios** — sección de reseñas de clientes reales
+- **CTA final** — formulario de contacto por WhatsApp o inicio de suscripción
+
+**Stack:** React + Tailwind CSS, desplegado en Railway o Vercel
+
+---
+
+#### 7B — Portal del Cliente (autenticado)
+**Descripción:** Dashboard personal del suscriptor
+
+**Funciones:**
+- Login por número de teléfono + código de verificación, o por email
+- Ver suscripciones activas con fecha de vencimiento y estado
+- Ver credenciales completas (email, perfil, PIN)
+- Renovar suscripción y subir comprobante de pago
+- Ver estado de tickets de soporte en tiempo real
+- Reportar problema con botón directo
+- Historial de pagos y suscripciones anteriores
+- Sistema de referidos: código único + link copiable + QR
+- Notificaciones push para vencimientos y respuestas de soporte
+
+---
+
+#### 7C — Sección de Recomendaciones (administrable)
+**Descripción:** Curador de contenido administrado desde el dashboard
+
+**Funciones para el admin:**
+- Desde Panel Admin → nueva sección "Contenido Destacado"
+- Admin busca título → TMDB trae poster, sinopsis, rating automáticamente
+- Admin elige plataforma, añade nota personalizada ("¡Imperdible! ⭐")
+- Publica en la PWA al instante
+- Los clientes ven recomendaciones filtradas por sus plataformas suscritas
+
+**Cambios en BD:**
+```sql
+CREATE TABLE featured_content (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    platform_id UUID REFERENCES platforms(id),
+    title VARCHAR(200),
+    tmdb_id INT,
+    poster_url TEXT,
+    synopsis TEXT,
+    rating FLOAT,
+    admin_note TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
+#### 7D — Ideas creativas adicionales para la PWA
+
+| Idea | Descripción | Impacto |
+|------|-------------|---------|
+| **Contador en vivo** | "127 clientes disfrutando SmartFlixVE ahora mismo" — número real de suscripciones activas | Alto — genera FOMO |
+| **Badge de cliente fiel** | Insignias para clientes según antigüedad: 🥉 3 meses, 🥈 6 meses, 🥇 1 año | Alto — gamificación y retención |
+| **Calculadora de ahorro** | "Con SmartFlixVE ahorras $X vs contratar Netflix directamente" | Alto — justifica precio |
+| **Comparativa vs competencia** | Tabla visual: SmartFlixVE vs cuentas baratas — estabilidad, soporte, historial | Alto — educa al cliente |
+| **WhatsApp flotante** | Botón fijo de WhatsApp para soporte inmediato | Medio — accesibilidad |
+| **Modo oscuro** | Toggle dark/light mode — estética gaming/streaming | Medio — UX |
+| **Certificado de cliente** | PDF descargable personalizado con nombre del cliente y tiempo de membresía | Medio — fidelización emocional |
+| **Referido con preview** | Cuando alguien abre un link de referido, ve quién lo invitó con foto/nombre | Alto — personalización |
+| **Notificación de estreno** | Push notification cuando admin publica nuevo contenido recomendado | Alto — engagement |
+| **Estado del servicio** | Página de status en tiempo real: "Todos los servicios operativos ✅" | Medio — confianza corporativa |
+
+---
+
+## Resumen de todas las fases
+
+| Fase | Descripción | Estado |
+|------|-------------|--------|
+| ✅ Fase 1 | Reportes mejorados y costos | Implementado |
+| ✅ Fase 2 | Afiliación manual mejorada | Implementado |
+| ✅ Fase 3 | /renovar para admin | Implementado |
+| 📋 Fase 4 | Afiliación y renovación vía Dashboard web | Pendiente |
+| 📋 Fase 5 | Migración de cuenta Netflix vía Telegram | Pendiente |
+| 📋 Fase 6 | Módulo de soporte y tickets + planes Netflix | Pendiente |
+| 📋 Fase 7 | PWA SmartFlixVE completa | Pendiente |
+
+---
+
 ## Notas de implementación
 
 - Todas las features de broadcast deben incluir rate limiting (máx 30 mensajes/segundo) para respetar límites de Telegram Bot API

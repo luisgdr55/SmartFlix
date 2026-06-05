@@ -53,6 +53,7 @@ def build_telegram_app() -> Application:
     from bot.handlers.afiliar import cmd_afiliar, handle_afiliar_callback
     from bot.handlers.renovar import cmd_renovar, handle_renovar_callback
     from bot.handlers._prices_addon import cmd_precios, handle_prices_callback
+    from bot.handlers.hogar import cmd_hogar, handle_hogar_callback, handle_hogar_photo
 
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).defaults(Defaults(do_quote=False)).build()
 
@@ -81,6 +82,7 @@ def build_telegram_app() -> Application:
     app.add_handler(CommandHandler("precios", cmd_precios))
     app.add_handler(CommandHandler("afiliar", cmd_afiliar))
     app.add_handler(CommandHandler("renovar", cmd_renovar))
+    app.add_handler(CommandHandler("hogar", cmd_hogar))
 
     # =====================================================
     # CALLBACK QUERY HANDLERS
@@ -128,6 +130,9 @@ def build_telegram_app() -> Application:
 
     # Price management callbacks (prices:*)
     app.add_handler(CallbackQueryHandler(handle_prices_callback, pattern="^prices:"))
+
+    # Hogar Netflix callbacks (hogar:*)
+    app.add_handler(CallbackQueryHandler(handle_hogar_callback, pattern="^hogar:"))
 
     # Admin natural-language action callbacks (admin_nl:*)
     from bot.handlers.ai_admin import handle_admin_nl_callback
@@ -177,8 +182,13 @@ def build_telegram_app() -> Application:
     # Contact sharing - for pre-registered client linking by phone
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact_shared))
 
-    # Photos - for payment comprobantes
-    app.add_handler(MessageHandler(filters.PHOTO, handle_payment_image))
+    # Photos - hogar flow takes priority, then payment comprobantes
+    async def _photo_router(update, context):
+        handled = await handle_hogar_photo(update, context)
+        if not handled:
+            await handle_payment_image(update, context)
+
+    app.add_handler(MessageHandler(filters.PHOTO, _photo_router))
 
     # Text messages - for name capture and admin flows
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text_message_router))
@@ -223,6 +233,13 @@ async def _text_message_router(update: Update, context) -> None:
         await _handle_admin_edit_client_flow(update, context, state)
     elif state and state.startswith("admin:verif:send:"):
         await _handle_admin_verif_send_flow(update, context, state)
+    elif await _handle_hogar_admin_search_route(update, context, telegram_id):
+        pass  # handled by hogar admin search
+    elif update.message and update.message.text and \
+            update.message.text.strip().lower() in ("soporte hogar", "hogar netflix", "restriccion hogar",
+                                                     "restricción hogar", "bloqueo hogar"):
+        from bot.handlers.hogar import start_hogar_support
+        await start_hogar_support(update, context)
     elif update.message and update.message.text and \
             update.message.text.strip().lower() in ("renovar", "pagar", "renovación", "renovacion"):
         from bot.handlers.subscription import show_subscription_platforms
@@ -235,6 +252,12 @@ async def _text_message_router(update: Update, context) -> None:
         else:
             from bot.handlers.ai_chat import handle_free_text
             await handle_free_text(update, context)
+
+
+async def _handle_hogar_admin_search_route(update: Update, context, telegram_id: int) -> bool:
+    """Delegate to hogar admin search handler; returns True if handled."""
+    from bot.handlers.hogar import handle_hogar_admin_search
+    return await handle_hogar_admin_search(update, context)
 
 
 async def _handle_admin_addcuenta_flow(update: Update, context, state: str) -> None:

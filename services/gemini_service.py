@@ -390,6 +390,54 @@ def store_conversation_message(telegram_id: int, role: str, content: str) -> Non
         logger.warning(f"Error storing conversation message: {e}")
 
 
+async def analyze_netflix_screen(image_bytes: bytes) -> dict:
+    """
+    Analiza una captura de pantalla de Netflix para determinar el tipo de
+    restricción de hogar. Retorna un dict con screen_type y flags.
+    """
+    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Analiza esta captura de pantalla de Netflix. "
+                        "Responde SOLO con JSON válido, sin texto adicional ni markdown:\n"
+                        "{\n"
+                        '  "screen_type": "first_warning" | "second_warning" | "unknown",\n'
+                        '  "has_travel_option": true | false,\n'
+                        '  "has_update_household": true | false,\n'
+                        '  "description": "texto breve"\n'
+                        "}\n\n"
+                        "Definiciones:\n"
+                        '- "first_warning": muestra "¿Entendemos mal?" CON botón "Estoy de viaje"\n'
+                        '- "second_warning": muestra opciones pero SOLO "Actualizar Hogar con Netflix" (sin "Estoy de viaje")\n'
+                        '- "unknown": no es una pantalla de restricción de hogar reconocible'
+                    )
+                }
+            ]
+        }
+    ]
+    try:
+        response = await _call(messages, temperature=0.1, max_tokens=150)
+        clean = response.strip().replace('```json', '').replace('```', '').strip()
+        return json.loads(clean)
+    except Exception as e:
+        logger.error(f"[gemini] analyze_netflix_screen: {e}")
+        return {
+            "screen_type": "unknown",
+            "has_travel_option": False,
+            "has_update_household": False,
+            "description": "Error al analizar"
+        }
+
+
 def get_conversation_context(telegram_id: int) -> list[dict]:
     """Obtiene el historial de conversación desde Redis."""
     try:

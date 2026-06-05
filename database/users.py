@@ -264,6 +264,40 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
         return None
 
 
+async def search_users(query: str) -> list[dict]:
+    """Busca usuarios por nombre, teléfono o Telegram ID (para panel admin)."""
+    try:
+        sb = get_supabase()
+        # Intentar búsqueda por Telegram ID si es numérico
+        if query.lstrip('-').isdigit():
+            result = sb.table("users").select(
+                "id, name, username, phone, telegram_id, full_name"
+            ).eq("telegram_id", int(query)).execute()
+            if result.data:
+                return result.data
+
+        # Búsqueda por nombre o teléfono
+        by_name = sb.table("users").select(
+            "id, name, username, phone, telegram_id, full_name"
+        ).ilike("name", f"%{query}%").limit(10).execute()
+
+        by_phone = sb.table("users").select(
+            "id, name, username, phone, telegram_id, full_name"
+        ).ilike("phone", f"%{query}%").limit(5).execute()
+
+        seen = set()
+        results = []
+        for row in (by_name.data or []) + (by_phone.data or []):
+            uid = str(row.get('id', ''))
+            if uid not in seen:
+                seen.add(uid)
+                results.append(row)
+        return results
+    except Exception as e:
+        logger.error(f"Error in search_users: {e}")
+        return []
+
+
 async def get_all_clients_for_admin(page: int = 0, page_size: int = 10) -> tuple[list[dict], int]:
     """Return paginated users list for admin affiliation. Returns (rows, total_count)."""
     try:

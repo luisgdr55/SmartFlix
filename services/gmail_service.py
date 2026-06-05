@@ -123,3 +123,60 @@ def _extract_email_body(message: dict) -> str:
     except Exception as e:
         logger.error(f"Error extracting email body: {e}")
         return ""
+
+
+async def get_netflix_household_link(account_email: str, master_credentials_json: str) -> Optional[str]:
+    """
+    Busca en el Gmail maestro el link de verificación de hogar de Netflix
+    para la cuenta indicada (filtrado por header To:).
+    Retorna el link 'Obtener código' o None si no lo encuentra.
+    """
+    import json
+    if not master_credentials_json:
+        logger.warning("[gmail] GMAIL_MASTER_CREDENTIALS_JSON no configurado")
+        return None
+
+    try:
+        creds_data = json.loads(master_credentials_json)
+        creds = Credentials(
+            token=creds_data.get('token'),
+            refresh_token=creds_data.get('refresh_token'),
+            token_uri=creds_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
+            client_id=creds_data.get('client_id'),
+            client_secret=creds_data.get('client_secret'),
+            scopes=creds_data.get('scopes', ['https://www.googleapis.com/auth/gmail.readonly']),
+        )
+        service = build('gmail', 'v1', credentials=creds, cache_discovery=False)
+
+        query = 'from:info@account.netflix.com subject:"código de acceso temporal" newer_than:1h'
+        results = service.users().messages().list(userId='me', q=query, maxResults=15).execute()
+        messages = results.get('messages', [])
+
+        link_patterns = [
+            r'https://www\.netflix\.com/account/travel/[^\s"\'<>\]]+',
+            r'https://www\.netflix\.com[^\s"\'<>\]]*travel[^\s"\'<>\]]*',
+        ]
+
+        for msg_ref in messages:
+            msg = service.users().messages().get(
+                userId='me', id=msg_ref['id'], format='full'
+            ).execute()
+
+            headers = msg.get('payload', {}).get('headers', [])
+            to_header = next(
+                (h['value'] for h in headers if h['name'].lower() == 'to'), ''
+            )
+
+            if account_email.lower() not in to_header.lower():
+                continue
+
+            body = _extract_email_body(msg)
+            for pattern in link_patterns:
+                match = re.search(pattern, body)
+                if match:
+                    return match.group(0).rstrip('.')
+
+        return None
+    except Exception as e:
+        logger.error(f"[gmail] get_netflix_household_link: {e}")
+        return None

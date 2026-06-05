@@ -108,6 +108,21 @@ async def update_profile_pin(profile_id: str, new_pin: str) -> bool:
         return False
 
 
+async def get_profile_by_subscription(subscription_id: str) -> Optional[dict]:
+    """Retorna el perfil asociado a una suscripción activa."""
+    try:
+        result = get_supabase().table('subscriptions').select(
+            'profile_id, profiles!inner(id, profile_name, pin, status, account_id,'
+            '  accounts!inner(id, email, account_health))'
+        ).eq('id', str(subscription_id)).execute()
+        if result.data:
+            return result.data[0].get('profiles')
+        return None
+    except Exception as e:
+        logger.error(f"[profiles] get_profile_by_subscription: {e}")
+        return None
+
+
 async def count_available_profiles(platform_id: str, profile_type: str = "monthly") -> int:
     """Count available profiles for a platform type."""
     try:
