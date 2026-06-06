@@ -374,23 +374,25 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
             [InlineKeyboardButton("✅ Ya funciona", callback_data=f"hogar:resolved:{telegram_id}")],
             [InlineKeyboardButton("❌ Sigo con problemas", callback_data=f"hogar:not_resolved:{telegram_id}")],
         ]
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=(
-                    f"🎉 *¡Migración completada!*\n\n"
-                    f"📧 Email: `{new_email}`\n"
-                    f"🔑 Clave: `{new_password}`\n"
-                    f"👤 Perfil: {new_name}\n"
-                    f"🔢 PIN: `{new_pin}`\n"
-                    f"📅 Vence: {end_date}\n\n"
-                    f"En tu TV: cierra sesión e inicia con estas credenciales. ¿Pudiste acceder?"
-                ),
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup(kb),
-            )
-        except Exception:
-            pass
+        if telegram_id is not None:
+            try:
+                await context.bot.send_message(
+                    chat_id=telegram_id,
+                    text=(
+                        f"🎉 *¡Migración completada!*\n\n"
+                        f"📧 Email: `{new_email}`\n"
+                        f"🔑 Clave: `{new_password}`\n"
+                        f"👤 Perfil: {new_name}\n"
+                        f"🔢 PIN: `{new_pin}`\n"
+                        f"📅 Vence: {end_date}\n\n"
+                        f"En tu TV: cierra sesión e inicia con estas credenciales. ¿Pudiste acceder?"
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=InlineKeyboardMarkup(kb),
+                )
+            except Exception:
+                pass
+        # Si telegram_id es None (cliente sin Telegram), el ticket llega solo al admin
 
         for admin_id in _get_admin_ids():
             try:
@@ -1106,13 +1108,47 @@ async def _admin_show_profiles_for_express(query, context, admin_tid: int, clien
         await query.edit_message_text("❌ Sesión expirada. Usa /hogar de nuevo.")
         return
     session = json.loads(session_raw)
-    from database.hogar import get_available_profiles_for_migration
-    available = await get_available_profiles_for_migration(session['user_id'], session.get('account_id'))
+
+    from database.hogar import get_available_profiles_for_migration, get_incident_history
+
+    # Obtener perfiles disponibles (ya filtrados: sin incidentes del usuario en 45 días,
+    # sin cuentas restricted, excluyendo cuenta actual)
+    available = await get_available_profiles_for_migration(
+        session['user_id'], session.get('account_id')
+    )
+
+    # Obtener incidentes recientes del usuario para mostrar contexto al admin
+    incidents = await get_incident_history(session['user_id'], limit=20)
+    cutoff_45 = datetime.now(timezone.utc) - timedelta(days=45)
+    recent_incidents = [
+        i for i in incidents
+        if i.get('type') in ('express', 'history')
+        and i.get('created_at') and
+        datetime.fromisoformat(i['created_at'].replace('Z', '+00:00')) > cutoff_45
+    ]
+    n_excluded = len(set(
+        i['profile_id'] for i in recent_incidents if i.get('profile_id')
+    ))
+
     if not available:
-        await query.edit_message_text("❌ No hay perfiles disponibles para migración en este momento.")
+        context_msg = ""
+        if n_excluded:
+            context_msg = f"\n\n⚠️ {n_excluded} perfil(es) excluidos por incidentes previos (cooling 45 días)."
+        await query.edit_message_text(
+            f"❌ No hay perfiles disponibles para migración en este momento.{context_msg}"
+        )
         return
-    _redis().setex(f"hogar_profiles:{admin_tid}", _TTL,
-                   json.dumps([p['id'] for p in available[:6]]))
+
+    # Guardar IDs en Redis para resolver en select_profile (patrón índice — evita >64 bytes)
+    _redis().setex(
+        f"hogar_profiles:{admin_tid}", _TTL,
+        json.dumps([p['id'] for p in available[:6]])
+    )
+
+    context_line = ""
+    if n_excluded:
+        context_line = f"⚠️ {n_excluded} perfil(es) excluidos por cooling 45 días\n\n"
+
     kb = []
     for i, p in enumerate(available[:6]):
         email = p.get('accounts', {}).get('email', '—')
@@ -1123,9 +1159,14 @@ async def _admin_show_profiles_for_express(query, context, admin_tid: int, clien
             callback_data=f"hogar:select_profile:{client_tid}:{i}"
         )])
     kb.append([InlineKeyboardButton("❌ Cancelar", callback_data=f"hogar:cancel:{client_tid}")])
-    await query.edit_message_text("🚀 *Selecciona perfil destino:*",
-                                   parse_mode=ParseMode.MARKDOWN,
-                                   reply_markup=InlineKeyboardMarkup(kb))
+
+    await query.edit_message_text(
+        f"🚀 *Selecciona perfil destino:*\n\n"
+        f"{context_line}"
+        f"Solo se muestran perfiles sin incidentes previos de este cliente en 45 días.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
 
 
 async def _admin_execute_express(query, context, admin_tid: int, client_tid: int, profile_id: str):
@@ -1143,7 +1184,13 @@ async def _admin_execute_express(query, context, admin_tid: int, client_tid: int
         await query.edit_message_text("❌ Perfil no encontrado.")
         return
     await query.edit_message_text("⚡ Ejecutando migración express...")
-    success = await _execute_express_migration(context, session, p_result.data[0], int(client_tid))
+    # Resolver telegram_id numérico — clientes sin Telegram usan uid_UUID
+    if str(client_tid).startswith("uid_"):
+        numeric_tid = None  # sin Telegram, _execute_express_migration no enviará mensaje
+    else:
+        numeric_tid = int(client_tid)
+
+    success = await _execute_express_migration(context, session, p_result.data[0], numeric_tid)
     if success:
         await query.edit_message_text("✅ Migración express completada. El cliente fue notificado.")
     else:
