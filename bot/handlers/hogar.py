@@ -666,41 +666,47 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "select_sub":
         if not _is_admin(caller_tid):
             return
-        sub_prefix = parts[3] if len(parts) > 3 else None
-        if not sub_prefix:
+        sub_index_raw = parts[3] if len(parts) > 3 else None
+        if sub_index_raw is None or not sub_index_raw.isdigit():
             await query.edit_message_text("❌ Error al seleccionar suscripción.")
             return
-        # Buscar subs del cliente y seleccionar la que coincide con el prefijo
-        from database.users import get_user_by_telegram_id
-        from database.hogar import get_netflix_subscription_for_user
+        sub_index = int(sub_index_raw)
+
+        # Leer subs guardadas en Redis
+        subs_raw = _redis().get(f"hogar_subs:{caller_tid}")
+        if not subs_raw:
+            await query.edit_message_text("❌ Sesión expirada. Usa /hogar de nuevo.")
+            return
+        subs_list = json.loads(subs_raw)
+        if sub_index >= len(subs_list):
+            await query.edit_message_text("❌ Índice de suscripción inválido.")
+            return
+        sub_data = subs_list[sub_index]
+
+        # Obtener datos del usuario
         if str(client_tid).startswith("uid_"):
             uid = str(client_tid).replace("uid_", "")
             from database import get_supabase as _gc
             result = _gc().table('users').select('*').eq('id', uid).execute()
             user = result.data[0] if result.data else None
         else:
+            from database.users import get_user_by_telegram_id
             user = await get_user_by_telegram_id(int(client_tid))
+
         if not user:
             await query.edit_message_text("❌ Cliente no encontrado.")
             return
-        subs = await get_netflix_subscription_for_user(str(user['id']))
-        sub = next((s for s in subs if str(s['id']).startswith(sub_prefix)), None)
-        if not sub:
-            await query.edit_message_text("❌ Suscripción no encontrada.")
-            return
-        account = sub['profiles']['accounts']
+
         session = {
             'user_id': str(user['id']),
-            'client_tid': client_tid,
-            'subscription_id': str(sub['id']),
-            'account_id': str(account['id']),
-            'profile_id': str(sub['profiles']['id']),
-            'account_email': account.get('email', ''),
+            'client_tid': str(client_tid),
+            'subscription_id': sub_data['id'],
+            'account_id': sub_data['account_id'],
+            'profile_id': sub_data['profile_id'],
+            'account_email': sub_data['account_email'],
         }
         _redis().setex(_ADMIN_SESSION_KEY.format(tid=caller_tid), _TTL, json.dumps(session))
-        h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(
-            account.get('account_health', 'healthy'), '⚪'
-        )
+
         kb = [
             [InlineKeyboardButton("🔑 Buscar código Gmail", callback_data=f"hogar:search_gmail:{client_tid}")],
             [InlineKeyboardButton("🚀 Migrar Express", callback_data=f"hogar:do_express:{client_tid}"),
@@ -708,9 +714,8 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("📋 Ver incidentes", callback_data=f"hogar:view_incidents:{client_tid}")],
         ]
         text = (
-            f"📧 Cuenta seleccionada: `{account.get('email', '—')}`\n"
-            f"🏥 Salud: {h_emoji} {account.get('account_health', '—').capitalize()}\n"
-            f"📅 Vence: {sub.get('end_date', '—')[:10]}"
+            f"📧 Cuenta: `{sub_data['account_email']}`\n"
+            f"📅 Vence: {sub_data['end_date'][:10] if sub_data['end_date'] else '—'}"
         )
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
                                        reply_markup=InlineKeyboardMarkup(kb))
@@ -991,13 +996,20 @@ async def _show_admin_client_panel(msg_or_query, context, user: dict, admin_tid:
         else:
             # Cliente con múltiples suscripciones Netflix — mostrar selector
             text = f"👤 *{user.get('name', 'Cliente')}*\n\n⚠️ Tiene {len(subs)} suscripciones Netflix activas.\nSelecciona cuál gestionar:"
+            # Guardar lista de subs en Redis indexada para no superar 64 bytes en callback
+            subs_index = [{'id': str(s['id']), 'account_id': str(s['profiles']['accounts']['id']),
+                           'profile_id': str(s['profiles']['id']),
+                           'account_email': s['profiles']['accounts'].get('email', ''),
+                           'end_date': s.get('end_date', '—')} for s in subs]
+            _redis().setex(f"hogar_subs:{admin_tid}", _TTL, json.dumps(subs_index))
+
             kb = []
             for i, sub in enumerate(subs):
                 account = sub['profiles']['accounts']
                 end = sub.get('end_date', '—')[:10]
                 kb.append([InlineKeyboardButton(
                     f"📧 {account.get('email', '—')[:30]} · vence {end}",
-                    callback_data=f"hogar:select_sub:{client_tid}:{str(sub['id'])[:12]}"
+                    callback_data=f"hogar:select_sub:{client_tid}:{i}"
                 )])
             kb.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"hogar:cancel:{client_tid}")])
             if hasattr(msg_or_query, 'edit_message_text'):
