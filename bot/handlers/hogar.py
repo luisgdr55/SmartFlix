@@ -633,9 +633,11 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         account_email = session.get('account_email', '—')
         for admin_id in _get_admin_ids():
             try:
+                # Guardar incident_id en Redis para no superar 64 bytes en callback
+                _redis().setex(f"hogar_incident_admin:{admin_id}", _TTL, str(incident_id))
                 kb = [
-                    [InlineKeyboardButton("⏳ En proceso", callback_data=f"hogar:history_inprogress:{client_tid}:{incident_id}")],
-                    [InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}:{incident_id}")],
+                    [InlineKeyboardButton("⏳ En proceso", callback_data=f"hogar:history_inprogress:{client_tid}")],
+                    [InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}")],
                 ]
                 await context.bot.send_message(
                     chat_id=admin_id,
@@ -761,7 +763,7 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "history_inprogress":
         if not _is_admin(caller_tid):
             return
-        incident_id = parts[3] if len(parts) > 3 else None
+        incident_id = _redis().get(f"hogar_incident_admin:{caller_tid}") or None
         try:
             await context.bot.send_message(
                 chat_id=client_tid,
@@ -769,7 +771,7 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
             )
         except Exception:
             pass
-        kb = [[InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}:{incident_id}")]]
+        kb = [[InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}")]]
         await query.edit_message_text(
             "⏳ Caso marcado *En Proceso*. El cliente fue notificado.\n"
             "Cuando termines la migración, pulsa 'Completada'.",
@@ -779,14 +781,15 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "complete_history":
         if not _is_admin(caller_tid):
             return
-        incident_id = parts[3] if len(parts) > 3 else None
+        # Leer incident_id desde Redis
+        incident_id = _redis().get(f"hogar_incident_admin:{caller_tid}") or None
         await _admin_finalize_history(query, context, caller_tid, client_tid, incident_id)
 
     elif action == "finalize_history":
         if not _is_admin(caller_tid):
             return
-        incident_id = parts[3] if len(parts) > 3 else None
-        profile_id = parts[4] if len(parts) > 4 else None
+        incident_id = _redis().get(f"hogar_incident_admin:{caller_tid}") or None
+        profile_id = parts[3] if len(parts) > 3 else None
         await _admin_complete_history_with_profile(query, context, caller_tid,
                                                     client_tid, incident_id, profile_id)
 
@@ -1145,9 +1148,11 @@ async def _admin_create_history_ticket(query, context, admin_tid: int, client_ti
         )
     except Exception:
         pass
+    # Guardar incident_id en Redis para no superar 64 bytes en callback
+    _redis().setex(f"hogar_incident_admin:{admin_tid}", _TTL, str(incident_id))
     kb = [
-        [InlineKeyboardButton("⏳ En proceso", callback_data=f"hogar:history_inprogress:{client_tid}:{incident_id}")],
-        [InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}:{incident_id}")],
+        [InlineKeyboardButton("⏳ En proceso", callback_data=f"hogar:history_inprogress:{client_tid}")],
+        [InlineKeyboardButton("✅ Completada", callback_data=f"hogar:complete_history:{client_tid}")],
     ]
     await query.edit_message_text(
         f"📦 *Ticket — Migración con Historial*\n\n"
@@ -1178,11 +1183,11 @@ async def _admin_finalize_history(query, context, admin_tid: int, client_tid: in
         h_e = {'healthy': '🟢', 'warning': '🟡'}.get(health, '⚪')
         kb.append([InlineKeyboardButton(
             f"{h_e} {email[:28]} — {p.get('profile_name', '—')}",
-            callback_data=f"hogar:finalize_history:{client_tid}:{incident_id}:{p['id']}"
+            callback_data=f"hogar:finalize_history:{client_tid}:{p['id']}"
         )])
     kb.append([InlineKeyboardButton(
         "✅ Sin cambio de perfil (notificar solo)",
-        callback_data=f"hogar:finalize_history:{client_tid}:{incident_id}:none"
+        callback_data=f"hogar:finalize_history:{client_tid}:none"
     )])
     await query.edit_message_text(
         "📦 *Selecciona perfil destino para migración con historial:*\n\n"
