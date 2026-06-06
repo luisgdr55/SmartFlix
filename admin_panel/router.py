@@ -711,7 +711,7 @@ async def user_detail(request: Request, user_id: str):
         from database.subscriptions import auto_expire_overdue_subscriptions
         await auto_expire_overdue_subscriptions(user_id=user_id)
         subs_res = sb.table("subscriptions").select(
-            "*, platforms(name, icon_emoji), profiles(profile_name, pin)"
+            "*, platforms(name, icon_emoji), profiles(profile_name, pin, accounts(email, password))"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
         subscriptions = subs_res.data or []
         platforms = await get_active_platforms()
@@ -1855,7 +1855,7 @@ async def api_profiles_by_platform(request: Request, platform_id: str):
         from database import get_supabase
         sb = get_supabase()
         res = sb.table("profiles").select(
-            "id, profile_name, profile_type, status, is_extra_member, extra_email"
+            "id, profile_name, profile_type, status, is_extra_member, extra_email, accounts(id, email)"
         ).eq("platform_id", platform_id).order("status").order("profile_type").execute()
         return JSONResponse({"profiles": res.data or []})
     except Exception as e:

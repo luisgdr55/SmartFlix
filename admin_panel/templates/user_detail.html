@@ -160,10 +160,24 @@
 
                 <!-- View mode -->
                 <td class="table-cell" x-show="!editing">
-                  <span class="font-semibold" style="color:#1e293b;">
+                  {% set prof = sub.get('profiles') or {} %}
+                  {% set acc = prof.get('accounts') or {} %}
+                  <button
+                    type="button"
+                    @click="$dispatch('open-credentials', {
+                      platform: '{{ (sub.get('platforms') or {}).get('icon_emoji','') }} {{ (sub.get('platforms') or {}).get('name','—') }}',
+                      email: '{{ acc.get('email','—') }}',
+                      password: '{{ acc.get('password','—') }}',
+                      profile: '{{ prof.get('profile_name','—') }}',
+                      pin: '{{ prof.get('pin','—') }}'
+                    })"
+                    class="font-semibold text-left hover:underline transition-colors"
+                    style="color:#1e293b; cursor:pointer;"
+                    title="Ver credenciales"
+                  >
                     {{ (sub.get('platforms') or {}).get('icon_emoji','') }}
                     {{ (sub.get('platforms') or {}).get('name','—') }}
-                  </span>
+                  </button>
                 </td>
                 <td class="table-cell" x-show="!editing">
                   {% set t = sub.get('plan_type','') %}
@@ -259,7 +273,7 @@
                       <select name="profile_id" class="form-input text-sm py-1.5" x-model="profileId">
                         <option value="">— Sin perfil —</option>
                         <template x-for="p in profiles" :key="p.id">
-                          <option :value="p.id" x-text="p.profile_name + (p.status === 'available' ? ' (disponible)' : p.status === 'occupied' ? ' (ocupado)' : ' (' + p.status + ')')"></option>
+                          <option :value="p.id" x-text="(p.accounts ? '[' + p.accounts.email + '] ' : '') + p.profile_name + (p.status === 'available' ? ' (disponible)' : p.status === 'occupied' ? ' (ocupado)' : ' (' + p.status + ')')"></option>
                         </template>
                       </select>
                       <p class="text-xs mt-1" style="color:#94A3B8;">Solo se muestran perfiles disponibles y el perfil actual.</p>
@@ -406,4 +420,73 @@
 
   </div>
 </div>
+
+<!-- Modal credenciales -->
+<div
+  x-data="{
+    open: false,
+    platform: '',
+    email: '',
+    password: '',
+    profile: '',
+    pin: '',
+    copied: ''
+  }"
+  @open-credentials.window="
+    platform = $event.detail.platform;
+    email = $event.detail.email;
+    password = $event.detail.password;
+    profile = $event.detail.profile;
+    pin = $event.detail.pin;
+    open = true;
+    copied = '';
+  "
+  x-show="open"
+  x-cloak
+  class="fixed inset-0 z-50 flex items-center justify-center"
+  style="background:rgba(0,0,0,0.5);"
+  @click.self="open = false"
+>
+  <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base font-bold" style="color:#1e293b;" x-text="platform"></h3>
+      <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl font-bold">×</button>
+    </div>
+    <div class="space-y-3">
+      <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
+        <p class="text-xs font-semibold mb-1" style="color:#64748B;">📧 CORREO</p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="email"></p>
+      </div>
+      <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
+        <p class="text-xs font-semibold mb-1" style="color:#64748B;">🔑 CONTRASEÑA</p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="password"></p>
+      </div>
+      <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
+        <p class="text-xs font-semibold mb-1" style="color:#64748B;">👤 PERFIL</p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="profile"></p>
+      </div>
+      <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
+        <p class="text-xs font-semibold mb-1" style="color:#64748B;">🔢 PIN</p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="pin"></p>
+      </div>
+    </div>
+    <button
+      @click="
+        navigator.clipboard.writeText(
+          'Plataforma: ' + platform + '\n' +
+          'Correo: ' + email + '\n' +
+          'Contraseña: ' + password + '\n' +
+          'Perfil: ' + profile + '\n' +
+          'PIN: ' + pin
+        );
+        copied = '✅ Copiado';
+        setTimeout(() => copied = '', 2000);
+      "
+      class="w-full mt-4 py-2 rounded-xl text-sm font-semibold transition-colors"
+      style="background:#1e293b; color:white;"
+      x-text="copied || '📋 Copiar credenciales'"
+    ></button>
+  </div>
+</div>
+
 {% endblock %}
