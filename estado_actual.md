@@ -13,6 +13,21 @@
 
 ## Historial de cambios
 
+### 2026-06-06 — Sesión 18 — Fix onboarding usuarios sin @username
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Usuarios nuevos sin @username quedaban bloqueados pidiendo teléfono en bucle — nunca llegaban al menú principal | `bot/handlers/start.py` | (sesión) |
+
+#### Cambios aplicados
+- Eliminado bloque de verificación por teléfono obligatoria en `start_handler`
+- `get_or_create_user` se llama directamente para todos los usuarios
+- Usuarios sin @username ahora pasan directo al onboarding normal (pedir nombre → menú)
+
+---
+
 ### 2026-06-06 — Sesión 17 — Fix migración express admin + UX selector perfiles
 
 #### Bugs corregidos
