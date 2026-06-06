@@ -70,16 +70,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Check if already registered by telegram_id BEFORE creating anything.
         # If not found and no @username, ask for phone first — otherwise we'd
         # create an empty ghost account that blocks the pre-registered account link.
-        existing = await get_user_by_telegram_id(telegram_id)
-        if not existing and not username:
-            set_user_state(telegram_id, "awaiting_phone_verify")
-            await update.message.reply_text(
-                "👋 ¡Hola! Para verificar si ya tienes una cuenta con nosotros, "
-                "por favor comparte tu número de teléfono:",
-                reply_markup=share_contact_keyboard(),
-            )
-            return
-
         user = await get_or_create_user(telegram_id, username, full_name)
 
         # Check if user needs to provide their name
