@@ -454,8 +454,8 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     action = parts[1]
     raw_client_id = parts[2] if len(parts) > 2 else str(query.from_user.id)
-    if raw_client_id.startswith("uid:"):
-        client_tid = raw_client_id  # mantener como string "uid:xxxx"
+    if raw_client_id.startswith("uid_"):
+        client_tid = raw_client_id  # mantener como string "uid_xxxx"
     else:
         client_tid = int(raw_client_id) if raw_client_id.lstrip('-').isdigit() else query.from_user.id
     caller_tid = query.from_user.id
@@ -673,8 +673,8 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # Buscar subs del cliente y seleccionar la que coincide con el prefijo
         from database.users import get_user_by_telegram_id
         from database.hogar import get_netflix_subscription_for_user
-        if str(client_tid).startswith("uid:"):
-            uid = str(client_tid).replace("uid:", "")
+        if str(client_tid).startswith("uid_"):
+            uid = str(client_tid).replace("uid_", "")
             from database.supabase_client import get_client as _gc
             result = _gc().table('users').select('*').eq('id', uid).execute()
             user = result.data[0] if result.data else None
@@ -718,9 +718,9 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "admin_manage":
         if not _is_admin(caller_tid):
             return
-        # Soportar tanto telegram_id como uid: prefijo
-        if str(client_tid).startswith("uid:"):
-            uid = str(client_tid).replace("uid:", "")
+        # Soportar tanto telegram_id como uid_ prefijo
+        if str(client_tid).startswith("uid_"):
+            uid = str(client_tid).replace("uid_", "")
             from database.supabase_client import get_client as _gc
             result = _gc().table('users').select('*').eq('id', uid).execute()
             user = result.data[0] if result.data else None
@@ -882,7 +882,7 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
             h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(health, '⚪')
             # Para clientes sin telegram_id usar el user_id en el callback
             uid = str(user.get('id', ''))
-            callback_id = str(tid) if tid else f"uid:{uid}"
+            callback_id = str(tid) if tid else f"uid_{uid}"
             kb.append([InlineKeyboardButton(
                 f"{h_emoji} {name[:20]} — {email[:22]}",
                 callback_data=f"hogar:admin_manage:{callback_id}"
