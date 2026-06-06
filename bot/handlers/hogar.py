@@ -675,7 +675,7 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         from database.hogar import get_netflix_subscription_for_user
         if str(client_tid).startswith("uid_"):
             uid = str(client_tid).replace("uid_", "")
-            from database.supabase_client import get_client as _gc
+            from database import get_supabase as _gc
             result = _gc().table('users').select('*').eq('id', uid).execute()
             user = result.data[0] if result.data else None
         else:
@@ -721,7 +721,7 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # Soportar tanto telegram_id como uid_ prefijo
         if str(client_tid).startswith("uid_"):
             uid = str(client_tid).replace("uid_", "")
-            from database.supabase_client import get_client as _gc
+            from database import get_supabase as _gc
             result = _gc().table('users').select('*').eq('id', uid).execute()
             user = result.data[0] if result.data else None
         else:
