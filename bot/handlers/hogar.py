@@ -1233,7 +1233,7 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
 
     if profile_id and profile_id != 'none':
         p_result = get_supabase().table('profiles').select(
-            'id, profile_name, pin, account_id, accounts!inner(id, email, account_health)'
+            'id, profile_name, pin, account_id, accounts!inner(id, email, password, account_health)'
         ).eq('id', profile_id).execute()
         if not p_result.data:
             await query.edit_message_text("❌ Perfil no encontrado.")
@@ -1252,6 +1252,7 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
             ).eq('id', str(subscription_id)).execute()
 
         new_email = target.get('accounts', {}).get('email', '—')
+        new_password = target.get('accounts', {}).get('password', '—')
         new_name = target.get('profile_name', '—')
         new_pin = target.get('pin', '—')
 
@@ -1267,7 +1268,7 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
 
         client_msg = (
             f"🎉 *¡Tu migración con historial está lista!*\n\n"
-            f"📧 Email: `{new_email}`\n👤 Perfil: {new_name}\n🔢 PIN: `{new_pin}`\n\n"
+            f"📧 Email: `{new_email}`\n🔑 Clave: `{new_password}`\n👤 Perfil: {new_name}\n🔢 PIN: `{new_pin}`\n\n"
             f"Cierra sesión en tu TV e inicia con estas credenciales."
         )
     else:
@@ -1280,15 +1281,20 @@ async def _admin_complete_history_with_profile(query, context, admin_tid: int,
         [InlineKeyboardButton("✅ Ya funciona", callback_data=f"hogar:resolved:{client_tid}")],
         [InlineKeyboardButton("❌ Sigo con problemas", callback_data=f"hogar:not_resolved:{client_tid}")],
     ]
-    try:
-        await context.bot.send_message(
-            chat_id=int(client_tid),
-            text=client_msg,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(kb),
-        )
-    except Exception:
+    # Solo notificar si el cliente tiene telegram_id numérico
+    if str(client_tid).startswith("uid_"):
+        # Cliente sin Telegram — ticket solo en el mensaje al admin
         pass
+    else:
+        try:
+            await context.bot.send_message(
+                chat_id=int(client_tid),
+                text=client_msg,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(kb),
+            )
+        except Exception:
+            pass
 
     await query.edit_message_text(
         f"✅ *Migración con historial completada*\n\nCliente TID `{client_tid}` notificado.",
