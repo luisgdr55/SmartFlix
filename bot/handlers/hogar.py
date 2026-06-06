@@ -792,19 +792,30 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
         subs = [s for s in (result.data or [])
                 if 'netflix' in (s.get('platforms', {}).get('name', '') or '').lower()]
 
-        total = len(subs)
-        page_subs = subs[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        # Deduplicar por telegram_id — un botón por cliente
+        seen_tids = set()
+        unique_clients = []
+        for s in subs:
+            user = s.get('users', {})
+            tid = user.get('telegram_id')
+            if not tid or tid in seen_tids:
+                continue
+            seen_tids.add(tid)
+            unique_clients.append(s)
+
+        total = len(unique_clients)
+        page_clients = unique_clients[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
         kb = []
-        for s in page_subs:
+        for s in page_clients:
             user = s.get('users', {})
-            name = user.get('name') or user.get('phone') or 'Sin nombre'
+            name = user.get('full_name') or user.get('name') or user.get('phone') or 'Sin nombre'
             email = s.get('profiles', {}).get('accounts', {}).get('email', '—')
             tid = user.get('telegram_id', '')
             health = s.get('profiles', {}).get('accounts', {}).get('account_health', 'healthy')
-            h_e = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(health, '⚪')
+            h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(health, '⚪')
             kb.append([InlineKeyboardButton(
-                f"{h_e} {name[:20]} — {email[:22]}",
+                f"{h_emoji} {name[:20]} — {email[:22]}",
                 callback_data=f"hogar:admin_manage:{tid}"
             )])
 
