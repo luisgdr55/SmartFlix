@@ -13,6 +13,28 @@
 
 ## Historial de cambios
 
+### 2026-06-06 — Sesión 17 — Fix migración express admin + UX selector perfiles
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | _admin_execute_express fallaba con int(uid_UUID) para clientes sin Telegram | `bot/handlers/hogar.py` | 73fa49c |
+| 2 | _execute_express_migration intentaba send_message con telegram_id=None — excepción no controlada | `bot/handlers/hogar.py` | 73fa49c |
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos |
+|---|--------|----------|
+| 1 | Selector de perfiles express muestra cuántos fueron excluidos por cooling 45 días | `bot/handlers/hogar.py` |
+
+#### Notas operativas
+- El filtro de 45 días en get_available_profiles_for_migration ya funcionaba correctamente — los cambios son el guard uid_ y el contexto visual
+- Para clientes sin Telegram (uid_XXX), el ticket de migración express llega solo al admin
+- El flujo confirm_express (cliente autoservicio) no requiere cambios — client_tid siempre es entero en ese flujo
+
+---
+
 ### 2026-06-06 — Sesión 16 — Fixes módulo hogar + clientes sin Telegram
 
 #### Bugs corregidos
