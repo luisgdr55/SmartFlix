@@ -91,9 +91,8 @@ async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(msg)
         return
 
-    sub = await get_netflix_subscription_for_user(str(user['id']))
-
-    if not sub:
+    subs = await get_netflix_subscription_for_user(str(user['id']))
+    if not subs:
         kb = [[InlineKeyboardButton("🔄 Renovar suscripción", callback_data="menu:subscribe")]]
         msg = (
             "⚠️ *Sin suscripción Netflix activa*\n\n"
@@ -106,6 +105,7 @@ async def start_hogar_support(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN,
                                              reply_markup=InlineKeyboardMarkup(kb))
         return
+    sub = subs[0]  # Usar la primera para el flujo de soporte cliente
 
     account = sub['profiles']['accounts']
     session = {
@@ -659,6 +659,58 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     # ── Callbacks de admin ───────────────────────────────────────
+    elif action == "select_sub":
+        if not _is_admin(caller_tid):
+            return
+        sub_prefix = parts[3] if len(parts) > 3 else None
+        if not sub_prefix:
+            await query.edit_message_text("❌ Error al seleccionar suscripción.")
+            return
+        # Buscar subs del cliente y seleccionar la que coincide con el prefijo
+        from database.users import get_user_by_telegram_id
+        from database.hogar import get_netflix_subscription_for_user
+        if str(client_tid).startswith("uid:"):
+            uid = str(client_tid).replace("uid:", "")
+            from database.supabase_client import get_client as _gc
+            result = _gc().table('users').select('*').eq('id', uid).execute()
+            user = result.data[0] if result.data else None
+        else:
+            user = await get_user_by_telegram_id(int(client_tid))
+        if not user:
+            await query.edit_message_text("❌ Cliente no encontrado.")
+            return
+        subs = await get_netflix_subscription_for_user(str(user['id']))
+        sub = next((s for s in subs if str(s['id']).startswith(sub_prefix)), None)
+        if not sub:
+            await query.edit_message_text("❌ Suscripción no encontrada.")
+            return
+        account = sub['profiles']['accounts']
+        session = {
+            'user_id': str(user['id']),
+            'client_tid': client_tid,
+            'subscription_id': str(sub['id']),
+            'account_id': str(account['id']),
+            'profile_id': str(sub['profiles']['id']),
+            'account_email': account.get('email', ''),
+        }
+        _redis().setex(_ADMIN_SESSION_KEY.format(tid=caller_tid), _TTL, json.dumps(session))
+        h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(
+            account.get('account_health', 'healthy'), '⚪'
+        )
+        kb = [
+            [InlineKeyboardButton("🔑 Buscar código Gmail", callback_data=f"hogar:search_gmail:{client_tid}")],
+            [InlineKeyboardButton("🚀 Migrar Express", callback_data=f"hogar:do_express:{client_tid}"),
+             InlineKeyboardButton("📦 Con Historial", callback_data=f"hogar:do_history:{client_tid}")],
+            [InlineKeyboardButton("📋 Ver incidentes", callback_data=f"hogar:view_incidents:{client_tid}")],
+        ]
+        text = (
+            f"📧 Cuenta seleccionada: `{account.get('email', '—')}`\n"
+            f"🏥 Salud: {h_emoji} {account.get('account_health', '—').capitalize()}\n"
+            f"📅 Vence: {sub.get('end_date', '—')[:10]}"
+        )
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                       reply_markup=InlineKeyboardMarkup(kb))
+
     elif action == "admin_manage":
         if not _is_admin(caller_tid):
             return
@@ -904,12 +956,13 @@ async def _show_admin_client_panel(msg_or_query, context, user: dict, admin_tid:
     from database.hogar import get_netflix_subscription_for_user, get_incident_history
     try:
         client_tid = user.get('telegram_id', '')
-        sub = await get_netflix_subscription_for_user(str(user['id']))
+        subs = await get_netflix_subscription_for_user(str(user['id']))
         incidents = await get_incident_history(str(user['id']))
 
-        if not sub:
+        if not subs:
             text = f"👤 *{user.get('name', 'Cliente')}*\n\n❌ Sin suscripción Netflix activa."
-        else:
+        elif len(subs) == 1:
+            sub = subs[0]
             account = sub['profiles']['accounts']
             h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(
                 account.get('account_health', 'healthy'), '⚪'
@@ -931,6 +984,25 @@ async def _show_admin_client_panel(msg_or_query, context, user: dict, admin_tid:
                 'account_email': account.get('email', ''),
             }
             _redis().setex(_ADMIN_SESSION_KEY.format(tid=admin_tid), _TTL, json.dumps(session))
+        else:
+            # Cliente con múltiples suscripciones Netflix — mostrar selector
+            text = f"👤 *{user.get('name', 'Cliente')}*\n\n⚠️ Tiene {len(subs)} suscripciones Netflix activas.\nSelecciona cuál gestionar:"
+            kb = []
+            for i, sub in enumerate(subs):
+                account = sub['profiles']['accounts']
+                end = sub.get('end_date', '—')[:10]
+                kb.append([InlineKeyboardButton(
+                    f"📧 {account.get('email', '—')[:30]} · vence {end}",
+                    callback_data=f"hogar:select_sub:{client_tid}:{str(sub['id'])[:12]}"
+                )])
+            kb.append([InlineKeyboardButton("⬅️ Volver", callback_data=f"hogar:cancel:{client_tid}")])
+            if hasattr(msg_or_query, 'edit_message_text'):
+                await msg_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                                      reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await msg_or_query.reply_text(text, parse_mode=ParseMode.MARKDOWN,
+                                               reply_markup=InlineKeyboardMarkup(kb))
+            return
 
         kb = [
             [InlineKeyboardButton("🔑 Buscar código Gmail", callback_data=f"hogar:search_gmail:{client_tid}")],

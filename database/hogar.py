@@ -135,19 +135,26 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
 
 
 async def get_netflix_subscription_for_user(user_id: str) -> Optional[dict]:
-    """Retorna la suscripción Netflix activa del usuario con datos de cuenta y perfil."""
+    """Retorna todas las suscripciones Netflix activas del usuario."""
     try:
         result = _client().table('subscriptions').select(
             'id, end_date, profile_id,'
             'profiles!inner(id, profile_name, pin, account_id,'
             '  accounts!inner(id, email, account_health, household_incidents)),'
-            'platforms!inner(name)'
-        ).eq('user_id', str(user_id)).eq('status', 'active') \
-            .ilike('platforms.name', '%netflix%').limit(1).execute()
-        return result.data[0] if result.data else None
+            'platforms!inner(id, name, slug)'
+        ).eq('user_id', str(user_id)).eq('status', 'active').execute()
+
+        subs = result.data or []
+        # Filtrar por plataforma Netflix en Python
+        netflix_subs = [
+            s for s in subs
+            if 'netflix' in (s.get('platforms', {}).get('name', '') or '').lower()
+        ]
+        return netflix_subs  # Retorna lista, no solo el primero
+
     except Exception as e:
         logger.error(f"[hogar] get_netflix_subscription_for_user: {e}")
-        return None
+        return []
 
 
 async def get_incident_history(user_id: str, limit: int = 10) -> list:
