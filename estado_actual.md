@@ -13,6 +13,38 @@
 
 ## Historial de cambios
 
+### 2026-06-06 — Sesión 16 — Fixes módulo hogar + clientes sin Telegram
+
+#### Bugs corregidos
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Migración express no incluía contraseña en ticket WhatsApp ni notificación Telegram | `bot/handlers/hogar.py` | (sesión) |
+| 2 | /hogar mostraba cliente duplicado cuando tenía 2 suscripciones Netflix | `bot/handlers/hogar.py` | (sesión) |
+| 3 | Clientes afiliados manualmente (sin telegram_id) no aparecían en /hogar | `bot/handlers/hogar.py` | (sesión) |
+| 4 | uid: como separador colisionaba con split(':') del dispatcher | `bot/handlers/hogar.py` | (sesión) |
+| 5 | Button_data_invalid en select_profile, finalize_history, complete_history — UUIDs superaban 64 bytes | `bot/handlers/hogar.py` | (sesión) |
+| 6 | get_netflix_subscription_for_user filtraba con !inner — retornaba vacío si platform_id era NULL | `database/hogar.py` | (sesión) |
+| 7 | Migración con historial no incluía contraseña en ticket | `bot/handlers/hogar.py` | (sesión) |
+| 8 | _admin_complete_history_with_profile fallaba con int(uid_UUID) para clientes sin Telegram | `bot/handlers/hogar.py` | (sesión) |
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos |
+|---|--------|----------|
+| 1 | Clientes con múltiples suscripciones Netflix muestran selector en /hogar | `bot/handlers/hogar.py` |
+| 2 | Todos los callbacks del módulo hogar dentro del límite de 64 bytes — patrón Redis+índice | `bot/handlers/hogar.py` |
+| 3 | Clientes sin telegram_id soportados en todo el flujo admin — uid_ como identificador | `bot/handlers/hogar.py` |
+| 4 | Ticket de migración (express e historial) incluye contraseña de cuenta destino | `bot/handlers/hogar.py` |
+
+#### Notas operativas
+- El patrón Redis+índice se usa en: hogar_subs:{admin_tid}, hogar_profiles:{admin_tid}, hogar_incident_admin:{admin_tid}
+- Clientes sin telegram_id (afiliados con /afiliar) se identifican con uid_{uuid} en callbacks
+- Para clientes sin Telegram, el ticket de migración solo llega al admin — debe enviarse manualmente por WhatsApp
+- El separador uid_ (con guión bajo) evita colisión con split(':') en el dispatcher
+
+---
+
 ### 2026-06-05 — Sesión 15 — Módulo códigos de verificación + fix credenciales soporte
 
 #### Features implementadas
