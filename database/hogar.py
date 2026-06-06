@@ -96,7 +96,7 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
 
         query = _client().table('profiles').select(
             'id, profile_name, pin, account_id, last_released,'
-            'accounts!inner(id, email, account_health, household_incidents,'
+            'accounts!inner(id, email, password, account_health, household_incidents,'
             '  platforms!inner(name))'
         ).eq('status', 'available').eq('profile_type', 'monthly')
 

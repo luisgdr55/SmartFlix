@@ -352,6 +352,7 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
         await update_account_health(session['account_id'])
 
         new_email = target_profile.get('accounts', {}).get('email', '—')
+        new_password = target_profile.get('accounts', {}).get('password', '—')
         new_name = target_profile.get('profile_name', '—')
         new_pin = target_profile.get('pin', '—')
 
@@ -361,7 +362,10 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
 
         wa_ticket = (
             f"Hola! Tu Netflix fue migrado exitosamente.\n\n"
-            f"📧 Email: {new_email}\n👤 Perfil: {new_name}\n🔢 PIN: {new_pin}\n"
+            f"📧 Email: {new_email}\n"
+            f"🔑 Clave: {new_password}\n"
+            f"👤 Perfil: {new_name}\n"
+            f"🔢 PIN: {new_pin}\n"
             f"📅 Vence: {end_date}\n\n"
             f"En tu TV: cierra sesión e inicia con estas credenciales."
         )
@@ -375,7 +379,10 @@ async def _execute_express_migration(context, session: dict, target_profile: dic
                 chat_id=telegram_id,
                 text=(
                     f"🎉 *¡Migración completada!*\n\n"
-                    f"📧 Email: `{new_email}`\n👤 Perfil: {new_name}\n🔢 PIN: `{new_pin}`\n"
+                    f"📧 Email: `{new_email}`\n"
+                    f"🔑 Clave: `{new_password}`\n"
+                    f"👤 Perfil: {new_name}\n"
+                    f"🔢 PIN: `{new_pin}`\n"
                     f"📅 Vence: {end_date}\n\n"
                     f"En tu TV: cierra sesión e inicia con estas credenciales. ¿Pudiste acceder?"
                 ),
@@ -991,7 +998,7 @@ async def _admin_execute_express(query, context, admin_tid: int, client_tid: int
     session = json.loads(session_raw)
     from database import get_supabase
     p_result = get_supabase().table('profiles').select(
-        'id, profile_name, pin, account_id, accounts!inner(id, email, account_health)'
+        'id, profile_name, pin, account_id, accounts!inner(id, email, password, account_health)'
     ).eq('id', profile_id).execute()
     if not p_result.data:
         await query.edit_message_text("❌ Perfil no encontrado.")
