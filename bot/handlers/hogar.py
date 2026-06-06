@@ -453,7 +453,11 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     action = parts[1]
-    client_tid = int(parts[2]) if len(parts) > 2 and parts[2].lstrip('-').isdigit() else query.from_user.id
+    raw_client_id = parts[2] if len(parts) > 2 else str(query.from_user.id)
+    if raw_client_id.startswith("uid:"):
+        client_tid = raw_client_id  # mantener como string "uid:xxxx"
+    else:
+        client_tid = int(raw_client_id) if raw_client_id.lstrip('-').isdigit() else query.from_user.id
     caller_tid = query.from_user.id
 
     # ── Callbacks de cliente ─────────────────────────────────────
