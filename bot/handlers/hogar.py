@@ -662,8 +662,15 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "admin_manage":
         if not _is_admin(caller_tid):
             return
-        from database.users import get_user_by_telegram_id
-        user = await get_user_by_telegram_id(client_tid)
+        # Soportar tanto telegram_id como uid: prefijo
+        if str(client_tid).startswith("uid:"):
+            uid = str(client_tid).replace("uid:", "")
+            from database.supabase_client import get_client as _gc
+            result = _gc().table('users').select('*').eq('id', uid).execute()
+            user = result.data[0] if result.data else None
+        else:
+            from database.users import get_user_by_telegram_id
+            user = await get_user_by_telegram_id(int(client_tid))
         if not user:
             await query.edit_message_text(f"❌ Cliente TID {client_tid} no encontrado.")
             return
@@ -792,15 +799,18 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
         subs = [s for s in (result.data or [])
                 if 'netflix' in (s.get('platforms', {}).get('name', '') or '').lower()]
 
-        # Deduplicar por telegram_id — un botón por cliente
-        seen_tids = set()
+        # Deduplicar por telegram_id o user_id — un botón por cliente
+        seen_users = set()
         unique_clients = []
         for s in subs:
             user = s.get('users', {})
             tid = user.get('telegram_id')
-            if not tid or tid in seen_tids:
+            uid = str(user.get('id', ''))
+            # Usar telegram_id si existe, sino user_id como identificador único
+            dedup_key = str(tid) if tid else uid
+            if not dedup_key or dedup_key in seen_users:
                 continue
-            seen_tids.add(tid)
+            seen_users.add(dedup_key)
             unique_clients.append(s)
 
         total = len(unique_clients)
@@ -814,9 +824,12 @@ async def _show_hogar_client_list(msg_or_query, context, page: int = 0):
             tid = user.get('telegram_id', '')
             health = s.get('profiles', {}).get('accounts', {}).get('account_health', 'healthy')
             h_emoji = {'healthy': '🟢', 'warning': '🟡', 'restricted': '🔴'}.get(health, '⚪')
+            # Para clientes sin telegram_id usar el user_id en el callback
+            uid = str(user.get('id', ''))
+            callback_id = str(tid) if tid else f"uid:{uid}"
             kb.append([InlineKeyboardButton(
                 f"{h_emoji} {name[:20]} — {email[:22]}",
-                callback_data=f"hogar:admin_manage:{tid}"
+                callback_data=f"hogar:admin_manage:{callback_id}"
             )])
 
         # Paginación
