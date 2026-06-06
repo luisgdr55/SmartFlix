@@ -757,7 +757,20 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif action == "select_profile":
         if not _is_admin(caller_tid):
             return
-        profile_id = parts[4] if len(parts) > 4 else None
+        profile_index_raw = parts[3] if len(parts) > 3 else None
+        if profile_index_raw is None or not profile_index_raw.isdigit():
+            await query.edit_message_text("❌ Error al seleccionar perfil.")
+            return
+        profiles_raw = _redis().get(f"hogar_profiles:{caller_tid}")
+        if not profiles_raw:
+            await query.edit_message_text("❌ Sesión expirada. Usa /hogar de nuevo.")
+            return
+        profiles_list = json.loads(profiles_raw)
+        profile_index = int(profile_index_raw)
+        if profile_index >= len(profiles_list):
+            await query.edit_message_text("❌ Perfil inválido.")
+            return
+        profile_id = profiles_list[profile_index]
         await _admin_execute_express(query, context, caller_tid, client_tid, profile_id)
 
     elif action == "history_inprogress":
@@ -789,7 +802,16 @@ async def handle_hogar_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if not _is_admin(caller_tid):
             return
         incident_id = _redis().get(f"hogar_incident_admin:{caller_tid}") or None
-        profile_id = parts[3] if len(parts) > 3 else None
+        profile_index_raw = parts[3] if len(parts) > 3 else None
+        if profile_index_raw == "none":
+            profile_id = None
+        elif profile_index_raw is not None and profile_index_raw.isdigit():
+            profiles_raw = _redis().get(f"hogar_profiles:{caller_tid}")
+            profiles_list = json.loads(profiles_raw) if profiles_raw else []
+            profile_index = int(profile_index_raw)
+            profile_id = profiles_list[profile_index] if profile_index < len(profiles_list) else None
+        else:
+            profile_id = None
         await _admin_complete_history_with_profile(query, context, caller_tid,
                                                     client_tid, incident_id, profile_id)
 
@@ -1089,14 +1111,16 @@ async def _admin_show_profiles_for_express(query, context, admin_tid: int, clien
     if not available:
         await query.edit_message_text("❌ No hay perfiles disponibles para migración en este momento.")
         return
+    _redis().setex(f"hogar_profiles:{admin_tid}", _TTL,
+                   json.dumps([p['id'] for p in available[:6]]))
     kb = []
-    for p in available[:6]:
+    for i, p in enumerate(available[:6]):
         email = p.get('accounts', {}).get('email', '—')
         health = p.get('accounts', {}).get('account_health', 'healthy')
         h_e = {'healthy': '🟢', 'warning': '🟡'}.get(health, '⚪')
         kb.append([InlineKeyboardButton(
             f"{h_e} {email[:28]} — {p.get('profile_name', '—')}",
-            callback_data=f"hogar:select_profile:{client_tid}:auto:{p['id']}"
+            callback_data=f"hogar:select_profile:{client_tid}:{i}"
         )])
     kb.append([InlineKeyboardButton("❌ Cancelar", callback_data=f"hogar:cancel:{client_tid}")])
     await query.edit_message_text("🚀 *Selecciona perfil destino:*",
@@ -1176,14 +1200,14 @@ async def _admin_finalize_history(query, context, admin_tid: int, client_tid: in
     available = await get_available_profiles_for_migration(
         session.get('user_id', ''), session.get('account_id')
     )
+    _redis().setex(f"hogar_profiles:{admin_tid}", _TTL,
+                   json.dumps([p['id'] for p in available[:6]]))
     kb = []
-    for p in available[:6]:
+    for i, p in enumerate(available[:6]):
         email = p.get('accounts', {}).get('email', '—')
-        health = p.get('accounts', {}).get('account_health', 'healthy')
-        h_e = {'healthy': '🟢', 'warning': '🟡'}.get(health, '⚪')
         kb.append([InlineKeyboardButton(
-            f"{h_e} {email[:28]} — {p.get('profile_name', '—')}",
-            callback_data=f"hogar:finalize_history:{client_tid}:{p['id']}"
+            f"{email[:28]} — {p.get('profile_name', '—')}",
+            callback_data=f"hogar:finalize_history:{client_tid}:{i}"
         )])
     kb.append([InlineKeyboardButton(
         "✅ Sin cambio de perfil (notificar solo)",
