@@ -23,11 +23,11 @@ from utils.helpers import venezuela_now
 logger = logging.getLogger(__name__)
 
 RETURNING_GREETINGS = [
-    "¡Bienvenido de vuelta, <b>{name}</b>! 👋",
-    "¡Hola otra vez, <b>{name}</b>! 😊",
-    "¡Qué bueno verte, <b>{name}</b>! 🎬",
-    "¡Aquí estamos, <b>{name}</b>! ¿Qué vas a ver hoy? 🍿",
-    "¡Hola <b>{name}</b>! Listo para el streaming 🚀",
+    "👋 ¡Hola de nuevo, <b>{name}</b>!\n\n¿Listo para otra ronda de buen contenido? 🍿",
+    "😊 ¡Qué bueno verte, <b>{name}</b>!\n\n¿Qué vamos a ver hoy? 🎬",
+    "🚀 ¡Aquí estamos, <b>{name}</b>!\n\nTu entretenimiento te espera. ¿Empezamos? 🎯",
+    "🎬 ¡Bienvenido de vuelta, <b>{name}</b>!\n\nTodo listo para tu sesión de streaming. 🍿",
+    "⭐ ¡<b>{name}</b>, siempre un placer!\n\n¿Qué tienes ganas de ver hoy? 🎭",
 ]
 
 
@@ -145,7 +145,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
                 if pending_subs or expired_subs:
                     safe_name = _html.escape(name)
-                    alert_lines = [f"⚠️ <b>Hola {safe_name}, hay cosas que necesitan tu atención:</b>\n"]
+                    alert_lines = [
+                        f"👋 <b>¡{safe_name}, qué bueno verte por aquí!</b>\n\n"
+                        f"Notamos que tu acceso a algunos\n"
+                        f"servicios necesita atención 🔔"
+                    ]
                     for s in pending_subs:
                         plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
                         icon = (s.get("platforms") or {}).get("icon_emoji", "📺")
@@ -154,9 +158,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         except (TypeError, ValueError):
                             price_bs = 0.0
                         alert_lines.append(
+                            f"\n━━━━━━━━━━━━━━━━━━━━━\n"
                             f"{icon} <b>{plat}</b> — pago pendiente\n"
-                            f"   💰 Monto: Bs {price_bs:,.0f}\n"
-                            f"   📌 Envía tu comprobante de pago para activar."
+                            f"💰 Monto: <b>Bs {price_bs:,.0f}</b>\n"
+                            f"📌 Envía tu comprobante para activar.\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━"
                         )
                     for s in expired_subs:
                         plat = _html.escape((s.get("platforms") or {}).get("name", "Plataforma"))
@@ -164,22 +170,30 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         _ed = (s.get("end_date") or "")[:10]
                         end = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) >= 10 else _ed
                         alert_lines.append(
-                            f"{icon} <b>{plat}</b> — vencida el {end}\n"
-                            f"   🔄 Renueva para seguir disfrutando."
+                            f"\n━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"{icon} <b>{plat}</b> — venció el {end}\n"
+                            f"🔄 Renueva y sigue disfrutando 🍿\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━"
                         )
+                    alert_lines.append(
+                        "\n\nUn solo paso y estarás de vuelta\n"
+                        "en acción. <i>¡Te esperamos!</i> 💪"
+                    )
                     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                    alert_keyboard = InlineKeyboardMarkup([
+                    buttons = [
                         [InlineKeyboardButton("💳 Renovar / Pagar ahora", callback_data="menu:subscribe")],
                         [InlineKeyboardButton("📋 Mis servicios", callback_data="menu:my_services")],
-                        [InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")],
-                    ])
-                    alert_text = "\n\n".join(alert_lines)
+                    ]
+                    if expired_subs:
+                        buttons.append([InlineKeyboardButton("🛒 Quiero algo diferente", callback_data="menu:cancel_and_buy")])
+                    buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")])
+                    alert_keyboard = InlineKeyboardMarkup(buttons)
+                    alert_text = "\n".join(alert_lines)
                     await update.message.reply_text(
                         alert_text,
                         parse_mode="HTML",
                         reply_markup=alert_keyboard,
                     )
-
                     prices_text = await _build_prices_text()
                     if prices_text:
                         await update.message.reply_text(prices_text, parse_mode="HTML")

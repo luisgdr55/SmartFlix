@@ -90,6 +90,33 @@ def build_telegram_app() -> Application:
     # Main menu
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern="^menu:main$"))
     app.add_handler(CallbackQueryHandler(show_subscription_platforms, pattern="^menu:subscribe$"))
+
+    async def _handle_cancel_and_buy(update, context):
+        """Cancel expired subs and redirect to new purchase flow."""
+        query = update.callback_query
+        await query.answer()
+        user = query.from_user
+        try:
+            from database.users import get_user_by_telegram_id
+            from database import get_supabase
+            db_user = await get_user_by_telegram_id(user.id)
+            if db_user:
+                sb = get_supabase()
+                sb.table("subscriptions").update({"status": "cancelled"}).eq(
+                    "user_id", db_user["id"]
+                ).eq("status", "expired").execute()
+            await query.edit_message_text(
+                "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"
+                "¿Qué quieres contratar hoy? 🎬",
+                parse_mode="HTML"
+            )
+            await show_subscription_platforms(update, context)
+        except Exception as e:
+            logger.error(f"cancel_and_buy error: {e}")
+            await show_subscription_platforms(update, context)
+
+    app.add_handler(CallbackQueryHandler(_handle_cancel_and_buy, pattern="^menu:cancel_and_buy$"))
+
     app.add_handler(CallbackQueryHandler(show_express_platforms, pattern="^menu:express$"))
     app.add_handler(CallbackQueryHandler(show_my_services, pattern="^menu:my_services$"))
     app.add_handler(CallbackQueryHandler(show_support_menu, pattern="^menu:support$"))

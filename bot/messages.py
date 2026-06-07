@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 WELCOME_NEW_USER = (
-    "¡Hola! 👋 Bienvenido/a a <b>SmartFlixVE Venezuela</b> 🇻🇪\n\n"
-    "Somos tu servicio de confianza para perfiles de streaming:\n"
-    "🎬 Netflix • ✨ Disney+ • 💜 Max • ⭐ Paramount+ • 🎯 Prime Video\n\n"
-    "Para empezar, <b>¿cómo te llamas?</b> 😊"
+    "🎬 <b>¡Bienvenido a SmartFlixVE!</b>\n\n"
+    "Tu acceso al mejor entretenimiento\n"
+    "en bolívares ya está listo. 🇻🇪✨\n\n"
+    "<b>¿Cómo te llamas?</b> 😊\n"
+    "<i>Queremos conocerte antes de empezar.</i>"
 )
 
 NAME_REQUEST = "¿Cómo te llamas? Solo escribe tu nombre 👇"
@@ -17,9 +18,9 @@ NAME_CONFIRMED = (
 
 MAIN_MENU = (
     "🏠 <b>Menú Principal</b>\n\n"
-    "¡Hola, <b>{name}</b>! 👋 ¿Qué necesitas hoy?\n\n"
-    "📊 <i>Disponibilidad actual:</i>\n{availability}\n\n"
-    "Selecciona una opción:"
+    "📊 <i>Disponibilidad actual:</i>\n"
+    "{availability}\n\n"
+    "👇 <b>¿Qué necesitas hoy?</b>"
 )
 
 SUBSCRIPTION_PLATFORM_SELECT = (
