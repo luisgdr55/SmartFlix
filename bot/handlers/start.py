@@ -192,15 +192,15 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         availability = await _build_availability_text()
         menu_text = greeting + "\n\n" + MAIN_MENU.format(name=name, availability=availability)
 
+        prices_text = await _build_prices_text()
+        if prices_text:
+            await update.message.reply_text(prices_text, parse_mode="HTML")
+
         await update.message.reply_text(
             menu_text,
             parse_mode="HTML",
             reply_markup=main_menu_keyboard(),
         )
-
-        prices_text = await _build_prices_text()
-        if prices_text:
-            await update.message.reply_text(prices_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in start_handler: {e}")
         await update.message.reply_text(
