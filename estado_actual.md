@@ -13,6 +13,22 @@
 
 ## Historial de cambios
 
+### 2026-06-06 — Sesión 18 — Modal credenciales en ficha de cliente
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Clic en plataforma abre modal con email, contraseña, perfil y PIN — sin salir de la ficha | `user_detail.html`, `router.py` | 6236e06 |
+| 2 | Selector de perfiles en edit mode muestra [email@cuenta] como prefijo — identifica a qué cuenta pertenece cada perfil | `user_detail.html`, `router.py` | 6236e06 |
+
+#### Cambios técnicos
+- `subs_res` en `user_detail` amplía join: `profiles(profile_name, pin, accounts(email, password))`
+- `api_profiles_by_platform` amplía select: agrega `accounts(id, email)` a cada perfil
+- Modal Alpine.js con evento `@open-credentials.window` y botón copiar con feedback visual
+
+---
+
 ### 2026-06-06 — Sesión 18 — Fix onboarding usuarios sin @username
 
 #### Bugs corregidos
