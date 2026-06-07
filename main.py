@@ -183,16 +183,6 @@ def build_telegram_app() -> Application:
     # Contact sharing - for pre-registered client linking by phone
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact_shared))
 
-    # TEMP: capturar file_id de fotos enviadas por admin
-    async def _temp_capture_photo(update, context):
-        if str(update.effective_user.id) not in [str(x) for x in settings.ADMIN_TELEGRAM_IDS]:
-            return
-        fid = update.message.photo[-1].file_id
-        logger.info(f"PHOTO file_id: {fid}")
-        await update.message.reply_text(f"`{fid}`", parse_mode="Markdown")
-
-    app.add_handler(MessageHandler(filters.PHOTO, _temp_capture_photo), group=-1)
-
     # Photos - hogar flow takes priority, then payment comprobantes
     async def _photo_router(update, context):
         handled = await handle_hogar_photo(update, context)

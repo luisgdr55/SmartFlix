@@ -108,12 +108,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("❌ Tu cuenta ha sido suspendida. Contacta a soporte.")
         return
 
-    # TEMP: log file_id of any photo sent by admin (remove after getting file_id)
-    if update.message and update.message.photo:
-        fid = update.message.photo[-1].file_id
-        logger.info(f"PHOTO file_id capturado: {fid}")
-        await update.message.reply_text(f"file_id: `{fid}`", parse_mode="Markdown")
-        return
+    # Send welcome banner
+    try:
+        import os
+        banner_path = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "banner.png")
+        banner_path = os.path.abspath(banner_path)
+        if os.path.exists(banner_path):
+            with open(banner_path, "rb") as f:
+                await update.message.reply_photo(photo=f)
+    except Exception as banner_err:
+        logger.warning(f"Banner error: {banner_err}")
 
     try:
         # Check if already registered by telegram_id BEFORE creating anything.
