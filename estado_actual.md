@@ -80,6 +80,7 @@
 | 6 | get_netflix_subscription_for_user filtraba con !inner — retornaba vacío si platform_id era NULL | `database/hogar.py` | (sesión) |
 | 7 | Migración con historial no incluía contraseña en ticket | `bot/handlers/hogar.py` | (sesión) |
 | 8 | _admin_complete_history_with_profile fallaba con int(uid_UUID) para clientes sin Telegram | `bot/handlers/hogar.py` | (sesión) |
+| 9 | `timedelta` no importado en `hogar.py` — NameError al ejecutar migración express (/hogar admin) | `bot/handlers/hogar.py` | be10201 |
 
 #### Mejoras aplicadas
 
