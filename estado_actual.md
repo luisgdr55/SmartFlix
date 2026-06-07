@@ -13,6 +13,27 @@
 
 ## Historial de cambios
 
+### 2026-06-07 — Sesión 19 — Precios en Bs en el inicio del bot
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Precios en Bs visibles al hacer /start — menú principal y alerta de deuda/vencimiento | `bot/handlers/start.py`, `database/analytics.py` | 3f586ef |
+
+#### Cambios técnicos
+- `get_platform_availability()` amplía su dict con `price_usd` y `price_express_usd`
+- Nueva función `_build_prices_text()` en `start.py` — calcula Bs inline con `round(price * rate, 0)` sin llamadas async extra a Redis
+- Ambos bloques de respuesta en `start_handler` (menú normal y alerta deuda) muestran el bloque de precios si está disponible
+
+#### Bugs corregidos en esta sesión
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | `timedelta` no importado en `hogar.py` — NameError al ejecutar migración express | `bot/handlers/hogar.py` | be10201 |
+
+---
+
 ### 2026-06-06 — Sesión 18 — Modal credenciales en ficha de cliente
 
 #### Mejoras aplicadas
