@@ -218,6 +218,8 @@ async def get_platform_availability() -> list[dict]:
                 "icon_emoji": p.get("icon_emoji", ""),
                 "monthly_available": counts.get((p["id"], "monthly"), 0),
                 "express_available": counts.get((p["id"], "express"), 0),
+                "price_usd": p.get("monthly_price_usd") or 0,
+                "price_express_usd": p.get("express_price_usd") or 0,
             }
             for p in (platforms_res.data or [])
         ]

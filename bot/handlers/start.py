@@ -47,6 +47,33 @@ async def _build_availability_text() -> str:
         return "Ver disponibilidad en el menú"
 
 
+async def _build_prices_text() -> str:
+    """Build a formatted string with current prices in Bs for all active platforms."""
+    from services.exchange_service import get_current_rate
+    try:
+        platforms = await get_platform_availability()
+        rate_data = await get_current_rate()
+        rate = rate_data.get("usd_binance") or rate_data.get("rate") or 0
+        if not platforms or not rate:
+            return ""
+        lines = [f"💰 <b>Precios actuales</b> (Tasa: <code>Bs {float(rate):,.2f}</code>)\n"]
+        for p in platforms:
+            icon = p.get("icon_emoji", "📺")
+            name = p.get("name", "")
+            price_usd = p.get("price_usd") or 0
+            price_express_usd = p.get("price_express_usd") or 0
+            if price_usd:
+                price_bs = round(price_usd * float(rate), 0)
+                lines.append(f"{icon} <b>{name}</b> Mensual — <b>Bs {price_bs:,.0f}</b> (${price_usd})")
+            if price_express_usd:
+                price_bs_exp = round(price_express_usd * float(rate), 0)
+                lines.append(f"    ⚡ Express — <b>Bs {price_bs_exp:,.0f}</b> (${price_express_usd})")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error building prices text: {e}")
+        return ""
+
+
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     if not update.message or not update.effective_user:
@@ -120,8 +147,13 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         [InlineKeyboardButton("📋 Mis servicios", callback_data="menu:my_services")],
                         [InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")],
                     ])
+                    prices_text = await _build_prices_text()
+                    alert_text = "\n\n".join(alert_lines)
+                    if prices_text:
+                        alert_text += "\n\n" + prices_text
+
                     await update.message.reply_text(
-                        "\n\n".join(alert_lines),
+                        alert_text,
                         parse_mode="HTML",
                         reply_markup=alert_keyboard,
                     )
@@ -132,7 +164,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Normal menu
         greeting = random.choice(RETURNING_GREETINGS).format(name=name)
         availability = await _build_availability_text()
+        prices_text = await _build_prices_text()
         menu_text = greeting + "\n\n" + MAIN_MENU.format(name=name, availability=availability)
+        if prices_text:
+            menu_text += "\n\n" + prices_text
 
         await update.message.reply_text(
             menu_text,
