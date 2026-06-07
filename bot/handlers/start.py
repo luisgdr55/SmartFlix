@@ -48,27 +48,42 @@ async def _build_availability_text() -> str:
 
 
 async def _build_prices_text() -> str:
-    """Build a formatted string with current prices in Bs for all active platforms."""
+    """Build a monospaced table with current prices in Bs for all active platforms."""
     from services.exchange_service import get_current_rate
     try:
         platforms = await get_platform_availability()
         rate_data = await get_current_rate()
-        rate = rate_data.get("usd_binance") or rate_data.get("rate") or 0
+        rate = float(rate_data.get("usd_binance") or rate_data.get("rate") or 0)
         if not platforms or not rate:
             return ""
-        lines = [f"💰 <b>Precios actuales</b> (Tasa: <code>Bs {float(rate):,.2f}</code>)\n"]
+
+        lines = [
+            "📊 PRECIOS SMARTFLIXVE",
+            f"💱 Tasa: {rate:,.0f} Bs",
+            "",
+            f"{'Plataforma':<16} {'USD':>5}  {'Bs':>7}",
+            "─" * 32,
+        ]
+
+        express_usd = 0
         for p in platforms:
-            icon = p.get("icon_emoji", "📺")
+            icon = p.get("icon_emoji", "")
             name = p.get("name", "")
             price_usd = p.get("price_usd") or 0
             price_express_usd = p.get("price_express_usd") or 0
-            if price_usd:
-                price_bs = round(price_usd * float(rate), 0)
-                lines.append(f"{icon} <b>{name}</b> Mensual — <b>Bs {price_bs:,.0f}</b> (${price_usd})")
             if price_express_usd:
-                price_bs_exp = round(price_express_usd * float(rate), 0)
-                lines.append(f"    ⚡ Express — <b>Bs {price_bs_exp:,.0f}</b> (${price_express_usd})")
-        return "\n".join(lines)
+                express_usd = price_express_usd
+            if price_usd:
+                price_bs = round(price_usd * rate, 0)
+                label = f"{icon} {name}"[:15].ljust(16)
+                lines.append(f"{label} ${price_usd:>4.0f}  {price_bs:>6.0f} Bs")
+
+        if express_usd:
+            express_bs = round(express_usd * rate, 0)
+            lines.append("─" * 32)
+            lines.append(f"{'⚡ Express (todas)':<16} ${express_usd:>4.0f}  {express_bs:>6.0f} Bs")
+
+        return "<code>" + "\n".join(lines) + "</code>"
     except Exception as e:
         logger.error(f"Error building prices text: {e}")
         return ""
@@ -147,16 +162,16 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         [InlineKeyboardButton("📋 Mis servicios", callback_data="menu:my_services")],
                         [InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")],
                     ])
-                    prices_text = await _build_prices_text()
                     alert_text = "\n\n".join(alert_lines)
-                    if prices_text:
-                        alert_text += "\n\n" + prices_text
-
                     await update.message.reply_text(
                         alert_text,
                         parse_mode="HTML",
                         reply_markup=alert_keyboard,
                     )
+
+                    prices_text = await _build_prices_text()
+                    if prices_text:
+                        await update.message.reply_text(prices_text, parse_mode="HTML")
                     return
             except Exception as alert_err:
                 logger.error(f"Debt/expiry alert failed for {telegram_id}: {alert_err}", exc_info=True)
@@ -164,16 +179,17 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Normal menu
         greeting = random.choice(RETURNING_GREETINGS).format(name=name)
         availability = await _build_availability_text()
-        prices_text = await _build_prices_text()
         menu_text = greeting + "\n\n" + MAIN_MENU.format(name=name, availability=availability)
-        if prices_text:
-            menu_text += "\n\n" + prices_text
 
         await update.message.reply_text(
             menu_text,
             parse_mode="HTML",
             reply_markup=main_menu_keyboard(),
         )
+
+        prices_text = await _build_prices_text()
+        if prices_text:
+            await update.message.reply_text(prices_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in start_handler: {e}")
         await update.message.reply_text(
