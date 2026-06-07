@@ -185,7 +185,7 @@ def build_telegram_app() -> Application:
 
     # TEMP: capturar file_id de fotos enviadas por admin
     async def _temp_capture_photo(update, context):
-        if update.effective_user.id not in settings.ADMIN_TELEGRAM_IDS:
+        if str(update.effective_user.id) not in [str(x) for x in settings.ADMIN_TELEGRAM_IDS]:
             return
         fid = update.message.photo[-1].file_id
         logger.info(f"PHOTO file_id: {fid}")
