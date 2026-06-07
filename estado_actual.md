@@ -13,6 +13,21 @@
 
 ## Historial de cambios
 
+### 2026-06-07 — Sesión 19 (cont.) — Banner de bienvenida en /start
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Banner de bienvenida SmartFlixVE enviado como primer mensaje en /start | `bot/handlers/start.py`, `assets/banner.png` | 0be8e59 |
+| 2 | Orden de mensajes en /start: banner → precios → menú | `bot/handlers/start.py` | 698264d |
+
+#### Notas operativas
+- El banner se lee desde `assets/banner.png` en el repo — para cambiarlo, reemplazar ese archivo y hacer push
+- El orden final de /start: 1) banner imagen, 2) tabla de precios en Bs, 3) menú principal con botones
+
+---
+
 ### 2026-06-07 — Sesión 19 (cont.) — Rediseño visual tabla de precios en /start
 
 #### Mejoras aplicadas
