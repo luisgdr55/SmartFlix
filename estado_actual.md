@@ -13,6 +13,23 @@
 
 ## Historial de cambios
 
+### 2026-06-07 — Sesión 19 (cont.) — Rediseño visual tabla de precios en /start
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Tabla de precios rediseñada en formato monoespaciado `<code>` con columnas alineadas | `bot/handlers/start.py` | 5f0e738 |
+| 2 | Precios se envían como segundo mensaje separado — menú normal y alerta de deuda | `bot/handlers/start.py` | 5f0e738 |
+| 3 | Express unificado en una sola fila al final de la tabla — eliminado el Express por plataforma | `bot/handlers/start.py` | 5f0e738 |
+| 4 | Tasa muestra solo el número en Bs sin mencionar "Binance" | `bot/handlers/start.py` | 5f0e738 |
+
+#### Formato resultante
+- Primer mensaje: saludo personalizado + disponibilidad + botones de menú
+- Segundo mensaje: tabla `<code>` con columnas Plataforma / USD / Bs + fila Express al final
+
+---
+
 ### 2026-06-07 — Sesión 19 — Precios en Bs en el inicio del bot
 
 #### Mejoras aplicadas
