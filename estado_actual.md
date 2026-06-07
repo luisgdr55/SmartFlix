@@ -13,6 +13,25 @@
 
 ## Historial de cambios
 
+### 2026-06-07 — Sesión 20 — Rediseño menú /start y flujo cancel_and_buy
+
+#### Mejoras aplicadas
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | WELCOME_NEW_USER y MAIN_MENU rediseñados — más respiro y tono amigable | `bot/messages.py` | 9f39dfd |
+| 2 | RETURNING_GREETINGS renovados — emojis, saltos de línea, sin nombre repetido | `bot/handlers/start.py` | 9f39dfd |
+| 3 | Alerta deuda/vencimiento rediseñada — separadores ━, footer motivacional, tono cálido | `bot/handlers/start.py` | 9f39dfd |
+| 4 | Nuevo botón "Quiero algo diferente" en alerta de subs vencidas | `bot/handlers/start.py` | 9f39dfd |
+| 5 | Handler cancel_and_buy — cancela subs vencidas y redirige a compra nueva | `main.py` | 9f39dfd |
+
+#### Flujo nuevo cancel_and_buy
+- Solo aparece cuando hay suscripciones vencidas (no en pendientes de pago)
+- Cancela todas las subs con status=expired del usuario
+- Muestra confirmación y redirige directo al flujo de compra nueva
+
+---
+
 ### 2026-06-07 — Sesión 19 (cont.) — Banner de bienvenida en /start
 
 #### Mejoras aplicadas
