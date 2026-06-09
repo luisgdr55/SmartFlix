@@ -272,6 +272,32 @@ async def _text_message_router(update: Update, context) -> None:
         from bot.handlers.hogar import start_hogar_support
         await start_hogar_support(update, context)
     elif update.message and update.message.text and \
+            any(kw in update.message.text.lower() for kw in {
+                "código de verificación", "codigo de verificacion",
+                "clave de verificacion", "clave de verificación",
+                "clave de acceso", "2fa", "codigo 2fa",
+                "necesito el codigo", "dame el codigo",
+                "quiero el codigo", "verificacion netflix",
+            }):
+        from bot.handlers.support import show_support_menu
+        await show_support_menu(update, context)
+    elif update.message and update.message.text and \
+            any(kw in update.message.text.lower() for kw in {
+                "soporte", "ayuda", "problema", "no funciona",
+                "falla", "no puedo entrar", "no carga", "tengo un problema",
+            }):
+        from bot.handlers.support import show_support_menu
+        await show_support_menu(update, context)
+    elif update.message and update.message.text and \
+            any(kw in update.message.text.lower() for kw in {
+                "mis credenciales", "mis datos", "mis cuentas",
+                "mi pantalla", "mis servicios", "ver credenciales",
+                "mi suscripcion", "mi suscripción", "contrasena", "contraseña",
+                "mi password", "ver mi perfil",
+            }):
+        from bot.handlers.support import show_support_menu
+        await show_support_menu(update, context)
+    elif update.message and update.message.text and \
             update.message.text.strip().lower() in ("renovar", "pagar", "renovación", "renovacion"):
         from bot.handlers.subscription import show_subscription_platforms
         await show_subscription_platforms(update, context)
