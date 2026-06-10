@@ -36,8 +36,13 @@ PLATFORM_SENDERS: dict[str, list[str]] = {
 # Verification code regex per platform.
 # Netflix uses 4 digits; most others use 6.
 CODE_PATTERNS: dict[str, str] = {
-    "netflix": r"\b(\d{4})\b",
-    "default": r"\b(\d{4,8})\b",
+    "netflix":     r"\b(\d{4})\b",
+    "disney":      r"\b(\d{6})\b",
+    "max":         r"\b(\d{6})\b",
+    "paramount":   r"\b(\d{6})\b",
+    "prime":       r"\b(\d{6})\b",
+    "crunchyroll": r"\b(\d{6})\b",
+    "default":     r"\b(\d{4,8})\b",
 }
 
 POLL_INTERVAL_SECONDS = 15
@@ -161,27 +166,46 @@ def _imap_search_once(
 
 
 def _extract_body(msg: email.message.Message) -> str:
-    """Extract plain text from an email message object."""
-    parts: list[str] = []
+    """Extract plain text from an email message object.
+    Prefers text/plain parts; falls back to text/html with tag stripping."""
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+
+    def _strip_html(html: str) -> str:
+        import html as html_module
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = html_module.unescape(text)
+        return re.sub(r"\s+", " ", text).strip()
 
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                try:
-                    raw = part.get_payload(decode=True)
-                    if raw:
-                        parts.append(raw.decode("utf-8", errors="ignore"))
-                except Exception:
-                    pass
+            ct = part.get_content_type()
+            try:
+                raw = part.get_payload(decode=True)
+                if not raw:
+                    continue
+                decoded = raw.decode("utf-8", errors="ignore")
+                if ct == "text/plain":
+                    plain_parts.append(decoded)
+                elif ct == "text/html":
+                    html_parts.append(_strip_html(decoded))
+            except Exception:
+                pass
     else:
         try:
             raw = msg.get_payload(decode=True)
             if raw:
-                parts.append(raw.decode("utf-8", errors="ignore"))
+                decoded = raw.decode("utf-8", errors="ignore")
+                ct = msg.get_content_type()
+                if ct == "text/html":
+                    html_parts.append(_strip_html(decoded))
+                else:
+                    plain_parts.append(decoded)
         except Exception:
             pass
 
-    return " ".join(parts)
+    # Prefer plain text; fall back to stripped HTML
+    return " ".join(plain_parts) if plain_parts else " ".join(html_parts)
 
 
 async def poll_for_code(
