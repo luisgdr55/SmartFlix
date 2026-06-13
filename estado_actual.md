@@ -13,6 +13,33 @@
 
 ## Historial de cambios
 
+### 2026-06-13 — Sesión 21 — Fix delete suscripción + Fix códigos OTP Disney+
+
+#### Bugs corregidos
+
+| # | Bug | Causa raíz | Archivos | Commit |
+|---|-----|-----------|----------|--------|
+| 1 | Borrar suscripción fallaba silenciosamente desde panel de cliente | FK `household_incidents.subscription_id` con `ON DELETE NO ACTION` causaba violación al borrar. La función `delete_subscription` atrapaba el error y retornaba `False` sin relanzarlo; el router ignoraba ese `False` y redirigía como éxito, haciendo el error invisible. | `database/subscriptions.py`, `admin_panel/router.py` | e5d1f3f |
+| 2 | Códigos de verificación Disney+ no se entregaban automáticamente | `LOOKBACK_SECONDS=900` (15 min) era insuficiente: el correo con el OTP llegaba al buzón maestro antes de que el cliente presionara el botón en el bot, y el filtro de tiempo descartaba el correo antes de leerlo. Adicionalmente, el `break` en el loop de IMAP abortaba el escaneo completo al encontrar un mensaje fuera de la ventana, aunque pudiera haber mensajes más nuevos después. | `services/imap_reader.py` | e5d1f3f |
+
+#### Detalle de cambios por archivo
+
+**`database/subscriptions.py` — `delete_subscription()`**
+- Antes de borrar la suscripción, hace `UPDATE household_incidents SET subscription_id=NULL WHERE subscription_id=<sub_id>` para desligar los incidentes sin eliminarlos (preserva historial para cooldown de 45 días)
+- La función ahora re-lanza la excepción (`raise`) en lugar de retornar `False` silenciosamente
+
+**`admin_panel/router.py` — `subscription_delete()`**
+- Obtiene `user_id` con un SELECT previo al DELETE
+- En éxito redirige a `/panel/users/{user_id}?success=Suscripcion+eliminada`
+- En error redirige a `/panel/users/{user_id}?error=<mensaje>` — el error ahora es visible en la página de detalle del cliente donde ocurrió la acción
+
+**`services/imap_reader.py` — `_imap_search_once()`**
+- `LOOKBACK_SECONDS`: 900 → **2700** (45 minutos)
+- `break` → `continue` en el filtro de tiempo: un mensaje fuera de la ventana ya no aborta el escaneo completo
+- Agregado `logger.debug()` por cada mensaje evaluado con: `msg_id`, timestamp legible, `from_header`, `to_header`, y motivo de descarte (`too_old` / `from_mismatch` / `to_mismatch`) o `EVALUATING` si pasa todos los filtros
+
+---
+
 ### 2026-06-07 — Sesión 20 — Rediseño menú /start y flujo cancel_and_buy
 
 #### Mejoras aplicadas
