@@ -13,6 +13,37 @@
 
 ## Historial de cambios
 
+### 2026-06-13 — Sesión 21 (cont.) — Caché Redis dashboard stats
+
+#### Mejora de rendimiento
+
+| # | Mejora | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | Caché Redis TTL=60s para `get_dashboard_stats()` — carga del dashboard de 2-5s → ~20-50ms | `database/analytics.py`, `admin_panel/router.py` | 45c1d22 |
+
+#### Causa raíz de la lentitud
+`get_dashboard_stats()` ejecutaba **10 queries paralelas a Supabase** en cada carga del dashboard sin ningún caché. Con latencia Railway→Supabase de 200–500ms por query (aunque paralelas, la más lenta define el total), la carga variaba entre **2.1s y 4.7s** según medición en logs de Railway.
+
+#### Solución aplicada
+- **`database/analytics.py`**: `get_dashboard_stats()` verifica primero Redis key `"dashboard:stats:cache"`. En cache hit retorna inmediatamente el JSON deserializado. En cache miss ejecuta las 10 queries como siempre, guarda el resultado con `SETEX TTL=60s`, y retorna los datos reales. Nunca devuelve dict vacío en cache miss (evita bug de sesión 8). Errores de Redis se capturan silenciosamente con fallback a Supabase.
+- **`admin_panel/router.py`**: invalidación activa (`DELETE "dashboard:stats:cache"`) en 4 puntos de alto impacto:
+  - `payment_approve` — path de renovación
+  - `payment_approve` — path de nueva suscripción
+  - `payment_reject`
+  - `subscription_release`
+
+#### Resultado esperado
+| Carga | Antes | Después |
+|-------|-------|---------|
+| Primera carga (cache miss) | 2–5s | 2–5s (sin cambio) |
+| Cargas siguientes (cache hit) | 2–5s | ~20–50ms |
+| Tras aprobar/rechazar pago | 2–5s | 2–5s (cache invalidado) → siguientes ~20ms |
+
+#### Patrón
+Idéntico a `exchange_service.py` (`get_current_rate` con `RATE_CACHE_KEY`). TTL de 60s elegido por ser suficientemente fresco para un dashboard admin sin sacrificar rendimiento.
+
+---
+
 ### 2026-06-13 — Sesión 21 — Fix delete suscripción + Fix códigos OTP Disney+
 
 #### Bugs corregidos
