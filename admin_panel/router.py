@@ -1185,6 +1185,11 @@ async def subscription_release(request: Request, sub_id: str):
             logger.warning(f"Could not send admin release notification: {admin_err}")
 
         redirect_base = f"/panel/users/{user_id}" if user_id else "/panel/"
+        try:
+            from database.analytics import _get_redis, DASHBOARD_STATS_CACHE_KEY
+            _get_redis().delete(DASHBOARD_STATS_CACHE_KEY)
+        except Exception:
+            pass
         return RedirectResponse(url=f"{redirect_base}?success=Perfil+liberado+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"Release subscription error: {e}")
@@ -1390,6 +1395,11 @@ async def payment_approve(
                     )
                 except Exception as adm_err:
                     logger.warning(f"Could not notify admins after renewal approve: {adm_err}")
+                try:
+                    from database.analytics import _get_redis, DASHBOARD_STATS_CACHE_KEY
+                    _get_redis().delete(DASHBOARD_STATS_CACHE_KEY)
+                except Exception:
+                    pass
                 return RedirectResponse(url="/panel/payments?success=Renovacion+aprobada+y+cliente+notificado", status_code=302)
             return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+renovacion", status_code=302)
 
@@ -1431,6 +1441,11 @@ async def payment_approve(
                 )
             except Exception as adm_err:
                 logger.warning(f"Could not notify admins after approve: {adm_err}")
+            try:
+                from database.analytics import _get_redis, DASHBOARD_STATS_CACHE_KEY
+                _get_redis().delete(DASHBOARD_STATS_CACHE_KEY)
+            except Exception:
+                pass
             return RedirectResponse(url="/panel/payments?success=Pago+aprobado+y+perfil+asignado", status_code=302)
         return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+pago", status_code=302)
     except Exception as e:
@@ -1488,6 +1503,11 @@ async def payment_reject(
             except Exception as adm_err:
                 logger.warning(f"Could not notify admins after reject: {adm_err}")
 
+        try:
+            from database.analytics import _get_redis, DASHBOARD_STATS_CACHE_KEY
+            _get_redis().delete(DASHBOARD_STATS_CACHE_KEY)
+        except Exception:
+            pass
         return RedirectResponse(url="/panel/payments?success=Pago+rechazado", status_code=302)
     except Exception as e:
         logger.error(f"Payment reject error: {e}")

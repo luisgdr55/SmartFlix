@@ -1,18 +1,39 @@
 from __future__ import annotations
 
+import json
 import logging
 from calendar import monthrange
 from datetime import timedelta
 from typing import Optional
+
+import redis
 
 from database import get_supabase
 from utils.helpers import venezuela_now
 
 logger = logging.getLogger(__name__)
 
+DASHBOARD_STATS_CACHE_KEY = "dashboard:stats:cache"
+DASHBOARD_STATS_TTL = 60  # seconds
+
+
+def _get_redis() -> redis.Redis:
+    from config import settings
+    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+
 
 async def get_dashboard_stats() -> dict:
     """Get all stats for the /admin dashboard."""
+    # ── Cache read (Redis failure falls through silently to Supabase) ─────────
+    try:
+        r = _get_redis()
+        cached = r.get(DASHBOARD_STATS_CACHE_KEY)
+        if cached:
+            logger.debug("dashboard:stats:cache HIT")
+            return json.loads(cached)
+    except Exception as e:
+        logger.warning(f"Redis dashboard cache GET failed, computing live: {e}")
+
     try:
         import asyncio
         sb = get_supabase()
@@ -70,7 +91,7 @@ async def get_dashboard_stats() -> dict:
         days_elapsed = now.day
         monthly_cost = round(monthly_cost_raw * (days_elapsed / days_in_month), 2)
 
-        return {
+        result = {
             "total_users": users_result.count or 0,
             "active_subscriptions": active_result.count or 0,
             "pending_payments": pending_result.count or 0,
@@ -82,6 +103,17 @@ async def get_dashboard_stats() -> dict:
             "new_users_week": new_users_week_result.count or 0,
             "platform_availability": availability,
         }
+
+        # ── Cache write (best-effort: Redis failure never breaks the response) ─
+        try:
+            r = _get_redis()
+            r.setex(DASHBOARD_STATS_CACHE_KEY, DASHBOARD_STATS_TTL, json.dumps(result, default=str))
+            logger.debug(f"dashboard:stats:cache SET TTL={DASHBOARD_STATS_TTL}s")
+        except Exception as e:
+            logger.warning(f"Redis dashboard cache SET failed: {e}")
+
+        return result
+
     except Exception as e:
         logger.error(f"Error in get_dashboard_stats: {e}")
         return {}
