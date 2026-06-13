@@ -1196,13 +1196,22 @@ async def subscription_delete(request: Request, sub_id: str):
     guard = _auth_guard(request)
     if guard:
         return guard
+    # Fetch user_id before deleting so we can redirect back to the right page
+    user_id = None
     try:
         from database.subscriptions import delete_subscription
+        from database import get_supabase
+        sb = get_supabase()
+        sub_res = sb.table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute()
+        if sub_res.data:
+            user_id = sub_res.data[0].get("user_id")
         await delete_subscription(sub_id)
-        referer = request.headers.get("referer", "/panel/subscriptions")
-        return RedirectResponse(url=referer, status_code=302)
+        redirect_ok = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
+        return RedirectResponse(url=f"{redirect_ok}?success=Suscripcion+eliminada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+        logger.error(f"subscription_delete error for sub_id={sub_id}: {e}")
+        redirect_err = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
+        return RedirectResponse(url=f"{redirect_err}?error={str(e)[:120]}", status_code=302)
 
 
 @panel_router.post("/subscriptions/{sub_id}/notify-reminder")

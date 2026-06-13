@@ -273,14 +273,16 @@ async def cancel_subscription(sub_id: str) -> bool:
 
 
 async def delete_subscription(sub_id: str) -> bool:
-    """Permanently delete a subscription record."""
+    """Permanently delete a subscription record, unlinking dependent household_incidents."""
     try:
         sb = get_supabase()
+        # Unlink (not delete) dependent rows to preserve incident history
+        sb.table("household_incidents").update({"subscription_id": None}).eq("subscription_id", sub_id).execute()
         sb.table("subscriptions").delete().eq("id", sub_id).execute()
         return True
     except Exception as e:
         logger.error(f"Error in delete_subscription: {e}")
-        return False
+        raise
 
 
 async def delete_pending_subscriptions_for_platform(user_id: str, platform_id: str) -> int:

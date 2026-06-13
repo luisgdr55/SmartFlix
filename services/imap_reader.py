@@ -51,7 +51,7 @@ FALLBACK_TIMEOUT_SECONDS = 240  # 4 minutes → escalate to admin
 # Look back up to this many seconds before the request was made.
 # Covers cases where the client triggered the code on the platform
 # before pressing the button in the bot.
-LOOKBACK_SECONDS = 900  # 15 minutes
+LOOKBACK_SECONDS = 2700  # 45 minutes
 
 
 def _get_code_pattern(platform_slug: str) -> str:
@@ -109,28 +109,51 @@ def _imap_search_once(
 
                 msg = email.message_from_bytes(msg_data[0][1])
 
-                # Filter by time: must be within the lookback window
+                # Filter by time: must be within the lookback window.
+                # Use continue (not break) — IMAP order is not guaranteed to be
+                # strictly newest-first after reversing, so one old message should
+                # not abort the scan of potentially newer ones that follow.
                 date_str = msg.get("Date", "")
+                msg_ts = None
                 if date_str:
                     try:
                         msg_ts = email.utils.parsedate_to_datetime(date_str).timestamp()
                         if msg_ts < oldest_acceptable:
-                            # Emails are newest-first; once we pass the window
-                            # all remaining are older — stop searching
-                            break
+                            from datetime import datetime as _dt
+                            logger.debug(
+                                f"IMAP [{platform_slug}] msg {msg_id}: "
+                                f"SKIP too_old ts={_dt.fromtimestamp(msg_ts).strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            continue
                     except Exception:
                         pass  # if date parse fails, still try the email
 
                 # Must be from the correct platform sender
                 from_header = msg.get("From", "").lower()
                 if senders and not any(domain in from_header for domain in senders):
+                    logger.debug(
+                        f"IMAP [{platform_slug}] msg {msg_id}: "
+                        f"SKIP from_mismatch from='{from_header}'"
+                    )
                     continue
 
-                # 3. Filtro por destinatario (To:) — solo si se especificó account_email
+                # Filter by recipient (To:) — only if account_email was provided
+                to_header = ""
                 if account_email:
                     to_header = msg.get("To", "").lower()
                     if account_email.lower() not in to_header:
+                        logger.debug(
+                            f"IMAP [{platform_slug}] msg {msg_id}: "
+                            f"SKIP to_mismatch to='{to_header}' expected='{account_email}'"
+                        )
                         continue
+
+                from datetime import datetime as _dt
+                logger.debug(
+                    f"IMAP [{platform_slug}] msg {msg_id}: "
+                    f"EVALUATING from='{from_header}' to='{to_header}' "
+                    f"ts={_dt.fromtimestamp(msg_ts).strftime('%Y-%m-%d %H:%M:%S') if msg_ts else 'unknown'}"
+                )
 
                 # Extract plain-text body
                 body = _extract_body(msg)
