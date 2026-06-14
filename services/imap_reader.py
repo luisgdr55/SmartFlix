@@ -161,6 +161,8 @@ def _imap_search_once(
                     continue
 
                 # Extract the verification code — first (newest) match wins
+                # TEMP DEBUG — remove after diagnosis
+                logger.warning(f"[IMAP DEBUG] platform={platform_slug} msg={msg_id} body_snippet={body[:500]!r}")
                 match = re.search(pattern, body)
                 if match:
                     logger.info(
