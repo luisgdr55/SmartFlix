@@ -161,8 +161,6 @@ def _imap_search_once(
                     continue
 
                 # Extract the verification code — first (newest) match wins
-                # TEMP DEBUG — remove after diagnosis
-                logger.warning(f"[IMAP DEBUG] platform={platform_slug} msg={msg_id} body_snippet={body[:500]!r}")
                 match = re.search(pattern, body)
                 if match:
                     logger.info(
@@ -198,9 +196,12 @@ def _extract_body(msg: email.message.Message) -> str:
 
     def _strip_html(html: str) -> str:
         import html as html_module
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = html_module.unescape(text)
-        return re.sub(r"\s+", " ", text).strip()
+        # Eliminar bloques <style> y <script> con su contenido antes de strip
+        text = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)         # quita tags HTML restantes
+        text = html_module.unescape(text)             # &amp; → &, etc.
+        return re.sub(r"\s+", " ", text).strip()     # colapsa whitespace
 
     if msg.is_multipart():
         for part in msg.walk():
