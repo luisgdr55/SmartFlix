@@ -13,6 +13,39 @@
 
 ## Historial de cambios
 
+### 2026-06-14 — Sesión 17 — Fix código de verificación Disney+ (CSS color false match)
+
+#### Bug corregido
+
+| # | Bug | Causa raíz | Archivos | Commit |
+|---|-----|------------|----------|--------|
+| 1 | Código de verificación Disney+ devolvía número incorrecto (707070) en vez del OTP real | `_strip_html` no eliminaba el contenido de bloques `<style>` — colores CSS como `color: #707070` quedaban como texto plano y `\b(\d{6})\b` los matcheaba antes del OTP | `services/imap_reader.py` | 2b4cd4c |
+
+#### Diagnóstico
+- El email de Disney+ llega como HTML puro (sin parte text/plain)
+- `_extract_body` hace walk() → cae a text/html → llama `_strip_html`
+- `_strip_html` aplicaba `re.sub(r"<[^>]+>", " ", html)` que elimina tags pero deja el contenido de `<style>` intacto
+- Los primeros 500 chars del body eran CSS de @font-face con colores como `707070`
+- `re.search(r"\b(\d{6})\b", body)` matcheaba ese color antes del código OTP real
+
+#### Fix aplicado
+```python
+# Antes
+text = re.sub(r"<[^>]+>", " ", html)
+
+# Después
+text = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+text = re.sub(r"<[^>]+>", " ", text)
+```
+
+#### Notas operativas
+- Fix no afecta Netflix — sus emails tienen parte text/plain y nunca llegan a `_strip_html`
+- El mismo fix protege contra cualquier otro número de 6 dígitos en CSS (tracking IDs, font hashes, etc.)
+- Verificar con el próximo OTP Disney real en producción
+
+---
+
 ### 2026-06-13 — Sesión 21 (cont.) — Caché Redis dashboard stats
 
 #### Mejora de rendimiento
