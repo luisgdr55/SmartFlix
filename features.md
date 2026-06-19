@@ -517,6 +517,173 @@ CREATE TABLE featured_content (
 
 ---
 
+### FASE 8 — Pasarela de pagos unificada
+
+**Categoría:** Infraestructura de pagos / Adquisición / Retención
+**Prioridad:** 🔴 Alta
+**Complejidad:** Alta
+**Estado:** 📋 Diseñado — pendiente de implementar
+
+---
+
+#### Problema que resuelve
+
+La pasarela actual solo modela dos operaciones aisladas: comprar nuevo (`cart:{tid}`)
+y renovar lo mismo (`renewal_cart:{tid}`). Cada ítem es siempre 1 período, un pago
+equivale a una suscripción, y no existe entidad de pago (los campos viven en
+`subscriptions`). Esto deja tres flujos reales sin soporte:
+
+1. **Mora multi-período.** Un cliente que debe varios meses (ej. Ray, cubierto hasta
+   19/05, hoy debe 1 mes) no puede ponerse al día pagando N períodos de golpe ni ver
+   cuánto debe y desde cuándo.
+2. **Pago selectivo.** Un cliente con varios perfiles no puede elegir cuáles paga,
+   cuántos meses de cada uno, y cuáles deja debiendo.
+3. **Cambio de plataforma.** Cuando una suscripción vence y el cliente quiere otra
+   plataforma en su lugar (ej. venció Disney, ahora quiere Netflix), no hay operación
+   que libere el perfil viejo, asigne el nuevo y cobre el precio distinto como una
+   sola transacción.
+
+---
+
+#### Decisiones de negocio (fijadas, sesión 17)
+
+| # | Decisión | Implicación |
+|---|----------|-------------|
+| 1 | Deuda sostenida con servicio activo | El servicio NO se corta automáticamente por mora |
+| 2 | Corte automático D+7 eliminado → corte manual por el admin | Conserva clientes fieles pero atrasados; reusa cancelación manual de sesión 9 |
+| 3 | Recordatorios de deuda se suspenden tras D+6 | A partir de D+7 la deuda solo es visible en el panel |
+| 4 | Facturación por aniversario en meses calendario | `relativedelta(months=N)`, NO `timedelta(days=30)` |
+| 5 | Pago parcial cubre el período más antiguo primero | Ray paga 1 mes → cubre 19/05→19/06, sigue debiendo 19/06→19/07 |
+| 6 | El período disfrutado se cobra (no se perdona) | Pagó por el tiempo que tuvo acceso |
+| 7 | Cambio solo sobre suscripción YA vencida | No hay cambio a mitad de período |
+| 8 | Cambio muta el mismo `subscription_id` | Historial continuo; arranque de cobertura fresco desde la aprobación |
+| 9 | Cambio exige saldar deuda previa de la plataforma que se abandona | Disfrutó ese mes, lo paga antes de cambiar |
+| 10 | Tickets en Bs con tasa Binance fijada manualmente | Ya implementado en Lote 0 (commits f672f43, c28112f) |
+
+---
+
+#### Arquitectura — tabla `checkout_orders` (un pago → N efectos)
+
+Inspirada en el patrón order/order-items de pasarelas reales (Stripe PaymentIntent →
+N efectos). El admin aprueba UNA orden, no N suscripciones. Deja la puerta lista para
+referidos, lealtad y planes familiares (features 2, 7, 9) que también necesitan un
+registro de pago real.
+
+```sql
+CREATE TABLE checkout_orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'pending',   -- pending|approved|rejected|expired
+    manifest JSONB NOT NULL,                -- array de ítems tipados (ver abajo)
+    total_usd DECIMAL(10,2) NOT NULL,
+    total_bs DECIMAL(10,2),
+    rate_used DECIMAL(10,2),                -- tasa Binance congelada al abrir el checkout
+    payment_reference VARCHAR(255),
+    payment_image_url TEXT,                 -- texto OCR (igual que subscriptions hoy)
+    payment_confirmed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_checkout_orders_user_id ON checkout_orders(user_id);
+CREATE INDEX idx_checkout_orders_status ON checkout_orders(status);
+```
+
+---
+
+#### El manifest — ítem tipado (resuelve los 3 flujos con una estructura)
+
+```jsonc
+{
+  "tipo": "renovacion" | "nueva" | "cambio",
+  "subscription_id": "<uuid|null>",        // sub a mutar (renovacion/cambio)
+  "platform_id": "<uuid>",                 // plataforma destino (la nueva en cambio)
+  "platform_origen_id": "<uuid|null>",     // solo cambio: plataforma que se abandona
+  "profile_id": "<uuid|null>",             // se asigna al aprobar
+  "plan_type": "monthly",
+  "periodos": 1,                           // ≥1 → resuelve la mora multi-período
+  "cobertura_desde": "2026-05-19",
+  "cobertura_hasta": "2026-06-19",         // base + relativedelta(months=periodos)
+  "precio_unitario_usd": 5.0,
+  "cargo_deuda_usd": 0.0,                   // solo cambio: deuda previa a saldar
+  "subtotal_usd": 5.0
+}
+```
+
+**Cómo cada tipo resuelve su flujo al aprobar la orden:**
+
+- **`renovacion` con `periodos: N`** → mora multi-período. Base = `end_date` actual de
+  la sub. Nueva cobertura = base + `relativedelta(months=N)`. Reusa la lógica de
+  `confirm_renewal_subscription`. Ray con `periodos:2` → cobertura 19/05 → 19/07.
+- **Pago selectivo** → el manifest solo incluye las plataformas que el cliente paga.
+  Las demás quedan intactas en su estado de deuda, visibles en el panel.
+- **`nueva`** → comportamiento actual de compra nueva, ahora dentro del checkout.
+- **`cambio`** (solo sub vencida) → libera perfil de `platform_origen_id` con rotación
+  de PIN, asigna perfil de `platform_id`, muta el mismo `subscription_id`
+  (`platform_id`, `price_usd`, `plan_type`, `end_date` fresco desde aprobación).
+  `subtotal_usd = cargo_deuda_usd + precio_unitario_usd`.
+
+---
+
+#### Aritmética de aniversario (meses calendario)
+
+| Cliente | Cubierto hasta | Hoy | Paga | Nueva cobertura | Estado |
+|---------|---------------|-----|------|-----------------|--------|
+| Ray | 19/05/2026 | 19/06 | 1 mes | 19/06 | sigue debiendo período en curso |
+| Ray | 19/05/2026 | 19/06 | 2 meses | 19/07 | al día |
+
+`periodos_vencidos = meses calendario completos entre cobertura actual y hoy`.
+
+**Caso borde fin de mes:** una sub que vence el 31/01 + 1 mes → `relativedelta` la
+clampa al 28/02 (o 29 bisiesto), y el mes siguiente vuelve al 31/03. Comportamiento
+correcto, documentado para que no parezca bug.
+
+**Auto-corrección del drift:** las subs existentes creadas con base de 30 días adoptan
+meses calendario en su próxima renovación. No requiere migración de datos viejos.
+
+---
+
+#### Deuda técnica a corregir durante la implementación
+
+| # | Problema | Archivo | Acción |
+|---|----------|---------|--------|
+| 1 | Tres cálculos de fecha divergentes; `handle_renewal_cart_confirm` usa `now + timedelta` (desde hoy) en vez de extender desde `end_date` | `subscription.py:905`, `admin.py`, `renovar.py` | Unificar en un helper de fecha único — prerequisito de la mora |
+| 2 | `relativedelta` no declarado | `requirements.txt` | Declarar `python-dateutil` explícito |
+
+---
+
+#### Paridad cliente ↔ /renovar
+
+La lógica de cálculo de períodos, mora, construcción de manifest y efectos de
+aprobación vive en un **servicio compartido** (`checkout_service`). Tanto el flujo del
+cliente como `/renovar` lo invocan — la paridad es automática, no se duplica lógica.
+El servicio es agnóstico al almacenamiento de sesión: el cliente persiste en Redis,
+`/renovar` en `context.user_data`; cada handler decide dónde guarda la estructura.
+
+---
+
+#### Plan por lotes
+
+| Lote | Descripción | Archivos | Estado |
+|------|-------------|----------|--------|
+| 0 | Helper Bs en tickets + fix `send_to_admin`→bool | `exchange_service.py`, `notification_service.py`, `router.py`, `dashboard.html` | ✅ Implementado (f672f43, c28112f) |
+| 1 | `checkout_service.py`: cálculo períodos/mora/manifest/totales + helper de fecha único que unifica las 3 rutas | `services/checkout_service.py` (nuevo), `subscription.py`, `renovar.py`, `requirements.txt` | 📋 Pendiente |
+| 2 | Migración BD: tabla `checkout_orders` (SQL manual en Supabase) | `supabase_schema.sql` + Supabase | 📋 Pendiente |
+| 3 | Motor de aprobación: procesa manifest atómicamente (N períodos / nueva / cambio) | `admin.py`, `profiles.py` | 📋 Pendiente |
+| 4 | UI cliente: multi-select de perfiles + selector de períodos + total en vivo | `subscription.py`, `keyboards.py` | 📋 Pendiente |
+| 5 | Paridad `/renovar`: reconectar al `checkout_service` + motor | `renovar.py` | 📋 Pendiente |
+| 6 | Scheduler: desactivar corte automático (PART 2), suspender recordatorios tras D+6 | `scheduler/jobs.py`, `subscriptions.py` | 📋 Pendiente |
+| 7 | Docs: `estado_actual.md` + cierre de Fase 8 en `features.md` | — | 📋 Pendiente |
+
+**Dependencias:** Lote 1 es prerequisito de todo (helper de fecha + servicio).
+Lote 2 antes de Lote 3 (la tabla debe existir). Lote 5 depende de Lotes 1 y 3.
+Lote 6 es independiente y puede ir en paralelo.
+
+**Cambios en BD:** tabla `checkout_orders` (Lote 2). El resto se calcula sobre datos
+existentes. Sin migración de subs viejas (drift se autocorrige).
+
+---
+
 ## Resumen de todas las fases
 
 | Fase | Descripción | Estado |
@@ -528,6 +695,7 @@ CREATE TABLE featured_content (
 | 📋 Fase 5 | Migración de cuenta Netflix vía Telegram | Pendiente |
 | ⚠️ Fase 6 | Módulo de soporte y tickets + planes Netflix | Parcial — 6A.1 Módulo hogar implementado. Pendiente: 6A.2 soporte por foto, 6B planes Netflix diferenciados |
 | 📋 Fase 7 | PWA SmartFlixVE completa | Pendiente |
+| 📋 Fase 8 | Pasarela de pagos unificada (mora multi-período, pago selectivo, cambio de plataforma) | Diseñado |
 
 ---
 
