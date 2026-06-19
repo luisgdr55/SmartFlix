@@ -218,3 +218,17 @@ async def check_rate_staleness() -> Optional[str]:
     except Exception as e:
         logger.error(f"Error in check_rate_staleness: {e}")
         return None
+
+
+def _fmt_bs_ve(amount: float) -> str:
+    s = f"{amount:,.0f}"
+    return s.translate(str.maketrans({",": "."}))
+
+
+async def formato_monto_usd_bs(price_usd: float) -> str:
+    rate = await get_current_rate()
+    usd_str = f"{price_usd:.0f}USD" if price_usd == int(price_usd) else f"{price_usd:.2f}USD"
+    if not rate or not rate.get("usd_binance"):
+        return usd_str
+    price_bs = price_usd * float(rate["usd_binance"])
+    return f"{usd_str} / {_fmt_bs_ve(price_bs)} Bs"

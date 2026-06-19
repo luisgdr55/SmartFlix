@@ -66,12 +66,15 @@ async def send_to_admin(
     message: str,
     keyboard: Optional[InlineKeyboardMarkup] = None,
     photo_bytes: Optional[bytes] = None,
-) -> None:
-    """Send a message to all configured admins."""
+) -> bool:
+    """Send a message to all configured admins. Returns True if at least one admin received it."""
     admin_ids = parse_telegram_ids(settings.ADMIN_TELEGRAM_IDS)
+    any_sent = False
     for admin_id in admin_ids:
-        await send_to_user(admin_id, message, keyboard, photo_bytes)
+        if await send_to_user(admin_id, message, keyboard, photo_bytes):
+            any_sent = True
         await asyncio.sleep(0.1)
+    return any_sent
 
 
 async def broadcast_campaign(
@@ -230,6 +233,8 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
                 f"⏳ <b>Días restantes:</b> {days_left}\n\n"
                 f"👇 <i>Ticket listo para copiar y enviar por WhatsApp:</i>"
             )
+            from services.exchange_service import formato_monto_usd_bs
+            monto_str = await formato_monto_usd_bs(price_usd)
             ticket_wa = (
                 f"📺 *SmartFlixVE* — Recordatorio de Renovación\n\n"
                 f"Hola *{client_name}* 👋\n\n"
@@ -238,7 +243,7 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
                 f"*{days_left} día(s)* ({end_fmt}).\n\n"
                 f"Para renovar y seguir disfrutando sin interrupciones, "
                 f"realiza tu pago de:\n\n"
-                f"💰 *${price_usd:.2f} USD*\n\n"
+                f"💰 *{monto_str}*\n\n"
                 f"📲 Escríbenos para confirmar tu renovación.\n"
                 f"¡Gracias por preferirnos! 🙏"
             )
@@ -311,13 +316,15 @@ async def send_expiry_notification(subscription_id: str) -> bool:
                 f"📆 <b>Venció:</b> {end_fmt}\n\n"
                 f"👇 <i>Ticket listo para copiar y enviar por WhatsApp:</i>"
             )
+            from services.exchange_service import formato_monto_usd_bs
+            monto_str = await formato_monto_usd_bs(price_usd)
             ticket_wa = (
                 f"📺 *SmartFlixVE* — Aviso de Vencimiento\n\n"
                 f"Hola *{client_name}* 👋\n\n"
                 f"Tu suscripción de *{platform_emoji} {platform_name}* "
                 f"*venció* el {end_fmt}.\n\n"
                 f"Para reactivar tu acceso, realiza tu pago de:\n\n"
-                f"💰 *${price_usd:.2f} USD*\n\n"
+                f"💰 *{monto_str}*\n\n"
                 f"📲 Escríbenos para confirmar tu renovación.\n"
                 f"¡Gracias por preferirnos! 🙏"
             )
