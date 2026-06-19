@@ -83,8 +83,7 @@
         {% set _name = user.get('name') or '—' %}
         {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
         {% set _fecha = sub['end_date'] | fmt_date %}
-        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
-        {% set _ticket = "📺 *SmartFlixVE* — Recordatorio de Renovación\n\nHola *" ~ _name ~ "* 👋\n\nTe recordamos que tu suscripción de *" ~ _plat ~ "* vence el " ~ _fecha ~ ".\n\nPara renovar y seguir disfrutando sin interrupciones, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
+        {% set _ticket = "📺 *SmartFlixVE* — Recordatorio de Renovación\n\nHola *" ~ _name ~ "* 👋\n\nTe recordamos que tu suscripción de *" ~ _plat ~ "* vence el " ~ _fecha ~ ".\n\nPara renovar y seguir disfrutando sin interrupciones, realiza tu pago de:\n\n💰 *" ~ sub.get('monto_fmt', '') ~ "*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
         <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-reminder',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Aviso enviado':'❌ Error al enviar')})"
           class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
@@ -145,8 +144,7 @@
         {% set _name = user.get('name') or '—' %}
         {% set _plat = platform.get('icon_emoji','') ~ ' ' ~ platform.get('name','') %}
         {% set _fecha = sub.get('end_date') | fmt_date %}
-        {% set _price = "%.2f"|format(sub.get('price_usd', 0)) %}
-        {% set _ticket = "📺 *SmartFlixVE* — Aviso de Vencimiento\n\nHola *" ~ _name ~ "* 👋\n\nTu suscripción de *" ~ _plat ~ "* *venció* el " ~ _fecha ~ ".\n\nPara reactivar tu acceso, realiza tu pago de:\n\n💰 *$" ~ _price ~ " USD*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
+        {% set _ticket = "📺 *SmartFlixVE* — Aviso de Vencimiento\n\nHola *" ~ _name ~ "* 👋\n\nTu suscripción de *" ~ _plat ~ "* *venció* el " ~ _fecha ~ ".\n\nPara reactivar tu acceso, realiza tu pago de:\n\n💰 *" ~ sub.get('monto_fmt', '') ~ "*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
         <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-expiry',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Enviado':'❌ Error')})"
           class="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 px-2 py-1 rounded-lg transition-colors font-medium">

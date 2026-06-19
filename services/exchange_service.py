@@ -232,3 +232,10 @@ async def formato_monto_usd_bs(price_usd: float) -> str:
         return usd_str
     price_bs = price_usd * float(rate["usd_binance"])
     return f"{usd_str} / {_fmt_bs_ve(price_bs)} Bs"
+
+
+def formato_monto_usd_bs_sync(price_usd: float, rate_value: float | None) -> str:
+    usd_str = f"{price_usd:.0f}USD" if price_usd == int(price_usd) else f"{price_usd:.2f}USD"
+    if not rate_value:
+        return usd_str
+    return f"{usd_str} / {_fmt_bs_ve(price_usd * rate_value)} Bs"

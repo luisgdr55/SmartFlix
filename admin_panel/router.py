@@ -182,6 +182,13 @@ async def dashboard(request: Request):
         t5 = time.perf_counter()
         logger.info(f"Dashboard direct queries gather done: {t5 - t0:.3f}s")
 
+        rate_value = float(rate_data["usd_binance"]) if rate_data and rate_data.get("usd_binance") else None
+        from services.exchange_service import formato_monto_usd_bs_sync
+        for _s in (expiring_res.data or []):
+            _s["monto_fmt"] = formato_monto_usd_bs_sync(_s.get("price_usd", 0), rate_value)
+        for _s in (expired_res.data or []):
+            _s["monto_fmt"] = formato_monto_usd_bs_sync(_s.get("price_usd", 0), rate_value)
+
         # Aggregate revenue by day in Python (replaces 7 individual queries)
         revenue_by_day: dict[str, float] = {}
         for row in (revenue_res.data or []):
