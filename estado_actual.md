@@ -13,6 +13,24 @@
 
 ## Historial de cambios
 
+### 2026-06-19 — Sesión 17 — Lote 0: Bs en tickets WhatsApp + fix send_to_admin bool
+
+#### Mejoras y fixes
+
+| # | Cambio | Archivos | Commit |
+|---|--------|----------|--------|
+| 1 | `formato_monto_usd_bs()` en exchange_service: formatea `5USD / 3.850 Bs` con tasa Binance fijada. Sin fallback 36.0: si no hay tasa, muestra solo USD | `services/exchange_service.py` | f672f43 |
+| 2 | `send_to_admin` ahora retorna `bool` (True si al menos un admin recibió el mensaje) — antes retornaba `None`, rompiendo el `if success:` en los bloques de cliente externo | `services/notification_service.py` | f672f43 |
+| 3 | Tickets WhatsApp de cliente externo en `send_expiry_reminder` y `send_expiry_notification` reemplazan `$5.00 USD` por `5USD / 3.850 Bs` usando `formato_monto_usd_bs`. Import lazy para evitar ciclo de arranque | `services/notification_service.py` | f672f43 |
+
+#### Notas de diseño
+- `_fmt_bs_ve()` usa punto de miles (formato venezolano): `3.850`, no `3,850`
+- USD sin decimales si es entero (`5USD`), con 2 decimales si no (`5.50USD`)
+- Bs redondeado a entero — en montos grandes los céntimos no son relevantes
+- Import lazy en `notification_service.py` mantiene el patrón del archivo (todos los imports de servicios/DB son lazy) y elimina riesgo de ciclo en el arranque
+
+---
+
 ### 2026-06-14 — Sesión 17 — Fix código de verificación Disney+ (CSS color false match)
 
 #### Bug corregido
