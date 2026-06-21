@@ -80,7 +80,7 @@ async def update_account_health(account_id: str) -> str:
         return 'healthy'
 
 
-async def get_available_profiles_for_migration(user_id: str, exclude_account_id: str = None) -> list:
+async def get_available_profiles_for_migration(user_id: str, exclude_account_id: str = None, ignore_account_health: bool = False) -> list:
     """
     Perfiles disponibles para migración.
     Excluye perfiles donde este usuario tuvo restricción de hogar en los últimos 45 días.
@@ -118,7 +118,7 @@ async def get_available_profiles_for_migration(user_id: str, exclude_account_id:
         profiles = [
             p for p in profiles
             if p['id'] not in restricted_ids
-            and p.get('accounts', {}).get('account_health') not in ('restricted',)
+            and (ignore_account_health or p.get('accounts', {}).get('account_health') not in ('restricted',))
         ]
 
         # Ordenar: cuentas healthy primero, luego por last_released más antiguo

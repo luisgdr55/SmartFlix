@@ -1114,7 +1114,7 @@ async def _admin_show_profiles_for_express(query, context, admin_tid: int, clien
     # Obtener perfiles disponibles (ya filtrados: sin incidentes del usuario en 45 días,
     # sin cuentas restricted, excluyendo cuenta actual)
     available = await get_available_profiles_for_migration(
-        session['user_id'], session.get('account_id')
+        session['user_id'], session.get('account_id'), ignore_account_health=True
     )
 
     # Obtener incidentes recientes del usuario para mostrar contexto al admin
@@ -1245,7 +1245,7 @@ async def _admin_finalize_history(query, context, admin_tid: int, client_tid: in
     session = json.loads(session_raw)
     from database.hogar import get_available_profiles_for_migration
     available = await get_available_profiles_for_migration(
-        session.get('user_id', ''), session.get('account_id')
+        session.get('user_id', ''), session.get('account_id'), ignore_account_health=True
     )
     _redis().setex(f"hogar_profiles:{admin_tid}", _TTL,
                    json.dumps([p['id'] for p in available[:6]]))
