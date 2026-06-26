@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Request, Response, HTTPException
 from telegram import Update, Bot
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, Defaults
@@ -105,11 +106,15 @@ def build_telegram_app() -> Application:
                 sb.table("subscriptions").update({"status": "cancelled"}).eq(
                     "user_id", db_user["id"]
                 ).eq("status", "expired").execute()
-            await query.edit_message_text(
-                "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"
-                "¿Qué quieres contratar hoy? 🎬",
-                parse_mode="HTML"
-            )
+            try:
+                await query.edit_message_text(
+                    "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"
+                    "¿Qué quieres contratar hoy? 🎬",
+                    parse_mode="HTML"
+                )
+            except BadRequest as br:
+                if "not modified" not in str(br).lower():
+                    raise
             await show_subscription_platforms(update, context)
         except Exception as e:
             logger.error(f"cancel_and_buy error: {e}")
