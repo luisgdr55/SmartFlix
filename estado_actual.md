@@ -13,32 +13,34 @@
 
 ## Historial de cambios
 
-### 2026-06-26 — Sesión 18 — Fix doble-toque en pickers de plataforma
+### 2026-06-26 — Sesión 18 — Fix doble-toque / "Message is not modified" en pickers de plataforma
 
-#### Bug corregido
+#### Bugs corregidos
 
 | # | Bug | Archivos | Commit |
 |---|-----|----------|--------|
-| 1 | "Error al cargar plataformas" mostrado a clientes que tocaban el botón de suscripción dos veces seguidas — el except Exception amplio enmascaraba un BadRequest "Message is not modified" (benigno) como error fatal | `bot/handlers/subscription.py`, `bot/handlers/express.py`, `bot/handlers/afiliar.py` | 90099a6 |
+| 1 | "Error al cargar plataformas" visible al usuario cuando edit_message_text intentaba re-pintar contenido idéntico (BadRequest "Message is not modified" tratado como error fatal por except Exception genérico) | `bot/handlers/subscription.py`, `bot/handlers/express.py`, `bot/handlers/afiliar.py` | 90099a6 |
+| 2 | Mismo patrón sin cubrir en _handle_cancel_and_buy — el edit "✅ Listo" previo a show_subscription_platforms no tenía protección BadRequest | `main.py` | 033af73 |
 
 #### Diagnóstico
 
 - Reporte inicial: una clienta no podía cargar plataformas; desde el teléfono del admin sí cargaba.
-- Falsa pista descartada: NO era data específica de la clienta. Supabase respondió 200 OK en ambas queries (`platforms` y `profiles`); `platform_list_text` y `platforms_keyboard` dependen solo de data global idéntica para todos.
-- `get_platform_availability` y `get_available_profile_counts` atrapan su propia excepción y devuelven `[]`/`{}` en silencio → el except de los handlers solo podía dispararse fuera de esas funciones.
-- Traceback real (Railway UTC 16:56 = 12:56 VET): `Message is not modified: specified new message content and reply markup are exactly the same...`
-- Causa raíz: doble toque del botón. El primer toque editó el mensaje OK; el segundo intentó editar con texto+keyboard idénticos → Telegram lanzó BadRequest. El `except Exception` lo trató como fatal y ejecutó el fallback "Error al cargar plataformas", que SÍ cambia el contenido (por eso Telegram lo aceptó con 200 y la clienta vio el error).
+- Descartado: data específica de la clienta, fallo de DB, foto con botones inline. Supabase respondió 200 OK en ambas queries; get_platform_availability devuelve data global idéntica para todos los usuarios; la foto de /start va sin reply_markup.
+- Traceback real (Railway 16:56 UTC): `Message is not modified: specified new message content and reply markup are exactly the same`.
+- Causa raíz: edit_message_text intentó reemplazar un mensaje con contenido idéntico al que ya tenía. El except Exception lo trató como error fatal y ejecutó el fallback "Error al cargar plataformas" (que sí cambia el contenido, por eso Telegram lo aceptó con 200 y la clienta vio el error).
+- Gatillo exacto: no confirmado por logs (redeploy borró el histórico de 16:56 UTC). Doble-toque es la hipótesis más probable pero no está probada.
 
 #### Fix aplicado
 
-- Añadido `from telegram.error import BadRequest` en los 3 archivos.
-- En las 4 ubicaciones de picker (`show_subscription_platforms`, `handle_renewal_add_new`, `show_express_platforms`, handler `afiliar:plan:`) se añadió un `except BadRequest` antes del `except Exception`: si el mensaje contiene "not modified", hace `return` silencioso (la pantalla ya muestra el menú correcto); cualquier otro BadRequest cae al manejo de error previo.
-- En afiliar, el `return` benigno va ANTES de `_clear_session` — un doble-toque ya no destruye la sesión de afiliación a mitad de flujo.
+- Añadido `from telegram.error import BadRequest` en los 4 archivos afectados.
+- En los 5 puntos de edición vulnerables se antepuso un `except BadRequest`: si el mensaje contiene "not modified" → return silencioso (o pass y continuar); cualquier otro BadRequest hace raise hacia el except Exception exterior para loggearse normalmente.
+- En afiliar.py el return benigno va ANTES de _clear_session — un doble-toque no destruye la sesión de afiliación a mitad de flujo.
+- En _handle_cancel_and_buy el try/except BadRequest es interno al try exterior, preservando el manejo de errores de DB.
 
-#### Notas operativas / aprendizaje
+#### Aprendizajes / pendientes no urgentes
 
-- Patrón de riesgo confirmado: `except Exception` demasiado amplio que convierte condiciones benignas de Telegram (doble-toque, mensaje sin cambios) en errores visibles al cliente. Revisar otros handlers con `edit_message_text` dentro de try/except genérico.
-- Pendiente menor (no urgente): `get_platform_availability` y `get_available_profile_counts` silencian sus excepciones con `return []`/`return {}`. No fue la causa de hoy, pero ese silencio puede ocultar fallos reales de DB. Candidato a limpieza futura.
+- Patrón de riesgo: `except Exception` demasiado amplio convierte condiciones benignas de Telegram en errores visibles al cliente. Candidato a sweep sistemático.
+- `get_platform_availability` y `get_available_profile_counts` silencian sus excepciones con `return []`/`return {}`. No fue causa de ningún bug hoy, pero ese silencio puede ocultar fallos reales de DB. Candidato a limpieza futura.
 
 ---
 
