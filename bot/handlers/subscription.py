@@ -55,16 +55,45 @@ async def show_subscription_platforms(update: Update, context: ContextTypes.DEFA
                 await _show_renewal_cart(query, context, user, expired_subs)
                 return
             elif expiring_soon:
-                # Subs activas próximas a vencer → aviso + opción de renovar anticipado
-                names = ", ".join(
-                    (s.get("platforms") or {}).get("name", "?")
-                    for s in expiring_soon
-                )
-                await (query.edit_message_text if query else message.reply_text)(
+                # Subs activas próximas a vencer → precargar carrito y ofrecer opciones
+                from services.cart_service import save_renewal_cart
+                from services.exchange_service import get_current_rate
+                rate_obj = await get_current_rate()
+                rate = float((rate_obj or {}).get("usd_binance") or 36.0)
+                cart: dict = {}
+                for sub in expiring_soon:
+                    platform_id = sub.get("platform_id")
+                    if not platform_id:
+                        continue
+                    platform  = sub.get("platforms") or {}
+                    plan_type = sub.get("plan_type") or "monthly"
+                    price_field = "monthly_price_usd" if plan_type == "monthly" else "express_price_usd"
+                    plat_data = await get_platform_by_id(str(platform_id)) or {}
+                    price_usd = float(plat_data.get(price_field) or 0)
+                    price_bs  = round(price_usd * rate, 2)
+                    sub_id    = str(sub["id"])
+                    cart[sub_id] = {
+                        "sub_id":      sub_id,
+                        "platform_id": str(platform_id),
+                        "name":        platform.get("name") or plat_data.get("name") or "?",
+                        "emoji":       platform.get("icon_emoji") or plat_data.get("icon_emoji") or "📺",
+                        "plan_type":   plan_type,
+                        "price_usd":   price_usd,
+                        "price_bs":    price_bs,
+                        "rate_used":   rate,
+                        "selected":    True,
+                    }
+                save_renewal_cart(query.from_user.id, cart)
+                names = ", ".join(v["name"] for v in cart.values()) if cart else "tu servicio"
+                await query.edit_message_text(
                     f"⚠️ Tu suscripción de <b>{names}</b> vence pronto.\n\n"
-                    f"Puedes renovarla anticipadamente o esperar a que venza.",
+                    f"¿Qué quieres hacer?",
                     parse_mode="HTML",
-                    reply_markup=main_menu_keyboard(),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Renovar anticipadamente", callback_data="sub:renew_expiring")],
+                        [InlineKeyboardButton("➕ Contratar otro servicio", callback_data="menu:subscribe_new")],
+                        [InlineKeyboardButton("🏠 Menú principal", callback_data="menu:main")],
+                    ]),
                 )
                 return
 
@@ -1008,3 +1037,58 @@ async def handle_renewal_add_new(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.error(f"handle_renewal_add_new error: {e}")
         await query.edit_message_text("Error al cargar plataformas.", reply_markup=main_menu_keyboard())
+
+
+async def handle_renew_expiring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show renewal cart pre-loaded from expiring_soon subscriptions."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    try:
+        from services.cart_service import get_renewal_cart
+        cart = get_renewal_cart(query.from_user.id)
+        if not cart:
+            await query.edit_message_text(
+                "No se encontró el carrito. Vuelve al menú e intenta de nuevo.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        await _render_renewal_cart(query, context)
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        logger.error(f"handle_renew_expiring error: {e}")
+        await query.edit_message_text("Error al cargar el carrito.", reply_markup=main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"handle_renew_expiring error: {e}")
+        await query.edit_message_text("Error al cargar el carrito.", reply_markup=main_menu_keyboard())
+
+
+async def handle_subscribe_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show platform picker skipping the expiring_soon branch (user wants a new service)."""
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    try:
+        availability = await get_platform_availability()
+        platform_list_text = ""
+        for p in availability:
+            icon  = p.get("icon_emoji", "📺")
+            name  = p.get("name", "")
+            count = p.get("monthly_available", 0)
+            platform_list_text += f"{icon} <b>{name}</b> - {count} disponible{'s' if count != 1 else ''}\n"
+        await query.edit_message_text(
+            SUBSCRIPTION_PLATFORM_SELECT.format(platform_list=platform_list_text),
+            parse_mode="HTML",
+            reply_markup=platforms_keyboard(availability, "monthly"),
+        )
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        logger.error(f"handle_subscribe_new error: {e}")
+        await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")
+    except Exception as e:
+        logger.error(f"handle_subscribe_new error: {e}")
+        await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")

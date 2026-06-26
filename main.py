@@ -36,7 +36,10 @@ def build_telegram_app() -> Application:
     """Build and configure the Telegram bot application with all handlers."""
     from bot.handlers.start import start_handler, handle_name_response, handle_contact_shared
     from bot.handlers.menu import show_main_menu
-    from bot.handlers.subscription import show_subscription_platforms, handle_platform_selected, handle_order_confirmed
+    from bot.handlers.subscription import (
+        show_subscription_platforms, handle_platform_selected, handle_order_confirmed,
+        handle_renew_expiring, handle_subscribe_new,
+    )
     from bot.handlers.express import show_express_platforms, handle_express_platform_selected, handle_express_confirmed, handle_queue_join
     from bot.handlers.my_services import show_my_services, handle_service_detail, handle_renewal
     from bot.handlers.support import (
@@ -122,6 +125,8 @@ def build_telegram_app() -> Application:
 
     app.add_handler(CallbackQueryHandler(_handle_cancel_and_buy, pattern="^menu:cancel_and_buy$"))
 
+    app.add_handler(CallbackQueryHandler(handle_renew_expiring, pattern="^sub:renew_expiring$"))
+    app.add_handler(CallbackQueryHandler(handle_subscribe_new, pattern="^menu:subscribe_new$"))
     app.add_handler(CallbackQueryHandler(show_express_platforms, pattern="^menu:express$"))
     app.add_handler(CallbackQueryHandler(show_my_services, pattern="^menu:my_services$"))
     app.add_handler(CallbackQueryHandler(show_support_menu, pattern="^menu:support$"))
