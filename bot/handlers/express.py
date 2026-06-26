@@ -4,6 +4,7 @@ import logging
 from datetime import timedelta
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from bot.keyboards import platforms_keyboard, confirm_order_keyboard, express_no_stock_keyboard, main_menu_keyboard
@@ -48,6 +49,11 @@ async def show_express_platforms(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="HTML",
             reply_markup=platforms_keyboard(availability, "express"),
         )
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        logger.error(f"Error in show_express_platforms: {e}")
+        await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")
     except Exception as e:
         logger.error(f"Error in show_express_platforms: {e}")
         await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")

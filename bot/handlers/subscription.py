@@ -4,6 +4,7 @@ import logging
 from datetime import timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from bot.keyboards import (
@@ -81,6 +82,11 @@ async def show_subscription_platforms(update: Update, context: ContextTypes.DEFA
             parse_mode="HTML",
             reply_markup=platforms_keyboard(availability, "monthly"),
         )
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        logger.error(f"Error in show_subscription_platforms: {e}")
+        await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")
     except Exception as e:
         logger.error(f"Error in show_subscription_platforms: {e}")
         await query.edit_message_text("Error al cargar plataformas. Intenta de nuevo.")
@@ -994,6 +1000,11 @@ async def handle_renewal_add_new(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="HTML",
             reply_markup=platforms_keyboard(availability, "monthly"),
         )
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return
+        logger.error(f"handle_renewal_add_new error: {e}")
+        await query.edit_message_text("Error al cargar plataformas.", reply_markup=main_menu_keyboard())
     except Exception as e:
         logger.error(f"handle_renewal_add_new error: {e}")
         await query.edit_message_text("Error al cargar plataformas.", reply_markup=main_menu_keyboard())

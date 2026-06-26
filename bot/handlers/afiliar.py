@@ -16,6 +16,7 @@ import logging
 from datetime import timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from bot.messages import ACCESS_INSTRUCTIONS
@@ -344,6 +345,12 @@ async def handle_afiliar_callback(update: Update, context: ContextTypes.DEFAULT_
                 reply_markup=_platforms_keyboard(available),
             )
 
+        except BadRequest as e:
+            if "not modified" in str(e).lower():
+                return
+            logger.error(f"Error loading platforms in afiliar: {e}", exc_info=True)
+            await query.edit_message_text("❌ Error al cargar plataformas. Intenta de nuevo.")
+            _clear_session(context)
         except Exception as e:
             logger.error(f"Error loading platforms in afiliar: {e}", exc_info=True)
             await query.edit_message_text("❌ Error al cargar plataformas. Intenta de nuevo.")
