@@ -20,7 +20,8 @@
 | # | Bug | Archivos | Commit |
 |---|-----|----------|--------|
 | 1 | "Error al cargar plataformas" visible al usuario cuando edit_message_text intentaba re-pintar contenido idéntico (BadRequest "Message is not modified" tratado como error fatal por except Exception genérico) | `bot/handlers/subscription.py`, `bot/handlers/express.py`, `bot/handlers/afiliar.py` | 90099a6 |
-| 2 | Mismo patrón sin cubrir en _handle_cancel_and_buy — el edit "✅ Listo" previo a show_subscription_platforms no tenía protección BadRequest | `main.py` | 033af73 |
+| 2 | _handle_cancel_and_buy no protegía su edit_message_text propio contra BadRequest "not modified" | `main.py` | 033af73 |
+| 3 | elif expiring_soon mostraba aviso sin opciones útiles (dead end) — cliente no podía renovar anticipadamente ni contratar otro servicio. Ahora precarga carrito en Redis y presenta 3 botones: Renovar anticipadamente, Contratar otro servicio, Menú principal. Añadidos handle_renew_expiring y handle_subscribe_new con sus CallbackQueryHandlers registrados en main.py | `bot/handlers/subscription.py`, `main.py` | 068e566 |
 
 #### Diagnóstico
 
@@ -28,7 +29,7 @@
 - Descartado: data específica de la clienta, fallo de DB, foto con botones inline. Supabase respondió 200 OK en ambas queries; get_platform_availability devuelve data global idéntica para todos los usuarios; la foto de /start va sin reply_markup.
 - Traceback real (Railway 16:56 UTC): `Message is not modified: specified new message content and reply markup are exactly the same`.
 - Causa raíz: edit_message_text intentó reemplazar un mensaje con contenido idéntico al que ya tenía. El except Exception lo trató como error fatal y ejecutó el fallback "Error al cargar plataformas" (que sí cambia el contenido, por eso Telegram lo aceptó con 200 y la clienta vio el error).
-- Gatillo exacto: no confirmado por logs (redeploy borró el histórico de 16:56 UTC). Doble-toque es la hipótesis más probable pero no está probada.
+- Gatillo confirmado (post-análisis): no fue doble-toque aleatorio sino el branch expiring_soon dentro de show_subscription_platforms. Nadel tenía Prime activo con end_date mañana → clasificado como expiring_soon → la función mostraba el aviso de vencimiento en vez del picker, y hacía return. Al llegar el callback dos veces (lag/retry de Telegram), el segundo edit_message_text intentaba pintar contenido idéntico → Message is not modified. El fix de UX (068e566) elimina además el dead end estructural que impedía a cualquier cliente con sub próxima a vencer contratar otro servicio.
 
 #### Fix aplicado
 
