@@ -13,6 +13,54 @@
 
 ## Historial de cambios
 
+### 2026-06-26 — Sesión 18 — Fix doble-toque en pickers de plataforma
+
+#### Bug corregido
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | "Error al cargar plataformas" mostrado a clientes que tocaban el botón de suscripción dos veces seguidas — el except Exception amplio enmascaraba un BadRequest "Message is not modified" (benigno) como error fatal | `bot/handlers/subscription.py`, `bot/handlers/express.py`, `bot/handlers/afiliar.py` | 90099a6 |
+
+#### Diagnóstico
+
+- Reporte inicial: una clienta no podía cargar plataformas; desde el teléfono del admin sí cargaba.
+- Falsa pista descartada: NO era data específica de la clienta. Supabase respondió 200 OK en ambas queries (`platforms` y `profiles`); `platform_list_text` y `platforms_keyboard` dependen solo de data global idéntica para todos.
+- `get_platform_availability` y `get_available_profile_counts` atrapan su propia excepción y devuelven `[]`/`{}` en silencio → el except de los handlers solo podía dispararse fuera de esas funciones.
+- Traceback real (Railway UTC 16:56 = 12:56 VET): `Message is not modified: specified new message content and reply markup are exactly the same...`
+- Causa raíz: doble toque del botón. El primer toque editó el mensaje OK; el segundo intentó editar con texto+keyboard idénticos → Telegram lanzó BadRequest. El `except Exception` lo trató como fatal y ejecutó el fallback "Error al cargar plataformas", que SÍ cambia el contenido (por eso Telegram lo aceptó con 200 y la clienta vio el error).
+
+#### Fix aplicado
+
+- Añadido `from telegram.error import BadRequest` en los 3 archivos.
+- En las 4 ubicaciones de picker (`show_subscription_platforms`, `handle_renewal_add_new`, `show_express_platforms`, handler `afiliar:plan:`) se añadió un `except BadRequest` antes del `except Exception`: si el mensaje contiene "not modified", hace `return` silencioso (la pantalla ya muestra el menú correcto); cualquier otro BadRequest cae al manejo de error previo.
+- En afiliar, el `return` benigno va ANTES de `_clear_session` — un doble-toque ya no destruye la sesión de afiliación a mitad de flujo.
+
+#### Notas operativas / aprendizaje
+
+- Patrón de riesgo confirmado: `except Exception` demasiado amplio que convierte condiciones benignas de Telegram (doble-toque, mensaje sin cambios) en errores visibles al cliente. Revisar otros handlers con `edit_message_text` dentro de try/except genérico.
+- Pendiente menor (no urgente): `get_platform_availability` y `get_available_profile_counts` silencian sus excepciones con `return []`/`return {}`. No fue la causa de hoy, pero ese silencio puede ocultar fallos reales de DB. Candidato a limpieza futura.
+
+---
+
+### 2026-06-20 — Sesión 17 — Fix migración hogar: cuentas restricted visibles para admin
+
+#### Bug corregido
+
+| # | Bug | Archivos | Commit |
+|---|-----|----------|--------|
+| 1 | Admin no podía migrar a cuentas con `account_health = restricted` — filtro de salud bloqueaba cuentas con perfiles disponibles | `database/hogar.py`, `bot/handlers/hogar.py` | (este commit) |
+
+#### Solución aplicada
+- Añadido parámetro `ignore_account_health: bool = False` a `get_available_profiles_for_migration`
+- Las llamadas desde el admin (`_admin_show_profiles_for_express`, `_admin_finalize_history`) pasan `ignore_account_health=True` — ven todas las cuentas con perfiles libres sin importar su health
+- La llamada del flujo cliente (autoservicio) no cambia — sigue excluyendo cuentas `restricted`
+
+#### Notas operativas
+- `account_health = restricted` significa >4 incidentes en 60 días — protege el autoservicio pero no debe bloquear al admin
+- El admin es consciente del estado de la cuenta al migrar manualmente
+
+---
+
 ### 2026-06-19 — Sesión 17 — Lote 0: Bs en tickets WhatsApp + fix send_to_admin bool
 
 #### Mejoras y fixes
