@@ -1,3 +1,5 @@
+> **ARCHIVADO el 15-nov-2026 (rescate r00).** Texto íntegro del antiguo `estado_actual.md` de la raíz, sin cambios. El estado vivo está en `docs/ESTADO.md`.
+
 # SmartFlixVE Bot — Estado del Sistema
 
 ## Stack

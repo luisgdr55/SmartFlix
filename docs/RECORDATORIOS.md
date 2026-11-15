@@ -1,0 +1,16 @@
+# RECORDATORIOS — SmartFlixVE
+
+> Pendientes y hallazgos abiertos del rescate r00 (15/11/2026). Estado a esa fecha; confirma con el Orquestador antes de dar algo por hecho.
+
+| ID | Hallazgo / pendiente | Prioridad | Dónde |
+|---|---|---|---|
+| R00-1 | **El repositorio `luisgdr55/SmartFlix` es PÚBLICO** en GitHub: expone el código del bot, el esquema SQL (`supabase_schema.sql`), la lógica de negocio y los textos. No se encontraron secretos (revisión de patrones de tokens, claves y URLs con clave; `.env` está ignorado; solo hay placeholders), pero el Orquestador decide si debe ser privado. Si en algún momento se subió una clave, debe rotarse aunque se borre. | Alta | DEUDA S-001 |
+| R00-2 | **TCP Proxy público activo** en el Postgres de Railway del proyecto. La aplicación usa Supabase (no consta `DATABASE_URL`): confirmar si ese Postgres se usa; si no, eliminarlo junto con el proxy; si se usa, cerrar el proxy y rotar la clave. No se tocó. | Alta | DEUDA S-002 |
+| R00-3 | **Sin `watchPatterns` en Railway**: toda fusión a `master`, también las de solo documentación, redespliega y reinicia el bot (el webhook se vuelve a registrar al arrancar). Fusionar en horario de baja actividad. | Media | DEUDA S-003 |
+| R00-4 | Hay archivos que no deberían estar versionados: 32 archivos `.pyc` de `__pycache__` (el `.gitignore` los excluye, pero se subieron antes) y `.claude/settings.local.json`. Limpieza pendiente de orden (toca archivos del repo, no código). | Baja | DEUDA S-004 |
+| R00-5 | **Sin pruebas automatizadas ni CI**: hay un solo script suelto (`test_renewal_cart.py`) y no existe `.github/workflows`. Despliegue directo desde `master`. La verificación es manual en Telegram y en el panel. | Media | DEUDA S-005 |
+| R00-6 | **Trabajo reciente fuera del repo** (no se importó): (a) estudio de factibilidad de migrar el bot a una PWA tipo tienda (conversación del 02/11/2026; dirección visual tipo Netflix/Apple TV) → es la Fase 7 de `features.md`, sin orden; (b) flyers y video promocional con CapCut (14/11/2026) y la skill `estudio-flyers` (Proyecto «SmartFlixVE — Estudio» de Claude Web). Si se retoma, pedirlos o regenerarlos. | Info | |
+| R00-7 | Existe una carpeta `streamvip/` que duplica el código del bot con el nombre anterior (rebranding de la sesión 9). Confirmar si sigue en uso; si no, retirar en una orden aparte. | Baja | DEUDA S-006 |
+| R00-8 | El Proyecto «SMARTFLIXVE BOT» de Claude Web tenía solo tres documentos (`SETUP.md`, `features.md`, `estado_actual.md`), idénticos a los del repo; no se perdió ningún documento del Arquitecto. | Info | `docs/arquitecto/README.md` |
+| R00-9 | **Cambio de regla de trabajo:** el flujo anterior mandaba `git push origin master` tras cada sesión («auto-deploy desde git push a master») y aprobación explícita del diff. El nuevo trabaja en rama + PR con veredicto del Orquestador. | Info | `CLAUDE.md` |
+| R00-10 | Variables de Railway con acceso sensible (solo nombres, no se leyeron valores): token del bot, claves de Supabase, Gemini, Gmail OAuth y credenciales IMAP del correo maestro, contraseña del panel. Tras decidir R00-1, valora rotar las claves si el repo estuvo público con historial. | Media | DEUDA S-001 |
