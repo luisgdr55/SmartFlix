@@ -135,6 +135,12 @@ Detalle, costo y riesgo de cada una en ese informe; el diagnóstico en `o02-lote
 - N-F: el periodo empieza en la aprobación (fin de día Caracas, mes calendario).
 Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto de arranque del Lote 1 y de la orden O02-H, y el resultado del script SQL.
 
+## Veredicto del Orquestador sobre el Lote 1 (27/11/2026): APROBADO — se aplican las recomendaciones de `docs/subfases/o02-lote1-servicios-base.md`
+1. **Deriva de fin de mes: se acepta** (sin guardar el día de aniversario; sin columna nueva). `add_months(…, anchor_day)` queda disponible pero no se usa.
+2. **Reactivar una `cancelled`: sigue ABIERTA** (el informe no traía recomendación; se decide antes del Lote 3). Hasta entonces el servicio Python y la función SQL la rechazan (`subscription_not_renewable`), de modo que ninguna decisión se filtra al esquema.
+3. Deuda del cambio de plataforma = precio de la plataforma que se abandona × `periods_to_be_current`.
+4. Días de mora = días calendario de Caracas (D+1 empieza a las 00:00 del día siguiente al vencimiento).
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
