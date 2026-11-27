@@ -19,7 +19,7 @@
       <option value="">Todos los estados</option>
       <option value="active" {% if status_filter == 'active' %}selected{% endif %}>✅ Activas</option>
       <option value="pending_payment" {% if status_filter == 'pending_payment' %}selected{% endif %}>⏳ Pendientes</option>
-      <option value="expired" {% if status_filter == 'expired' %}selected{% endif %}>❌ Expiradas</option>
+      <option value="overdue" {% if status_filter in ('overdue', 'expired') %}selected{% endif %}>⚠️ En mora (vencidas)</option>
       <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>🚫 Canceladas</option>
     </select>
     <select name="platform" class="form-input w-auto min-w-[180px] text-sm py-2">

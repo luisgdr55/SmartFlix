@@ -141,6 +141,7 @@ def build_telegram_app() -> Application:
         try:
             from database.users import get_user_by_telegram_id
             from database import get_supabase
+            from utils.helpers import venezuela_now
             db_user = await get_user_by_telegram_id(user.id)
             if db_user:
                 sb = get_supabase()
@@ -150,7 +151,8 @@ def build_telegram_app() -> Application:
                     sb.table("subscriptions")
                     .select("id, profile_id, platforms(name, icon_emoji)")
                     .eq("user_id", db_user["id"])
-                    .eq("status", "expired")
+                    .in_("status", ["active", "expired"])   # mora derivada: ya no hay un job que las pase a `expired`
+                    .lt("end_date", venezuela_now().isoformat())
                     .execute()
                 )
                 for old_sub in (expired_res.data or []):
@@ -160,7 +162,7 @@ def build_telegram_app() -> Application:
                         logger.error(f"cancel_and_buy release error for {old_sub.get('id')}: {rel_err}")
                     sb.table("subscriptions").update({"status": "cancelled"}).eq(
                         "id", old_sub["id"]
-                    ).eq("status", "expired").execute()
+                    ).in_("status", ["active", "expired"]).execute()
             try:
                 await query.edit_message_text(
                     "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"

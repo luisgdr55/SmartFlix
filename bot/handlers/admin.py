@@ -1321,11 +1321,31 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data.startswith("admin:cancel_sub_confirm:"):
         await query.answer()
-        sub_id = data.split(":")[2]
+        cparts = data.split(":")
+        sub_id = cparts[2]
+        force = len(cparts) > 3 and cparts[3] == "force"
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             await query.answer("Suscripción no encontrada.", show_alert=True)
             return
+        # O02 Lote 6: el corte manual advierte si el cliente tiene un pago pendiente.
+        if not force:
+            from database.orders import pending_for_user
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            pend = await pending_for_user(str(sub.get("user_id")))
+            if pend["orders"] or pend["legacy"]:
+                ids = ", ".join(f"#{i}" for i in pend["orders"] + pend["legacy"])
+                await query.edit_message_text(
+                    f"⚠️ <b>Este cliente tiene un pago pendiente</b> ({ids}).\n\n"
+                    "Revisa los pendientes antes de cortar: puede que ya haya pagado.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⏳ Ver pendientes", callback_data="admin:pending")],
+                        [InlineKeyboardButton("✂️ Cortar de todos modos", callback_data=f"admin:cancel_sub_confirm:{sub_id}:force")],
+                        [InlineKeyboardButton("↩️ No cortar", callback_data="admin:back")],
+                    ]),
+                )
+                return
         profile_id = sub.get("profile_id")
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")

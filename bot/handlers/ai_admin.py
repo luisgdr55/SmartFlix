@@ -836,6 +836,24 @@ async def handle_admin_nl_callback(update: Update, context: ContextTypes.DEFAULT
 
     if action == "cancel_sub":
         sub_id = parts[2]
+        # O02 Lote 6: el corte manual advierte si el cliente tiene un pago pendiente.
+        if not (len(parts) > 3 and parts[3] == "force"):
+            from database import get_supabase
+            from database.orders import pending_for_user
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            owner = get_supabase().table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute().data
+            pend = await pending_for_user(str(owner[0]["user_id"])) if owner else {"orders": [], "legacy": []}
+            if pend["orders"] or pend["legacy"]:
+                ids = ", ".join(f"#{i}" for i in pend["orders"] + pend["legacy"])
+                await query.edit_message_text(
+                    f"⚠️ <b>Este cliente tiene un pago pendiente</b> ({ids}). Revisa los pendientes antes de cortar.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⏳ Ver pendientes", callback_data="admin:pending")],
+                        [InlineKeyboardButton("✂️ Cortar de todos modos", callback_data=f"admin_nl:cancel_sub:{sub_id}:force")],
+                        [InlineKeyboardButton("↩️ No cortar", callback_data="admin:back")],
+                    ]))
+                return
         try:
             from database import get_supabase
             from database.subscriptions import cancel_subscription

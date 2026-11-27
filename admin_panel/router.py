@@ -855,9 +855,7 @@ async def user_detail(request: Request, user_id: str):
         user = user_res.data[0] if user_res.data else None
         if not user:
             return RedirectResponse(url="/panel/users?error=Usuario+no+encontrado", status_code=302)
-        # Auto-expire any active subs past end_date for this user
-        from database.subscriptions import auto_expire_overdue_subscriptions
-        await auto_expire_overdue_subscriptions(user_id=user_id)
+        # O02 Lote 6: este GET ya no escribe (antes pasaba las vencidas a `expired`); la mora se deriva de la fecha.
         subs_res = sb.table("subscriptions").select(
             "*, platforms(name, icon_emoji), profiles(profile_name, accounts(email))"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
@@ -1067,9 +1065,8 @@ async def subscriptions_list(request: Request):
         from database.platforms import get_active_platforms
         sb = get_supabase()
 
-        # Auto-expire any active subs past end_date (global sweep)
-        from database.subscriptions import auto_expire_overdue_subscriptions
-        await auto_expire_overdue_subscriptions()
+        # O02 Lote 6: este GET ya no escribe (antes barría las vencidas a `expired`).
+        from utils.helpers import venezuela_now as _now_vz
 
         status_filter = request.query_params.get("status", "")
         platform_filter = request.query_params.get("platform", "")
@@ -1081,7 +1078,10 @@ async def subscriptions_list(request: Request):
         query = sb.table("subscriptions").select(
             "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, accounts(email))"
         )
-        if status_filter:
+        overdue_filter = status_filter in ("overdue", "expired")   # «expired» se conserva como alias
+        if overdue_filter:
+            query = query.in_("status", ["active", "expired"]).lt("end_date", _now_vz().isoformat())
+        elif status_filter:
             query = query.eq("status", status_filter)
         if platform_filter:
             query = query.eq("platform_id", platform_filter)
@@ -1092,7 +1092,9 @@ async def subscriptions_list(request: Request):
         subscriptions = result.data or []
 
         count_q = sb.table("subscriptions").select("id", count="exact")
-        if status_filter:
+        if overdue_filter:
+            count_q = count_q.in_("status", ["active", "expired"]).lt("end_date", _now_vz().isoformat())
+        elif status_filter:
             count_q = count_q.eq("status", status_filter)
         if platform_filter:
             count_q = count_q.eq("platform_id", platform_filter)
@@ -1184,8 +1186,38 @@ async def subscription_edit(request: Request, sub_id: str):
         return _error_redirect(f"/panel/subscriptions", e)
 
 
+async def _has_pending_payments(user_id) -> bool:
+    from database.orders import pending_for_user
+    p = await pending_for_user(str(user_id))
+    return bool(p["orders"] or p["legacy"])
+
+
+@panel_router.get("/subscriptions/{sub_id}/confirm-cut", response_class=HTMLResponse)
+async def subscription_confirm_cut(request: Request, sub_id: str, kind: str = "soft"):
+    """Advertencia previa a un corte manual cuando el cliente tiene un pago pendiente."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from database.orders import pending_for_user
+        res = get_supabase().table("subscriptions").select(
+            "id, user_id, users(name, username), platforms(name, icon_emoji)").eq("id", sub_id).limit(1).execute()
+        if not res.data:
+            return RedirectResponse(url="/panel/subscriptions?error=Suscripcion+no+encontrada", status_code=302)
+        sub = res.data[0]
+        pending = await pending_for_user(str(sub["user_id"]))
+        return templates.TemplateResponse("confirm_cut.html", {
+            "request": request, "page": "subscriptions", "sub": sub, "pending": pending,
+            "action": f"/panel/subscriptions/{sub_id}/{'release' if kind == 'release' else 'soft-cut'}",
+            "kind": "release" if kind == "release" else "soft", "user_id": sub["user_id"],
+        })
+    except Exception as e:
+        return _error_redirect("/panel/subscriptions", e)
+
+
 @panel_router.post("/subscriptions/{sub_id}/soft-cut")
-async def subscription_soft_cut(request: Request, sub_id: str):
+async def subscription_soft_cut(request: Request, sub_id: str, confirm_pending: str = Form(default="")):
     """Change profile PIN (soft cut) and mark subscription expired."""
     guard = _auth_guard(request)
     if guard:
@@ -1205,6 +1237,10 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         sub = sub_res.data[0]
         user_id = sub.get("user_id")
         profile_id = sub.get("profile_id")
+
+        # O02 Lote 6: si el cliente tiene una orden pendiente, se advierte y se pide confirmar.
+        if not confirm_pending and await _has_pending_payments(user_id):
+            return RedirectResponse(url=f"/panel/subscriptions/{sub_id}/confirm-cut?kind=soft", status_code=302)
 
         if not profile_id:
             return RedirectResponse(url=f"/panel/users/{user_id}?error=Esta+suscripcion+no+tiene+perfil+asignado", status_code=302)
@@ -1265,7 +1301,7 @@ async def subscription_soft_cut(request: Request, sub_id: str):
 
 
 @panel_router.post("/subscriptions/{sub_id}/release")
-async def subscription_release(request: Request, sub_id: str):
+async def subscription_release(request: Request, sub_id: str, confirm_pending: str = Form(default="")):
     """Release profile (mark available) and mark subscription expired."""
     guard = _auth_guard(request)
     if guard:
@@ -1282,6 +1318,10 @@ async def subscription_release(request: Request, sub_id: str):
         sub = sub_res.data[0]
         user_id = sub.get("user_id")
         profile_id = sub.get("profile_id")
+
+        # O02 Lote 6: si el cliente tiene una orden pendiente, se advierte y se pide confirmar.
+        if not confirm_pending and await _has_pending_payments(user_id):
+            return RedirectResponse(url=f"/panel/subscriptions/{sub_id}/confirm-cut?kind=release", status_code=302)
 
         # Capturar datos del perfil ANTES de modificarlo
         old_pin = "—"
@@ -1507,7 +1547,7 @@ async def payments_list(request: Request):
         expired_res = (
             sb.table("subscriptions")
             .select("*, users(id, name, username, telegram_id), platforms(name, icon_emoji)")
-            .eq("status", "active")
+            .in_("status", ["active", "expired"])
             .lt("end_date", now.isoformat())
             .order("end_date", desc=False)
             .limit(50)
