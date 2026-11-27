@@ -128,8 +128,47 @@ def order_view(order: dict, names: dict[str, str]) -> dict:
         "rate": m.get("rate_used"), "created_at": order.get("created_at"), "expires_at": order.get("expires_at"),
         "reference": order.get("payment_reference"), "has_receipt": flow.order_has_receipt(order),
         "decided_by": order.get("decided_by"), "decision_reason": order.get("decision_reason"),
-        "items": [{"label": flow.item_label(i, names, escape=False), "usd": i.get("subtotal_usd"),
-                   "bs": f"{Decimal(i['amount_bs']):,.2f}" if i.get("amount_bs") else None} for i in m.get("items", [])],
+        "items": [{"index": n, "label": flow.item_label(i, names, escape=False), "usd": i.get("subtotal_usd"),
+                   "bs": f"{Decimal(i['amount_bs']):,.2f}" if i.get("amount_bs") else None} for n, i in enumerate(m.get("items", []))],
+        "parent_id": str(order["parent_order_id"]) if order.get("parent_order_id") else None,
+        "parent_short": short_id(order["parent_order_id"]) if order.get("parent_order_id") else None,
+        "has_change_item": any(i.get("tipo") == "cambio" for i in m.get("items", [])),
         "signals": ocr_signals.summary_lines(flags) if flags else [],
         "alerts": flags.get("alertas", []) if flags else [],
     }
+
+
+def remainder_client_text(items_text: str, order_id: str, total_bs: str) -> str:
+    """Aviso al cliente cuando se aprobó solo parte de su orden (PROPUESTA de texto: la revisa el Orquestador)."""
+    return ("ℹ️ <b>Aprobamos una parte de tu pedido</b>\n\n"
+            f"Lo que aún queda pendiente:\n{items_text}\n\n"
+            f"Quedó en la orden <b>#{short_id(order_id)}</b> por <b>Bs {html.escape(str(total_bs))}</b>. "
+            "El equipo te confirmará o te dirá cómo completarla. 🙏")
+
+
+def void_client_text(order_id: str) -> str:
+    """Aviso al cliente cuando se anula una orden ya aprobada (PROPUESTA de texto: la revisa el Orquestador).
+    No expone el motivo interno del admin."""
+    return (f"⚠️ <b>Tu pedido #{short_id(order_id)} fue anulado</b> por un ajuste del equipo.\n\n"
+            "Si pagaste y crees que es un error, escríbenos y lo revisamos de inmediato. 📞")
+
+
+def admin_void_summary(order: dict, result: dict, names: dict[str, str]) -> str:
+    """Resumen para el admin tras anular una orden aprobada: qué se revirtió y qué PIN debe cambiar."""
+    if result.get("already_applied"):
+        return f"ℹ️ La orden #{short_id(order['id'])} ya estaba anulada. No se cambió nada."
+    lines = [f"↩️ <b>Orden #{short_id(order['id'])} anulada</b> (se conserva el historial con renglones de reversa)", ""]
+    for it in result.get("items", []):
+        if it.get("action") == "end_date_restored":
+            end = caracas_date(it["restored_end_date"]).strftime("%d/%m/%Y") if it.get("restored_end_date") else "—"
+            lines.append(f"• Renovación revertida: la fecha de corte vuelve al {end}")
+        else:
+            lines.append("• Compra nueva anulada")
+            rel = it.get("released_profile")
+            if isinstance(rel, dict) and rel.get("released"):
+                lines.append(f"  🔄 Perfil <b>{html.escape(str(rel.get('profile_name')))}</b> ({html.escape(str(rel.get('account_email')))}) liberado: "
+                             f"entra con el PIN anterior <code>{html.escape(str(rel.get('old_pin')))}</code> y cámbialo a "
+                             f"<code>{html.escape(str(rel.get('new_pin')))}</code>.")
+            elif isinstance(rel, dict) and rel.get("reason") == "otra_suscripcion_activa":
+                lines.append("  ⚠️ El perfil NO se liberó: lo usa otra suscripción activa. Revísalo en «Anomalías».")
+    return "\n".join(lines)

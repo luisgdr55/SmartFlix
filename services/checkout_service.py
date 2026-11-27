@@ -408,7 +408,7 @@ def check_order_transition(current: str, target: str, actor: str, reason: Option
 APPROVAL_MESSAGES = {
     "order_not_found": "La orden no existe. Ábrela de nuevo desde la lista de pendientes.",
     "actor_required": "No se pudo identificar quién aprueba. Vuelve a iniciar sesión e inténtalo de nuevo.",
-    "reason_required": "Esta orden ya caducó: escribe el motivo para aprobarla con el comprobante tardío.",
+    "reason_required": "Escribe el motivo para continuar (por ejemplo, «comprobante tardío verificado» si la orden caducó).",
     "invalid_state": "La orden ya no está pendiente, no se cambió nada. Revisa su estado en la lista de pendientes.",
     "invalid_manifest": "Los importes de la orden no cuadran, no se aprobó nada. Revisa la orden o pide al cliente que la rehaga.",
     "subscription_not_found": "Una suscripción de la orden ya no existe, no se aprobó nada. Pide al cliente que rehaga el pedido.",
@@ -417,6 +417,9 @@ APPROVAL_MESSAGES = {
     "subscription_not_overdue": "El cambio de plataforma solo aplica a una suscripción vencida; esta no lo está. No se aprobó nada.",
     "profile_unavailable": "No hay un perfil libre para uno de los servicios. La orden sigue pendiente: agrega un perfil y vuelve a aprobar.",
     "duplicate_reference": "Esa referencia de pago ya se aprobó en otra orden, no se aprobó nada. Verifica el comprobante.",
+    "invalid_selection": "La selección de ítems no es válida: elige al menos uno y no todos (para aprobar todo usa «Aprobar»). No se cambió nada.",
+    "manual_reversal_required": "Esta orden incluye un cambio de plataforma, que no se puede revertir automáticamente (el perfil ya se movió). No se cambió nada: anula la suscripción desde «Anomalías» o corrige el cliente a mano.",
+    "subscription_changed": "Una suscripción de esta orden se renovó o cambió después, así que ya no se puede revertir sin dañar lo posterior. No se cambió nada: anula primero la orden más reciente.",
     "unavailable": "No se pudo confirmar el resultado (falla de conexión). Vuelve a pulsar Aprobar: es seguro, no se duplica nada.",
     "unknown": "No se pudo aprobar por un error técnico. La orden no cambió; inténtalo de nuevo o revisa los registros.",
 }
@@ -512,3 +515,39 @@ def approval_notices(result: dict) -> list[dict]:
                     "previous_profile_id": item.get("previous_profile_id"),
                 })
     return notices
+
+
+async def approve_partial(order_id, actor: str, keep: list[int], reason: Optional[str] = None,
+                          payment_reference: Optional[str] = None, *, repo=None) -> dict:
+    """Aprobación PARCIAL: aprueba solo los ítems de `keep` (índices del manifiesto, desde 0) y deja el
+    resto en una orden nueva pendiente (`remainder_order_id` en el resultado). Todo o nada (función SQL
+    `split_and_approve_checkout_order`). Lanza `ApprovalError` (`invalid_selection`, etc.)."""
+    oid = _clean_order_id(order_id)
+    if not actor or not str(actor).strip():
+        raise ApprovalError("actor_required")
+    if (not isinstance(keep, (list, tuple)) or not keep or len(set(keep)) != len(keep)
+            or any(not isinstance(k, int) or isinstance(k, bool) or k < 0 for k in keep)):
+        raise ApprovalError("invalid_selection")
+    if repo is None:
+        from database import orders as repo
+    result = await repo.approve_order_partial(oid, str(actor).strip(), sorted(keep), reason, payment_reference)
+    if not isinstance(result, dict) or not (result.get("ok") or result.get("already_applied")):
+        raise ApprovalError("unknown", raw=str(result)[:200])
+    return result
+
+
+async def void_order(order_id, actor: str, reason: str, *, repo=None) -> dict:
+    """Anula una orden APROBADA con asiento contrario (función SQL `void_checkout_order`): las
+    renovaciones vuelven a su fecha anterior, las compras nuevas se anulan y liberan su perfil, y el
+    historial recibe renglones de reversa (nada se borra). Un cambio de plataforma no se revierte solo."""
+    oid = _clean_order_id(order_id)
+    if not actor or not str(actor).strip():
+        raise ApprovalError("actor_required")
+    if not reason or not str(reason).strip():
+        raise ApprovalError("reason_required")
+    if repo is None:
+        from database import orders as repo
+    result = await repo.void_order(oid, str(actor).strip(), str(reason).strip())
+    if not isinstance(result, dict) or not (result.get("ok") or result.get("already_applied")):
+        raise ApprovalError("unknown", raw=str(result)[:200])
+    return result

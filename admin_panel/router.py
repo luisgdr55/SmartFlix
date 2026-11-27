@@ -2362,6 +2362,59 @@ async def order_reject(request: Request, order_id: str, reason_code: str = Form(
         return _error_redirect(back, e)
 
 
+@panel_router.post("/orders/{order_id}/approve-partial")
+async def order_approve_partial(request: Request, order_id: str, items: list[int] = Form(default=[]),
+                                reason: str = Form(default=""), payment_reference: str = Form(default="")):
+    """Aprueba solo los ítems marcados; el resto queda en una orden nueva pendiente (se divide la orden)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        out = await order_admin.approve_partial_and_notify(order_id, _PANEL_ACTOR, items, reason.strip() or None,
+                                                           payment_reference.strip() or None)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "approve_order_partial", {"order_id": order_id, "items": sorted(items),
+                                                            "remainder_order_id": out.get("remainder_order_id")})
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+@panel_router.post("/orders/{order_id}/void")
+async def order_void(request: Request, order_id: str, reason: str = Form(default="")):
+    """Anula una orden APROBADA con asiento contrario (motivo obligatorio, auditado)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        why = _need_reason(reason)
+        out = await order_admin.void_and_notify(order_id, _PANEL_ACTOR, why)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "void_order", {"order_id": order_id, "reason": why})
+        released = [it.get("released_profile") for it in out["result"].get("items", []) if it.get("released_profile")]
+        for rel in released:
+            await _notify_release(rel, "orden anulada")
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # REVISIÓN DE ANOMALÍAS (O02 Lote 5): lista y acciones auditadas (anular, liberar perfil, fusionar)
 # ─────────────────────────────────────────────────────────────────────────────

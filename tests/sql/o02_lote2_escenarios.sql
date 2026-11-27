@@ -250,4 +250,107 @@ BEGIN
   -- no se borra una suscripción con periodos
   PERFORM t.expect_err('DELETE FROM subscriptions', 'update or delete on table "subscriptions" violates foreign key constraint "subscription_periods_subscription_id_fkey" on table "subscription_periods"');
 END $$;
+\echo '== 12. aprobación parcial: se divide la orden, atomicidad e idempotencia'
+DO $$ DECLARE pl uuid; pl2 uuid; u uuid; p1 uuid; sid uuid; o uuid; r jsonb; r2 jsonb; child uuid; po checkout_orders%ROWTYPE; co checkout_orders%ROWTYPE;
+BEGIN
+  PERFORM t.reset(); pl := t.plat('Netflix'); pl2 := t.plat('HBO'); u := t.usr(1);
+  p1 := t.prof(pl,'P1','occupied'); PERFORM t.prof(pl,'P2'); PERFORM t.prof(pl2,'H1');
+  sid := t.sub(u, pl, p1, 'expired', timestamptz '2026-05-19 23:59:59-04');
+  o := t.order_(u, jsonb_build_array(t.item_ren(sid, pl, 1), t.item_new(pl), t.item_new(pl2)), 1000, 'REF-P');
+  UPDATE checkout_orders SET receipt_text = 'OCR texto', ocr_flags = '{"alertas":["x"]}' WHERE id = o;
+  r := split_and_approve_checkout_order(o, 'admin:1', ARRAY[0,2], NULL, NULL);
+  ASSERT (r->>'partial')::bool AND (r->>'ok')::bool;
+  child := (r->>'remainder_order_id')::uuid;
+  SELECT * INTO po FROM checkout_orders WHERE id = o; SELECT * INTO co FROM checkout_orders WHERE id = child;
+  ASSERT po.status = 'approved' AND jsonb_array_length(po.manifest->'items') = 2 AND po.total_usd = 10 AND po.total_bs = 10000, 'original queda con lo aprobado';
+  ASSERT po.manifest->>'total_usd' = '10.00' AND po.manifest->>'rate_used' = '1000.0000', 'manifiesto con el mismo formato que el de Python';
+  ASSERT co.status = 'pending' AND co.parent_order_id = o AND jsonb_array_length(co.manifest->'items') = 1 AND co.total_usd = 5 AND co.total_bs = 5000, 'hija con el resto';
+  ASSERT co.payment_reference IS NULL AND co.receipt_text = 'OCR texto' AND co.ocr_flags->'alertas'->>0 = 'x', 'hereda señales, no la referencia';
+  ASSERT (SELECT count(*) FROM subscription_periods WHERE order_id = o) = 2 AND (SELECT count(*) FROM subscription_periods WHERE order_id = child) = 0;
+  ASSERT (SELECT count(*) FROM subscriptions WHERE user_id = u) = 2, 'renovada + 1 nueva (HBO); la nueva de Netflix NO se aprobó';
+  ASSERT (SELECT end_date FROM subscriptions WHERE id = sid) = timestamptz '2026-06-19 23:59:59-04';
+  r2 := split_and_approve_checkout_order(o, 'admin:2', ARRAY[0], NULL, NULL);
+  ASSERT (r2->>'already_applied')::bool;
+  ASSERT (SELECT count(*) FROM checkout_orders) = 2, 'no divide otra vez';
+  r2 := approve_checkout_order(child, 'admin:1', NULL, 'REF-HIJA');
+  ASSERT (r2->>'ok')::bool AND (SELECT status FROM checkout_orders WHERE id = child) = 'approved', 'la hija se aprueba después';
+  ASSERT (SELECT count(*) FROM subscriptions WHERE user_id = u) = 3;
+END $$;
+\echo '== 12b. selecciones inválidas y fallo atómico no dejan ninguna orden hija'
+DO $$ DECLARE pl uuid; pl2 uuid; u uuid; o uuid; sel text; before_m jsonb; child uuid;
+BEGIN
+  PERFORM t.reset(); pl := t.plat('Netflix'); pl2 := t.plat('HBO'); u := t.usr(1); PERFORM t.prof(pl,'P1');
+  o := t.order_(u, jsonb_build_array(t.item_new(pl), t.item_new(pl), t.item_new(pl2)));
+  SELECT manifest INTO before_m FROM checkout_orders WHERE id = o;
+  FOREACH sel IN ARRAY ARRAY['{}', '{0,0}', '{5}', '{-1}', '{0,1,2}'] LOOP
+    PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, ''a'', %L::int[], NULL, NULL)', o, sel), 'invalid_selection');
+  END LOOP;
+  PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, ''a'', NULL, NULL, NULL)', o), 'invalid_selection');
+  PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, %L, ARRAY[0], NULL, NULL)', o, ''), 'actor_required');
+  PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, ''a'', ARRAY[2], NULL, NULL)', o), 'profile_unavailable');
+  ASSERT (SELECT count(*) FROM checkout_orders) = 1 AND (SELECT status FROM checkout_orders WHERE id = o) = 'pending', 'ni división ni aprobación';
+  ASSERT (SELECT manifest FROM checkout_orders WHERE id = o) = before_m, 'el manifiesto original no cambió';
+  UPDATE checkout_orders SET status = 'expired' WHERE id = o;
+  PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, ''a'', ARRAY[0], NULL, NULL)', o), 'reason_required');
+  PERFORM split_and_approve_checkout_order(o, 'a', ARRAY[0], 'comprobante tardío', NULL);
+  child := (SELECT id FROM checkout_orders WHERE parent_order_id = o);
+  UPDATE checkout_orders SET status = 'cancelled' WHERE id = child;
+  PERFORM t.expect_err(format('SELECT split_and_approve_checkout_order(%L, ''a'', ARRAY[0], NULL, NULL)', child), 'invalid_state');
+END $$;
+\echo '== 13. anular una orden aprobada con asiento contrario'
+DO $$ DECLARE pl uuid; u uuid; p1 uuid; sid uuid; o uuid; r jsonb; r2 jsonb; nsub uuid; nprof uuid; old_end timestamptz;
+BEGIN
+  PERFORM t.reset(); pl := t.plat('Netflix'); u := t.usr(1);
+  p1 := t.prof(pl,'P1','occupied','1111'); nprof := t.prof(pl,'P2','available','2222');
+  old_end := timestamptz '2026-05-19 23:59:59-04';
+  sid := t.sub(u, pl, p1, 'expired', old_end);
+  o := t.order_(u, jsonb_build_array(t.item_ren(sid, pl, 2), t.item_new(pl)), 1000, 'REF-V');
+  PERFORM t.approve(o);
+  ASSERT (SELECT end_date FROM subscriptions WHERE id = sid) = timestamptz '2026-07-19 23:59:59-04';
+  nsub := (SELECT id FROM subscriptions WHERE user_id = u AND id <> sid);
+  PERFORM t.expect_err(format('SELECT void_checkout_order(%L, ''a'', NULL)', o), 'reason_required');
+  PERFORM t.expect_err(format('SELECT void_checkout_order(%L, %L, ''x'')', o, ''), 'actor_required');
+  r := void_checkout_order(o, 'admin:1', 'aprobada por error');
+  ASSERT (r->>'ok')::bool AND NOT (r->>'already_applied')::bool;
+  ASSERT (SELECT end_date FROM subscriptions WHERE id = sid) = old_end, 'la renovación vuelve a su fecha anterior';
+  ASSERT (SELECT status FROM subscriptions WHERE id = nsub) = 'voided' AND (SELECT void_reason FROM subscriptions WHERE id = nsub) = '[admin:1] aprobada por error';
+  ASSERT (SELECT status FROM profiles WHERE id = nprof) = 'available' AND (SELECT pin FROM profiles WHERE id = nprof) <> '2222', 'perfil de la nueva liberado con PIN rotado';
+  ASSERT (SELECT count(*) FROM subscription_periods WHERE order_id = o AND kind = 'reversa') = 2;
+  ASSERT (SELECT sum(amount_usd) FROM subscription_periods WHERE order_id = o) = 0 AND (SELECT sum(amount_bs) FROM subscription_periods WHERE order_id = o) = 0, 'el asiento contrario cuadra a cero';
+  ASSERT (SELECT status FROM checkout_orders WHERE id = o) = 'voided' AND (SELECT decision_reason FROM checkout_orders WHERE id = o) = 'aprobada por error';
+  ASSERT (SELECT count(*) FROM subscriptions WHERE user_id = u) = 2, 'no se borró nada';
+  r2 := void_checkout_order(o, 'admin:2', 'otra vez');
+  ASSERT (r2->>'already_applied')::bool AND (SELECT count(*) FROM subscription_periods WHERE order_id = o) = 4, 'idempotente';
+END $$;
+\echo '== 13b. no se anula lo que no es reversible o ya cambió'
+DO $$ DECLARE a uuid; b uuid; u uuid; pa uuid; s uuid; o uuid; o2 uuid; sid uuid; p1 uuid; e1 timestamptz;
+BEGIN
+  PERFORM t.reset(); a := t.plat('Netflix'); b := t.plat('HBO'); u := t.usr(1);
+  pa := t.prof(a,'PA','occupied'); PERFORM t.prof(b,'PB','available');
+  s := t.sub(u, a, pa, 'expired', timestamptz '2026-05-19 23:59:59-04');
+  o := t.order_(u, jsonb_build_array(t.item_chg(s, b)), 1000, 'REF-C'); PERFORM t.approve(o);
+  PERFORM t.expect_err(format('SELECT void_checkout_order(%L, ''a'', ''x'')', o), 'manual_reversal_required');
+  ASSERT (SELECT status FROM checkout_orders WHERE id = o) = 'approved' AND (SELECT count(*) FROM subscription_periods WHERE kind = 'reversa') = 0;
+  o2 := t.order_(u, jsonb_build_array(t.item_new(a)));
+  PERFORM t.expect_err(format('SELECT void_checkout_order(%L, ''a'', ''x'')', o2), 'invalid_state');
+  PERFORM t.expect_err('SELECT void_checkout_order(gen_random_uuid(), ''a'', ''x'')', 'order_not_found');
+  PERFORM t.reset(); a := t.plat('Netflix'); u := t.usr(1); p1 := t.prof(a,'P1','occupied');
+  sid := t.sub(u, a, p1, 'active', timestamptz '2026-12-10 23:59:59-04');
+  o := t.order_(u, jsonb_build_array(t.item_ren(sid, a, 1)), 1000, 'R1'); PERFORM t.approve(o);
+  o2 := t.order_(u, jsonb_build_array(t.item_ren(sid, a, 1)), 1000, 'R2'); PERFORM t.approve(o2);
+  SELECT end_date INTO e1 FROM subscriptions WHERE id = sid;
+  PERFORM t.expect_err(format('SELECT void_checkout_order(%L, ''a'', ''x'')', o), 'subscription_changed');
+  ASSERT (SELECT end_date FROM subscriptions WHERE id = sid) = e1 AND (SELECT status FROM checkout_orders WHERE id = o) = 'approved';
+  PERFORM void_checkout_order(o2, 'a', 'x'); PERFORM void_checkout_order(o, 'a', 'x');
+  ASSERT (SELECT end_date FROM subscriptions WHERE id = sid) = timestamptz '2026-12-10 23:59:59-04', 'vuelve al inicio';
+END $$;
+\echo '== 13c. el historial de reversas es inmutable y la orden anulada es terminal'
+DO $$ DECLARE pl uuid; u uuid; o uuid;
+BEGIN
+  PERFORM t.reset(); pl := t.plat('Netflix'); u := t.usr(1); PERFORM t.prof(pl,'P1');
+  o := t.order_(u, jsonb_build_array(t.item_new(pl)), 1000, 'R-9'); PERFORM t.approve(o); PERFORM void_checkout_order(o, 'a', 'error');
+  PERFORM t.expect_err('UPDATE subscription_periods SET amount_usd = 0', 'subscription_periods es un historial: solo se inserta (corrige con un asiento contrario)');
+  PERFORM t.expect_err(format('UPDATE checkout_orders SET status = ''approved'' WHERE id = %L', o), 'checkout_orders: transición no permitida voided -> approved');
+  PERFORM t.expect_err(format('SELECT approve_checkout_order(%L, ''a'', ''x'', NULL)', o), 'invalid_state');
+END $$;
 \echo 'OK bloque de escenarios'

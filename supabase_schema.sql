@@ -225,7 +225,8 @@ CREATE INDEX IF NOT EXISTS idx_announced_content_do_not_repeat ON announced_cont
 -- ============================================================
 -- O02 LOTE 2 — ÓRDENES DE PAGO E HISTORIAL DE PERIODOS (referencia)
 -- La migración ejecutable, con los triggers de inmutabilidad, RLS, permisos y las funciones
--- approve_checkout_order / checkout_pick_profile / checkout_release_profile, es
+-- approve_checkout_order / split_and_approve_checkout_order / void_checkout_order / checkout_pick_profile /
+-- checkout_release_profile, es
 -- docs/migraciones/o02-lote2-checkout.sql (la ejecuta el Orquestador en Supabase ANTES de
 -- desplegar el código que la use). Aquí solo queda el esquema de las tablas nuevas.
 -- ============================================================
@@ -247,6 +248,7 @@ CREATE TABLE IF NOT EXISTS checkout_orders (
     decided_at TIMESTAMPTZ,
     decision_reason TEXT,
     result JSONB,
+    parent_order_id UUID REFERENCES checkout_orders(id),
     version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -266,13 +268,13 @@ CREATE TABLE IF NOT EXISTS subscription_periods (
     rate_used NUMERIC(12,4),
     amount_bs NUMERIC(14,2),
     kind VARCHAR(12) NOT NULL
-        CONSTRAINT subscription_periods_kind_chk CHECK (kind IN ('renovacion','nueva','cambio')),
+        CONSTRAINT subscription_periods_kind_chk CHECK (kind IN ('renovacion','nueva','cambio','reversa')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT subscription_periods_range_chk CHECK (period_end >= period_start)
 );
 CREATE INDEX IF NOT EXISTS idx_subscription_periods_sub ON subscription_periods (subscription_id, period_end);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_periods_order_sub
-    ON subscription_periods (order_id, subscription_id) WHERE order_id IS NOT NULL;
+    ON subscription_periods (order_id, subscription_id, kind) WHERE order_id IS NOT NULL;
 
 ALTER TABLE subscriptions
     ADD COLUMN IF NOT EXISTS void_reason TEXT,

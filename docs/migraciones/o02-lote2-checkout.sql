@@ -10,8 +10,9 @@
 --   2. Tabla subscription_periods (historial: solo se inserta, nunca se actualiza ni borra).
 --   3. Columnas subscriptions.void_reason y subscriptions.voided_at (estado `voided`, aún sin uso).
 --   4. Índices de consulta y el índice único de referencias de pago aprobadas.
---   5. Funciones: approve_checkout_order (aprobación atómica e idempotente) y dos auxiliares
---      internas (checkout_pick_profile, checkout_release_profile).
+--   5. Funciones: approve_checkout_order (aprobación atómica e idempotente), split_and_approve_checkout_order
+--      (aprobación parcial: divide la orden), void_checkout_order (anulación con asiento contrario) y dos
+--      auxiliares internas (checkout_pick_profile, checkout_release_profile).
 --   6. Seguridad: RLS activado SIN políticas en las tablas nuevas (solo el service role entra) y
 --      EXECUTE de las funciones solo para service_role.
 --
@@ -92,6 +93,8 @@ CREATE TABLE IF NOT EXISTS checkout_orders (
     created_at       TIMESTAMPTZ DEFAULT NOW(),
     updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
+-- Orden hija creada al aprobar PARTE de una orden (aprobación parcial por ítem).
+ALTER TABLE checkout_orders ADD COLUMN IF NOT EXISTS parent_order_id UUID REFERENCES checkout_orders(id);
 
 CREATE INDEX IF NOT EXISTS idx_checkout_orders_user_status ON checkout_orders (user_id, status);
 CREATE INDEX IF NOT EXISTS idx_checkout_orders_status_expires ON checkout_orders (status, expires_at);
@@ -158,15 +161,17 @@ CREATE TABLE IF NOT EXISTS subscription_periods (
     rate_used       NUMERIC(12,4),
     amount_bs       NUMERIC(14,2),
     kind            VARCHAR(12) NOT NULL
-                    CONSTRAINT subscription_periods_kind_chk CHECK (kind IN ('renovacion','nueva','cambio')),
+                    CONSTRAINT subscription_periods_kind_chk CHECK (kind IN ('renovacion','nueva','cambio','reversa')),
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT subscription_periods_range_chk CHECK (period_end >= period_start)
 );
 
 CREATE INDEX IF NOT EXISTS idx_subscription_periods_sub ON subscription_periods (subscription_id, period_end);
--- Una orden aplica a una suscripción una sola vez (red de seguridad contra doble aplicación).
-CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_periods_order_sub
-    ON subscription_periods (order_id, subscription_id) WHERE order_id IS NOT NULL;
+-- Una orden aplica a una suscripción una sola vez, y se revierte una sola vez (la reversa es otro
+-- renglón con kind='reversa' e importes negativos: el historial nunca se edita).
+DROP INDEX IF EXISTS uq_subscription_periods_order_sub;
+CREATE UNIQUE INDEX uq_subscription_periods_order_sub
+    ON subscription_periods (order_id, subscription_id, kind) WHERE order_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION subscription_periods_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -565,6 +570,198 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
+-- 5b. split_and_approve_checkout_order: aprobación PARCIAL por ítem (se divide la orden)
+-- -----------------------------------------------------------------------------
+-- Aprueba solo los ítems elegidos (p_keep = índices del manifiesto, desde 0) y deja el resto en una
+-- ORDEN NUEVA pendiente (parent_order_id = la original) con su propio total en USD y Bs. Todo en una
+-- transacción: si la aprobación falla (por ejemplo, no hay perfil libre) no queda ni la división.
+-- La orden hija conserva el texto y las señales del comprobante, pero NO la referencia de pago (la
+-- referencia ya quedó en la orden aprobada; el índice único impide repetirla).
+-- Errores: los de approve_checkout_order más invalid_selection (vacío, repetidos, fuera de rango o la
+-- orden completa: para eso se usa approve_checkout_order).
+CREATE OR REPLACE FUNCTION split_and_approve_checkout_order(
+    p_order_id          UUID,
+    p_actor             TEXT,
+    p_keep              INT[],
+    p_reason            TEXT DEFAULT NULL,
+    p_payment_reference TEXT DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_order    checkout_orders%ROWTYPE;
+    v_n        INT;
+    v_kept     jsonb;
+    v_rest     jsonb;
+    v_kept_usd NUMERIC;
+    v_kept_bs  NUMERIC;
+    v_rest_usd NUMERIC;
+    v_rest_bs  NUMERIC;
+    v_child    UUID;
+    v_result   jsonb;
+    v_extra    jsonb;
+BEGIN
+    IF p_actor IS NULL OR btrim(p_actor) = '' THEN
+        RAISE EXCEPTION 'actor_required' USING ERRCODE = 'P0001';
+    END IF;
+    SELECT * INTO v_order FROM checkout_orders WHERE id = p_order_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found' USING ERRCODE = 'P0001', DETAIL = jsonb_build_object('order_id', p_order_id)::text;
+    END IF;
+    -- Una orden ya aprobada devuelve lo aplicado (idempotencia), sin dividir otra vez.
+    IF v_order.status = 'approved' THEN
+        RETURN coalesce(v_order.result, '{}'::jsonb) || jsonb_build_object('already_applied', true, 'order_id', v_order.id);
+    END IF;
+    IF v_order.status NOT IN ('pending', 'expired') THEN
+        RAISE EXCEPTION 'invalid_state' USING ERRCODE = 'P0001',
+            DETAIL = jsonb_build_object('order_id', p_order_id, 'status', v_order.status)::text;
+    END IF;
+    IF v_order.status = 'expired' AND (p_reason IS NULL OR btrim(p_reason) = '') THEN
+        RAISE EXCEPTION 'reason_required' USING ERRCODE = 'P0001',
+            DETAIL = jsonb_build_object('order_id', p_order_id, 'status', v_order.status)::text;
+    END IF;
+    IF jsonb_typeof(v_order.manifest -> 'items') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'invalid_manifest' USING ERRCODE = 'P0001', DETAIL = jsonb_build_object('order_id', p_order_id)::text;
+    END IF;
+
+    v_n := jsonb_array_length(v_order.manifest -> 'items');
+    IF p_keep IS NULL OR cardinality(p_keep) = 0 OR cardinality(p_keep) >= v_n
+       OR (SELECT count(DISTINCT k) FROM unnest(p_keep) k) <> cardinality(p_keep)
+       OR EXISTS (SELECT 1 FROM unnest(p_keep) k WHERE k < 0 OR k >= v_n) THEN
+        RAISE EXCEPTION 'invalid_selection' USING ERRCODE = 'P0001',
+            DETAIL = jsonb_build_object('items', v_n, 'keep', coalesce(to_jsonb(p_keep), 'null'::jsonb))::text;
+    END IF;
+
+    SELECT coalesce(jsonb_agg(e.value ORDER BY e.ordinality), '[]'::jsonb) INTO v_kept
+      FROM jsonb_array_elements(v_order.manifest -> 'items') WITH ORDINALITY AS e(value, ordinality)
+     WHERE (e.ordinality - 1)::int = ANY (p_keep);
+    SELECT coalesce(jsonb_agg(e.value ORDER BY e.ordinality), '[]'::jsonb) INTO v_rest
+      FROM jsonb_array_elements(v_order.manifest -> 'items') WITH ORDINALITY AS e(value, ordinality)
+     WHERE NOT ((e.ordinality - 1)::int = ANY (p_keep));
+
+    SELECT sum((x ->> 'subtotal_usd')::numeric), sum((x ->> 'amount_bs')::numeric) INTO v_kept_usd, v_kept_bs
+      FROM jsonb_array_elements(v_kept) x;
+    SELECT sum((x ->> 'subtotal_usd')::numeric), sum((x ->> 'amount_bs')::numeric) INTO v_rest_usd, v_rest_bs
+      FROM jsonb_array_elements(v_rest) x;
+
+    -- Orden hija con lo que no se aprueba.
+    INSERT INTO checkout_orders
+        (user_id, status, manifest, total_usd, total_bs, rate_used, receipt_text, ocr_flags, expires_at, parent_order_id)
+    VALUES
+        (v_order.user_id, 'pending',
+         jsonb_build_object('version', 1, 'items', v_rest,
+                            'total_usd', to_char(v_rest_usd, 'FM9999990.00'), 'total_bs', to_char(v_rest_bs, 'FM999999999990.00'),
+                            'rate_used', to_char(v_order.rate_used, 'FM99999990.0000')),
+         v_rest_usd, v_rest_bs, v_order.rate_used, v_order.receipt_text, v_order.ocr_flags,
+         greatest(coalesce(v_order.expires_at, now()), now() + interval '24 hours'), v_order.id)
+    RETURNING id INTO v_child;
+
+    -- La orden original queda solo con lo aprobado (sigue pendiente hasta la llamada de abajo).
+    UPDATE checkout_orders
+       SET manifest = jsonb_build_object('version', 1, 'items', v_kept,
+                            'total_usd', to_char(v_kept_usd, 'FM9999990.00'), 'total_bs', to_char(v_kept_bs, 'FM999999999990.00'),
+                            'rate_used', to_char(v_order.rate_used, 'FM99999990.0000')),
+           total_usd = v_kept_usd, total_bs = v_kept_bs, updated_at = now()
+     WHERE id = v_order.id;
+
+    v_result := approve_checkout_order(p_order_id, p_actor, p_reason, p_payment_reference);
+
+    v_extra := jsonb_build_object('partial', true, 'remainder_order_id', v_child,
+                                  'remainder_items', jsonb_array_length(v_rest),
+                                  'remainder_total_usd', v_rest_usd, 'remainder_total_bs', v_rest_bs);
+    UPDATE checkout_orders SET result = result || v_extra WHERE id = v_order.id;
+    RETURN v_result || v_extra;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- 5c. void_checkout_order: anular una orden APROBADA con asiento contrario
+-- -----------------------------------------------------------------------------
+-- No borra nada: inserta un renglón de reversa (kind='reversa', importes negativos) por cada periodo
+-- de la orden y revierte el efecto. Todo o nada. Solo se revierte lo que aún está como lo dejó la orden:
+--   renovacion: el end_date vuelve al inicio del periodo (si alguien la renovó o editó después → subscription_changed).
+--   nueva:      la suscripción pasa a `voided` (con motivo) y su perfil se libera con las guardas de
+--               checkout_release_profile (PIN nuevo; el resultado va en la respuesta).
+--   cambio:     NO es reversible automáticamente (el perfil ya se movió): manual_reversal_required.
+-- Idempotente: una orden ya anulada devuelve already_applied. Errores: actor_required, reason_required,
+-- order_not_found, invalid_state, manual_reversal_required, subscription_changed.
+CREATE OR REPLACE FUNCTION void_checkout_order(
+    p_order_id UUID,
+    p_actor    TEXT,
+    p_reason   TEXT
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_order   checkout_orders%ROWTYPE;
+    v_per     subscription_periods%ROWTYPE;
+    v_sub     subscriptions%ROWTYPE;
+    v_items   jsonb := '[]'::jsonb;
+    v_release jsonb;
+    v_final   jsonb;
+BEGIN
+    IF p_actor IS NULL OR btrim(p_actor) = '' THEN
+        RAISE EXCEPTION 'actor_required' USING ERRCODE = 'P0001';
+    END IF;
+    IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+        RAISE EXCEPTION 'reason_required' USING ERRCODE = 'P0001', DETAIL = jsonb_build_object('order_id', p_order_id)::text;
+    END IF;
+    SELECT * INTO v_order FROM checkout_orders WHERE id = p_order_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'order_not_found' USING ERRCODE = 'P0001', DETAIL = jsonb_build_object('order_id', p_order_id)::text;
+    END IF;
+    IF v_order.status = 'voided' THEN
+        RETURN coalesce(v_order.result, '{}'::jsonb) || jsonb_build_object('already_applied', true, 'order_id', v_order.id);
+    END IF;
+    IF v_order.status <> 'approved' THEN
+        RAISE EXCEPTION 'invalid_state' USING ERRCODE = 'P0001',
+            DETAIL = jsonb_build_object('order_id', p_order_id, 'status', v_order.status)::text;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM subscription_periods WHERE order_id = p_order_id AND kind = 'cambio') THEN
+        RAISE EXCEPTION 'manual_reversal_required' USING ERRCODE = 'P0001',
+            DETAIL = jsonb_build_object('order_id', p_order_id, 'motivo', 'cambio de plataforma')::text;
+    END IF;
+
+    FOR v_per IN
+        SELECT * FROM subscription_periods WHERE order_id = p_order_id AND kind IN ('renovacion', 'nueva')
+        ORDER BY subscription_id
+    LOOP
+        SELECT * INTO v_sub FROM subscriptions WHERE id = v_per.subscription_id FOR UPDATE;
+        IF NOT FOUND OR v_sub.end_date IS DISTINCT FROM v_per.period_end THEN
+            RAISE EXCEPTION 'subscription_changed' USING ERRCODE = 'P0001',
+                DETAIL = jsonb_build_object('subscription_id', v_per.subscription_id)::text;
+        END IF;
+        v_release := NULL;
+        IF v_per.kind = 'renovacion' THEN
+            UPDATE subscriptions SET end_date = v_per.period_start WHERE id = v_sub.id;
+        ELSE
+            UPDATE subscriptions
+               SET status = 'voided', voided_at = now(),
+                   void_reason = '[' || btrim(p_actor) || '] ' || btrim(p_reason)
+             WHERE id = v_sub.id;
+            IF v_sub.profile_id IS NOT NULL THEN
+                v_release := checkout_release_profile(v_sub.profile_id, v_sub.id);
+            END IF;
+        END IF;
+        INSERT INTO subscription_periods
+            (subscription_id, order_id, period_start, period_end, amount_usd, rate_used, amount_bs, kind)
+        VALUES (v_per.subscription_id, p_order_id, v_per.period_start, v_per.period_end,
+                -v_per.amount_usd, v_per.rate_used, -v_per.amount_bs, 'reversa');
+        v_items := v_items || jsonb_build_array(jsonb_build_object(
+            'subscription_id', v_per.subscription_id, 'tipo', v_per.kind,
+            'action', CASE WHEN v_per.kind = 'renovacion' THEN 'end_date_restored' ELSE 'voided' END,
+            'restored_end_date', CASE WHEN v_per.kind = 'renovacion' THEN v_per.period_start END,
+            'released_profile', v_release));
+    END LOOP;
+
+    v_final := jsonb_build_object('ok', true, 'already_applied', false, 'order_id', p_order_id,
+                                  'voided_by', btrim(p_actor), 'items', v_items, 'voided', true);
+    UPDATE checkout_orders
+       SET status = 'voided', decided_by = btrim(p_actor), decided_at = now(), decision_reason = btrim(p_reason),
+           result = coalesce(result, '{}'::jsonb) || v_final, version = version + 1, updated_at = now()
+     WHERE id = p_order_id;
+    RETURN v_final;
+END $$;
+
+-- -----------------------------------------------------------------------------
 -- 6. Seguridad
 -- -----------------------------------------------------------------------------
 -- El bot y el panel usan la service role key (se salta RLS): sin políticas, anon y authenticated
@@ -576,22 +773,30 @@ ALTER TABLE subscription_periods ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON FUNCTION approve_checkout_order(UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION checkout_pick_profile(UUID, TEXT, UUID)        FROM PUBLIC;
 REVOKE ALL ON FUNCTION checkout_release_profile(UUID, UUID)           FROM PUBLIC;
+REVOKE ALL ON FUNCTION split_and_approve_checkout_order(UUID, TEXT, INT[], TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION void_checkout_order(UUID, TEXT, TEXT)          FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
         REVOKE ALL ON FUNCTION approve_checkout_order(UUID, TEXT, TEXT, TEXT) FROM anon;
         REVOKE ALL ON FUNCTION checkout_pick_profile(UUID, TEXT, UUID)        FROM anon;
         REVOKE ALL ON FUNCTION checkout_release_profile(UUID, UUID)           FROM anon;
+        REVOKE ALL ON FUNCTION split_and_approve_checkout_order(UUID, TEXT, INT[], TEXT, TEXT) FROM anon;
+        REVOKE ALL ON FUNCTION void_checkout_order(UUID, TEXT, TEXT) FROM anon;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
         REVOKE ALL ON FUNCTION approve_checkout_order(UUID, TEXT, TEXT, TEXT) FROM authenticated;
         REVOKE ALL ON FUNCTION checkout_pick_profile(UUID, TEXT, UUID)        FROM authenticated;
         REVOKE ALL ON FUNCTION checkout_release_profile(UUID, UUID)           FROM authenticated;
+        REVOKE ALL ON FUNCTION split_and_approve_checkout_order(UUID, TEXT, INT[], TEXT, TEXT) FROM authenticated;
+        REVOKE ALL ON FUNCTION void_checkout_order(UUID, TEXT, TEXT) FROM authenticated;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
         GRANT EXECUTE ON FUNCTION approve_checkout_order(UUID, TEXT, TEXT, TEXT) TO service_role;
         GRANT EXECUTE ON FUNCTION checkout_pick_profile(UUID, TEXT, UUID)        TO service_role;
         GRANT EXECUTE ON FUNCTION checkout_release_profile(UUID, UUID)           TO service_role;
+        GRANT EXECUTE ON FUNCTION split_and_approve_checkout_order(UUID, TEXT, INT[], TEXT, TEXT) TO service_role;
+        GRANT EXECUTE ON FUNCTION void_checkout_order(UUID, TEXT, TEXT) TO service_role;
     END IF;
 END $$;
 
@@ -614,7 +819,7 @@ SELECT column_name, data_type FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = 'subscriptions'
   AND column_name IN ('void_reason', 'voided_at') ORDER BY column_name;
 
--- Debe devolver 3 funciones; quien puede ejecutarlas: solo service_role y postgres/dueño
+-- Debe devolver 5 funciones; quien puede ejecutarlas: solo service_role y postgres/dueño
 -- (anon y authenticated NO deben aparecer).
 SELECT p.proname AS funcion,
        (SELECT string_agg(DISTINCT g.grantee::regrole::text, ', ' ORDER BY g.grantee::regrole::text)
@@ -622,7 +827,8 @@ SELECT p.proname AS funcion,
          WHERE g.privilege_type = 'EXECUTE') AS pueden_ejecutar
 FROM pg_proc p
 WHERE p.pronamespace = 'public'::regnamespace
-  AND p.proname IN ('approve_checkout_order', 'checkout_pick_profile', 'checkout_release_profile');
+  AND p.proname IN ('approve_checkout_order', 'checkout_pick_profile', 'checkout_release_profile',
+                    'split_and_approve_checkout_order', 'void_checkout_order');
 
 -- Debe devolver 7 índices nuevos.
 SELECT indexname FROM pg_indexes
@@ -637,6 +843,8 @@ ORDER BY indexname;
 -- REVERSA (comentada). Solo mientras no se necesiten los datos de las tablas nuevas.
 -- =============================================================================
 -- BEGIN;
+-- DROP FUNCTION IF EXISTS void_checkout_order(UUID, TEXT, TEXT);
+-- DROP FUNCTION IF EXISTS split_and_approve_checkout_order(UUID, TEXT, INT[], TEXT, TEXT);
 -- DROP FUNCTION IF EXISTS approve_checkout_order(UUID, TEXT, TEXT, TEXT);
 -- DROP FUNCTION IF EXISTS checkout_release_profile(UUID, UUID);
 -- DROP FUNCTION IF EXISTS checkout_pick_profile(UUID, TEXT, UUID);

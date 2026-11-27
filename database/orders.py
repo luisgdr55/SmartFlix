@@ -203,6 +203,22 @@ async def expire_stale_orders(now: Optional[datetime] = None) -> int:
         return 0
 
 
+def _rpc(name: str, params: dict, order_id: str) -> dict:
+    """Llama a una función SQL de órdenes y traduce sus errores a `ApprovalError`."""
+    try:
+        sb = get_supabase()
+        return sb.rpc(name, params).execute().data
+    except ApprovalError:
+        raise
+    except Exception as e:
+        # postgrest.exceptions.APIError trae `message` (código de la función) y `details` (JSON).
+        message = getattr(e, "message", None)
+        if message is not None and getattr(e, "code", None) is not None:
+            raise parse_approval_error(message, getattr(e, "details", None)) from e
+        logger.error(f"{name}: error de conexión o inesperado para {order_id}: {e}")
+        raise ApprovalError("unavailable", raw=str(e)[:200]) from e
+
+
 async def approve_order(
     order_id: str,
     actor: str,
@@ -215,24 +231,23 @@ async def approve_order(
     conexión se informa como `unavailable`: la orden pudo o no haberse aprobado; repetir es seguro
     porque la función es idempotente.
     """
-    try:
-        sb = get_supabase()
-        res = sb.rpc(RPC_APPROVE, {
-            "p_order_id": order_id,
-            "p_actor": actor,
-            "p_reason": reason,
-            "p_payment_reference": payment_reference,
-        }).execute()
-        return res.data
-    except ApprovalError:
-        raise
-    except Exception as e:
-        # postgrest.exceptions.APIError trae `message` (código de la función) y `details` (JSON).
-        message = getattr(e, "message", None)
-        if message is not None and getattr(e, "code", None) is not None:
-            raise parse_approval_error(message, getattr(e, "details", None)) from e
-        logger.error(f"approve_order: error de conexión o inesperado para {order_id}: {e}")
-        raise ApprovalError("unavailable", raw=str(e)[:200]) from e
+    return _rpc(RPC_APPROVE, {
+        "p_order_id": order_id, "p_actor": actor, "p_reason": reason, "p_payment_reference": payment_reference,
+    }, order_id)
+
+
+async def approve_order_partial(order_id: str, actor: str, keep: list[int], reason: Optional[str] = None,
+                                payment_reference: Optional[str] = None) -> dict:
+    """Aprobación parcial (divide la orden). Úsala a través de `checkout_service.approve_partial`."""
+    return _rpc("split_and_approve_checkout_order", {
+        "p_order_id": order_id, "p_actor": actor, "p_keep": keep, "p_reason": reason,
+        "p_payment_reference": payment_reference,
+    }, order_id)
+
+
+async def void_order(order_id: str, actor: str, reason: str) -> dict:
+    """Anula una orden aprobada con asiento contrario. Úsala a través de `checkout_service.void_order`."""
+    return _rpc("void_checkout_order", {"p_order_id": order_id, "p_actor": actor, "p_reason": reason}, order_id)
 
 
 async def payment_reference_used(reference: str, exclude_order_id: Optional[str] = None) -> bool:
