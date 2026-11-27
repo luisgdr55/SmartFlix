@@ -15,11 +15,12 @@ Que **un pago cubra N servicios sin crear suscripciones nuevas**, que cada suscr
 - No hay historial: las renovaciones sobrescriben `end_date`; los ingresos en Bs se calculan con la tasa de hoy, no la del pago.
 - Las consultas de aviso de deuda, gracia y corte filtran `status='active'` mientras un job cada 15 min pasa las vencidas a `expired`: los avisos y cortes dependen de una carrera.
 
-## Conflicto documental que requiere veredicto (decisión previa, Lote 0)
-`CLAUDE.md` y `docs/ESTADO.md` dicen: corte automático D+7 **con** guarda de pago pendiente. `features.md` Fase 8 (decisiones 1 a 3, sesión 17) dice: **sin corte automático**, corte manual por el admin, recordatorios hasta D+6.
-El comportamiento real en producción no coincide con ninguna de las dos (ver último punto del problema).
-- **Opción A:** mantener corte D+7 con guarda (arreglando los filtros). **Opción B (recomendada):** Fase 8: la deuda es visible y el admin corta a mano; recordatorios D+1 a D+6; después la mora solo se ve en el panel.
-Hasta que el Orquestador elija, no se toca el scheduler (Lote 6).
+## Decisión del Orquestador (27/11/2026): opción B — sin corte automático
+`CLAUDE.md` y `docs/ESTADO.md` decían «corte automático D+7 con guarda de pago pendiente»; `features.md` Fase 8 (decisiones 1 a 3, sesión 17) decía «sin corte automático». El Orquestador eligió **B, la de la Fase 8**:
+- **No hay corte automático.** El servicio de un cliente con deuda sigue activo; cortar es una acción **manual** del admin (corte suave o cortar y liberar, ya existentes en el panel).
+- **Recordatorios de deuda D+1 a D+6** (se corrige para que realmente salgan). Después de D+6 **no** se envían más; la mora queda visible en el panel.
+- El comportamiento previo en producción no coincidía con ninguna de las dos reglas (por el cruce entre `auto_expire` y las consultas con `status='active'`): el Lote 6 lo corrige.
+- **Efecto en las reglas del repo:** la guarda «el corte automático D+7 no corta si hay un pago pendiente» de `CLAUDE.md` queda sin objeto; se reemplaza por «el corte manual advierte al admin si el cliente tiene una orden pendiente». La actualización de `CLAUDE.md` y `docs/ESTADO.md` se hace en el Lote 8, no antes.
 
 ## Máquina de estados propuesta
 **Suscripción** (`subscriptions.status`):
@@ -37,7 +38,7 @@ Toda transición registra actor y hora; el admin puede anular una orden aprobada
 ## Alcance
 
 ### Lote 0 — Decisiones y diagnóstico de solo lectura
-Veredicto sobre A/B y sobre las decisiones de abajo. Consulta de solo lectura (con autorización expresa del Orquestador) que lista anomalías: duplicados por usuario+plataforma, `expired_payment`, suscripciones vencidas con perfil ocupado, perfiles ocupados sin suscripción activa. Entrega un listado, no corrige nada.
+Veredicto sobre las decisiones de abajo (la del corte D+7 ya está tomada: opción B). Consulta de solo lectura (con autorización expresa del Orquestador) que lista anomalías: duplicados por usuario+plataforma, `expired_payment`, suscripciones vencidas con perfil ocupado, perfiles ocupados sin suscripción activa. Entrega un listado, no corrige nada.
 
 ### Lote 1 — Servicios base (sin esquema)
 - `services/checkout_service.py`: cálculo de periodos y mora, armado del manifiesto, totales con `Decimal`, validaciones. Agnóstico al almacenamiento de sesión.
@@ -80,11 +81,18 @@ La función SQL se escribe y revisa en el lote; supabase-py la invoca por `rpc` 
 ### Lote 5 — Admin
 Aprobación por orden en panel y Telegram (con vista de los ítems y de las señales OCR); aprobación parcial por ítem; anular con motivo; estado visible con etiquetas humanas. Pantalla «Revisión de anomalías» (consultas del Lote 0) con acciones auditadas: fusionar, anular, liberar perfil. Borrado solo para suscripciones sin periodos.
 
-### Lote 6 — Scheduler (según veredicto A/B)
-Un único predicado `is_overdue(sub)` (active/expired con `end_date` < ahora) usado por todos los jobs; `auto_expire` deja de cambiar estados; el panel deja de escribir en GET. Cada job con `coalesce=True`, `max_instances=1`, `misfire_grace_time` explícito y candado Redis; reclamo condicional antes de enviar (`UPDATE … WHERE reminder_sent=false RETURNING`); rate limit de difusión ≤ 30/s con manejo de `RetryAfter`.
+### Lote 6 — Scheduler (opción B)
+- Un único predicado `is_overdue(sub)` (estado `active` o `expired` heredado, con `end_date` < ahora) usado por **todos** los jobs y por el panel. `auto_expire` deja de cambiar estados; el panel deja de escribir en GET.
+- Se **retira el job de corte automático D+7**. Se mantienen: aviso D-3, aviso D+0 y recordatorios de deuda D+1 a D+6 (con `debt_reminder_count` incrementado de forma atómica); tras D+6 no hay más envíos.
+- **Resumen diario al admin** (propuesta, a confirmar en el veredicto): lista de clientes con mora ≥ 7 días y su deuda, con botón para abrir su ficha, para que el corte manual no dependa de la memoria.
+- Corte manual (panel y Telegram): si el cliente tiene una orden `pending`, se advierte y se pide confirmar; el corte libera el perfil y rota el PIN según la regla vigente.
+- Cada job con `coalesce=True`, `max_instances=1`, `misfire_grace_time` explícito y candado Redis; reclamo condicional antes de enviar (`UPDATE … WHERE reminder_sent=false RETURNING`); difusión ≤ 30 mensajes/s con manejo de `RetryAfter`.
 
 ### Lote 7 — Saneamiento de datos existentes
 Solo tras el listado del Lote 0 y con autorización expresa para cada ejecución contra producción: script con modo `--dry-run` por defecto que propone (no aplica) fusiones y anulaciones; el Orquestador aprueba fila por fila.
+
+### Lote 8 — Documentación de cierre
+Actualizar `CLAUDE.md` (guarda del corte), `docs/ESTADO.md` (§0, §1, tabla de módulos: «Corte automático D+7» pasa a «Corte manual; recordatorios D+1 a D+6»), `docs/FLUJOS.md` y `features.md` (Fase 8).
 
 ## NO incluye
 Pasarela automática con verificación bancaria · cambio de plataforma a mitad de periodo · referidos/lealtad/planes familiares · agente de IA (orden futura) · rediseño visual (O03) · PWA (O04) · autenticación (O01).
@@ -105,11 +113,14 @@ Dos servicios de la misma plataforma pagados juntos y por separado · doble clic
 - Dada cualquier suscripción en cualquier estado, entonces el admin tiene una acción auditada para destrabarla.
 - Dado el reporte de ingresos del mes, entonces el total en Bs es la suma de los `amount_bs` guardados, no el total en USD × tasa de hoy.
 
+- Dado un cliente con 8 días de mora, cuando corre el scheduler, entonces no se corta, no recibe más recordatorios, y aparece en el resumen del admin.
+- Dado un corte manual de un cliente con una orden pendiente, entonces el admin recibe una advertencia antes de confirmar.
+
 ## Pruebas obligatorias
 Suite `unittest` de lógica pura con repositorio falso: aritmética de fechas y zona horaria, totales con `Decimal`, transiciones válidas e inválidas, idempotencia, el escenario de dos servicios por plataforma, detector de anomalías. Lo que dependa de Supabase/Telegram real lo prueba el Orquestador; el cierre lo declara.
 
 ## Decisiones que el Orquestador debe tomar
-1. **A o B** sobre el corte D+7 (arriba).
+1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
 3. **Aprobación atómica por función SQL (recomendada)** o secuencial con compensación.
 4. TTL de una orden sin pagar (propuesta: 24 h; la reserva de perfil sigue en 30 min).
@@ -117,7 +128,7 @@ Suite `unittest` de lógica pura con repositorio falso: aritmética de fechas y 
 6. ¿Se conserva `streamvip/` mientras tanto? (S-006; no se toca en esta orden).
 
 ## Archivos esperados
-`services/checkout_service.py` (nuevo) · `services/locks.py` (nuevo) · `utils/dates.py` (nuevo) · `database/orders.py` (nuevo) · `database/subscriptions.py` · `database/profiles.py` · `bot/handlers/subscription.py` · `bot/handlers/renovar.py` · `bot/handlers/admin.py` · `bot/handlers/my_services.py` · `main.py` (enrutador de fotos) · `scheduler/jobs.py` · `admin_panel/router.py` y plantillas de pagos y cliente · `supabase_schema.sql` · `tests/` · `docs/FLUJOS.md` (máquinas de estado) · `docs/ESTADO.md` · `features.md` (Fase 8).
+`services/checkout_service.py` (nuevo) · `services/locks.py` (nuevo) · `utils/dates.py` (nuevo) · `database/orders.py` (nuevo) · `database/subscriptions.py` · `database/profiles.py` · `bot/handlers/subscription.py` · `bot/handlers/renovar.py` · `bot/handlers/admin.py` · `bot/handlers/my_services.py` · `main.py` (enrutador de fotos) · `scheduler/jobs.py` · `CLAUDE.md` · `admin_panel/router.py` y plantillas de pagos y cliente · `supabase_schema.sql` · `tests/` · `docs/FLUJOS.md` (máquinas de estado) · `docs/ESTADO.md` · `features.md` (Fase 8).
 
 ## Plan por lotes
 | Lote | Riesgo | Requiere |
@@ -128,5 +139,6 @@ Suite `unittest` de lógica pura con repositorio falso: aritmética de fechas y 
 | 3 motor | 🔴 | Lote 2 |
 | 4 bot | 🔴 | Lotes 1 a 3, flag apagado |
 | 5 admin | 🔴 | Lote 3 |
-| 6 scheduler | 🔴 | veredicto A/B |
+| 6 scheduler | 🔴 | decisión B tomada |
 | 7 saneamiento | 🔴 | autorización por ejecución |
+| 8 documentación de cierre | 🟢 | — |

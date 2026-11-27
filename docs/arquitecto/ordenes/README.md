@@ -9,9 +9,10 @@ La evidencia detallada vive en el informe privado del Arquitecto, fuera del repo
 | [O02](o02-pagos-estados-checkout.md) | Orden de pago multi-servicio, máquina de estados, historial de pagos, saneamiento | 🔴 | `s23-pagos-estados` | O01 Lote 0 |
 | [O03](o03-rendimiento-rediseno-panel.md) | Rendimiento y rediseño del panel | 🟡/🔴 | `s24-panel-rendimiento-diseno` | O01; O02 (parte de pagos) |
 | [O04](o04-pwa-cliente-api.md) | API de clientes y PWA | 🔴 | `s25-pwa-cliente` | O01, O02, O03 |
+| [O05](o05-agente-conversacional.md) | Agente conversacional del bot (solo texto) | 🔴 | `s26-agente-ia` | O02 Lotes 1 a 4, O01 Lote 0 |
 
 ## Orden de ejecución recomendado
-O01 Lote 0 → (en paralelo) O02 Lotes 0 a 3 y O03 Lotes 0 a 1 → O01 Lote 1 → O02 Lotes 4 a 7 → O03 Lotes 2 a 6 → O04.
+O01 Lote 0 → (en paralelo) O02 Lotes 0 a 3 y O03 Lotes 0 a 1 → O01 Lote 1 → O02 Lotes 4 a 8 → O03 Lotes 2 a 6 → O04 → O05 (el Lote 5 de O05, confirmaciones de la IA del admin, puede adelantarse a cualquier momento; O05 puede correr en paralelo con O04 una vez cerrado O02).
 
 ## Auditor de diseño: Impeccable (decidido el 27/11/2026)
 Skill de código abierto (`github.com/pbakaus/impeccable`, Apache-2.0, v4.11.1) que audita y critica diseño de interfaz. Es la puerta de calidad visual de **O03** (panel), **O04** (PWA) y, en lo que aplique, del bot.
@@ -21,8 +22,10 @@ Skill de código abierto (`github.com/pbakaus/impeccable`, Apache-2.0, v4.11.1) 
 - **Bot de Telegram:** no tiene CSS ni componentes, así que el detector automático no aplica. Se usan sus comandos de redacción y de flujos (`clarify`, `critique`, `harden`) sobre mensajes, teclados y estados vacíos.
 - **Pendiente del Orquestador:** ¿habilitar el motor completo (hooks en cada edición y al terminar cada turno, binario de GitHub Releases verificado por SHA-256, telemetría apagada)? Hoy **no**.
 
-## Propuesta pendiente (no redactada)
-**O05 — Agente conversacional** (texto y voz) para el bot, apoyado en los servicios de O02 y en la API de O04. Se redacta cuando el Orquestador confirme el alcance.
+## Decisiones del Orquestador registradas (27/11/2026)
+- **Corte de mora: opción B** (sin corte automático; corte manual; recordatorios D+1 a D+6). Aplicada en O02; `CLAUDE.md` se actualiza al cerrar O02 (Lote 8).
+- **Agente conversacional: solo texto por ahora** (O05); la voz queda para una orden posterior.
+- **Impeccable** como auditor de diseño (ver arriba).
 
 ## Disparadores comunes (CLAUDE.md)
 Toda migración de Supabase la ejecuta el Orquestador **antes** de desplegar el código · ninguna dependencia nueva sin aprobación y versión exacta · ningún script contra producción sin autorización expresa por ejecución · fusionar en baja actividad (Railway reinicia el bot).
