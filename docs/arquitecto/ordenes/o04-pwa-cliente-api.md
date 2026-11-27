@@ -64,7 +64,7 @@ Aislamiento por cliente (cada endpoint), idempotencia de órdenes, validación d
 3. **Stack del frontend:** **A** Vite + React o Preact compilado y servido por el mismo servicio FastAPI (más «app», requiere Node en el build de Railway y una herramienta nueva); **B** páginas renderizadas por el servidor con Jinja + Alpine (sin herramienta nueva, menos fluida). Se recomienda A solo si se aprueba el build; ambas dependencias son disparadores de aprobación.
 4. ¿Mismo dominio (`/app`) o subdominio propio? (afecta cookies y CSP).
 5. Alcance de la beta y fecha.
-6. Skill de diseño: `impeccable` no está instalada; ver O03.
+6. **Auditor de diseño: Impeccable** (decidido). Aplica a cada pantalla de la PWA: `critique` y `audit` sobre capturas móviles y de escritorio antes de cerrar cada lote de interfaz (Lotes 4 y 5); `clarify` para los textos; el modo de trabajo es *Persuade* para catálogo y venta y *Operate* para mis servicios y pagos. Ver `README.md` de esta carpeta.
 
 ## Archivos esperados
 `api/` (nuevo: `v1/` con routers, esquemas, errores) · `services/customer_auth.py` · `database/customer_sessions.py` · `services/checkout_service.py` (reuso) · `main.py` (montaje, middlewares) · `web/` (nuevo, fuente del frontend) · `static/pwa/` (salida compilada o plantillas) · `supabase_schema.sql` (sesiones de cliente, tokens de ingreso, almacén de comprobantes) · `tests/` · `docs/FLUJOS.md` · `docs/DISENO.md` · `docs/OPERACION.md` · `docs/ESTADO.md` · `features.md` (Fase 7).

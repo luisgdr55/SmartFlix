@@ -31,7 +31,7 @@ La base actual (tarjetas, barra lateral, KPIs) es sólida y **se evoluciona, no 
 5. Móvil primero: tablas que en pantalla angosta se convierten en tarjetas con la acción principal visible; objetivos táctiles ≥ 44 px; etiquetas accesibles en todo botón con ícono.
 6. Retroalimentación: avisos tipo «toast» en vez de parámetros en la URL y `alert()`; confirmación solo para lo irreversible, con **deshacer** donde sea posible; botones deshabilitados mientras envían y siempre rehabilitados; estados vacío/cargando/error con acción.
 
-**Skill de diseño:** se pidió usar `impeccable`; **no aparece en las skills de la cuenta** (verificado el 27/11/2026: solo `atlas` y `video-campana-ia`). Si el Orquestador la instala, se aplica en el Lote 3; mientras tanto rige la doctrina de ATLAS §9 y la skill de diseño de artefactos para los prototipos.
+**Auditor de diseño: Impeccable** (decisión del Orquestador, 27/11/2026; ver `README.md` de esta carpeta para la versión instalada y sus límites). Se usa como puerta de calidad: `critique` y `audit` sobre las capturas (1440 y 390 px) y el HTML de cada lote de interfaz **antes** de cerrarlo, más `clarify` para los textos y `harden` para estados vacíos y de error. Los hallazgos se registran en el cierre. Va sumada a la doctrina de ATLAS §9, no la reemplaza.
 
 ## Alcance
 
@@ -86,7 +86,7 @@ Medición de tiempos antes/después con el mismo guion; pruebas de plantillas co
 1. **CSS:** binario de Tailwind con archivo compilado versionado, o CSS propio sobre tokens (sin herramientas de compilación).
 2. **Tono visual** (se propone en el Lote 0 con dos alternativas).
 3. Qué hacer con «Cuentas por vencer» (mantener fecha de cobro real o eliminar).
-4. Si se instala la skill `impeccable` para el Lote 3.
+4. ~~Instalar `impeccable`~~ **Resuelta:** instalada en versión reducida (solo guías). Pendiente: ¿habilitar el motor completo con hooks y detector automático? (ver `README.md`).
 
 ## Archivos esperados
 `admin_panel/` (router dividido, `templates/` con base y parciales, `static/`) · `database/analytics.py` · `database/__init__.py` (acceso a datos) · `main.py` (middlewares) · `supabase_schema.sql` · `docs/DISENO.md` (nuevo) · `docs/ESTADO.md`.
