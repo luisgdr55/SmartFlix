@@ -234,17 +234,20 @@ async def confirm_subscription(
     payment_reference: str,
     payment_image_url: str,
 ) -> bool:
-    """Confirm payment and assign profile to subscription."""
+    """Confirm payment and assign profile to subscription.
+
+    El UPDATE es condicional (solo si sigue `pending_payment`): devuelve False si no
+    actualizó ninguna fila, para que dos aprobaciones simultáneas no asignen dos perfiles."""
     try:
         sb = get_supabase()
-        sb.table("subscriptions").update({
+        res = sb.table("subscriptions").update({
             "status": "active",
             "profile_id": profile_id,
             "payment_reference": payment_reference,
             "payment_image_url": payment_image_url,
             "payment_confirmed_at": venezuela_now().isoformat(),
-        }).eq("id", sub_id).execute()
-        return True
+        }).eq("id", sub_id).eq("status", "pending_payment").execute()
+        return bool(res.data)
     except Exception as e:
         logger.error(f"Error in confirm_subscription: {e}")
         return False
@@ -365,19 +368,27 @@ async def get_expired_subscriptions_to_notify() -> list[dict]:
 
 
 async def get_expired_express_subscriptions() -> list[dict]:
-    """Get active express subscriptions that have expired (to release profiles)."""
+    """Get express subscriptions that have expired (to release profiles).
+
+    Incluye las `active` vencidas y, por la carrera con `auto_expire`, las `expired` de las
+    últimas 24 h cuyo perfil sigue ocupado (O02-H). Las `expired` más viejas no se tocan."""
     try:
+        from datetime import timezone
+
+        from services.payment_guards import EXPRESS_EXPIRED_WINDOW, express_release_candidates
+
         sb = get_supabase()
         now = venezuela_now()
+        cutoff = (now - EXPRESS_EXPIRED_WINDOW).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         result = (
             sb.table("subscriptions")
-            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name, pin, account_id, accounts(email, password))")
-            .eq("status", "active")
+            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name, pin, status, account_id, accounts(email, password))")
             .eq("plan_type", "express")
+            .or_(f"status.eq.active,and(status.eq.expired,end_date.gte.{cutoff})")
             .lte("end_date", now.isoformat())
             .execute()
         )
-        return result.data or []
+        return express_release_candidates(result.data or [], now)
     except Exception as e:
         logger.error(f"Error in get_expired_express_subscriptions: {e}")
         return []

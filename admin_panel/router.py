@@ -1553,6 +1553,14 @@ async def payment_approve(
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             return RedirectResponse(url="/panel/payments?error=Suscripcion+no+encontrada", status_code=302)
+        from services.payment_guards import can_decide_payment, status_label
+        if not can_decide_payment(sub.get("status")):
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    f"El pedido ya no está pendiente (estado: {status_label(sub.get('status'))}). No se hizo ningún cambio."
+                ),
+                status_code=302,
+            )
 
         user_id = str(sub.get("user_id", ""))
         platform_id = str(sub.get("platform_id", ""))
@@ -1628,6 +1636,13 @@ async def payment_approve(
 
         image_url = sub.get("payment_image_url") or ""
         ok = await confirm_subscription(sub_id, profile_id, payment_reference, image_url)
+        if not ok:
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    "No se pudo confirmar el pago (otra aprobación se adelantó o hubo un error). No se asignó ningún perfil."
+                ),
+                status_code=302,
+            )
         if ok:
             await assign_profile(profile_id)
             if telegram_id:
@@ -1684,6 +1699,16 @@ async def payment_reject(
     try:
         from database.subscriptions import get_subscription_by_id, delete_subscription, get_user_active_subscriptions
         sub = await get_subscription_by_id(sub_id)
+        if not sub:
+            return RedirectResponse(url="/panel/payments?error=Suscripcion+no+encontrada", status_code=302)
+        from services.payment_guards import can_decide_payment, status_label
+        if not can_decide_payment(sub.get("status")):
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    f"El pedido ya no está pendiente (estado: {status_label(sub.get('status'))}). No se rechazó ni se borró nada."
+                ),
+                status_code=302,
+            )
         await delete_subscription(sub_id)
 
         if sub:

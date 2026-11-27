@@ -90,16 +90,32 @@ async def job_express_release() -> None:
                 user = sub.get("users") or {}
                 client_name = user.get("name") or user.get("username") or "Sin nombre"
 
-                # Expire subscription
-                expired_ok = await expire_subscription(sub_id)
-                if not expired_ok:
-                    logger.warning(
-                        f"job_express_release: expire_subscription failed for {sub_id}, skipping to avoid double processing"
-                    )
-                    continue
+                if sub.get("status") == "expired":
+                    # O02-H: `auto_expire` la marcó antes que este job. Se libera solo si el perfil
+                    # sigue ocupado y ninguna otra suscripción activa lo usa (idempotente).
+                    from database.profiles import release_profile_for_cut
+                    rel = await release_profile_for_cut(str(profile_id), exclude_sub_id=sub_id)
+                    if not rel or not rel["released"]:
+                        logger.info(
+                            f"job_express_release: express {sub_id} (expired) no liberada: "
+                            f"{(rel or {}).get('reason') or 'error al leer el perfil'}"
+                        )
+                        continue
+                    old_pin = rel["old_pin"]
+                    new_pin = rel["new_pin"]
+                else:
+                    # Expire subscription
+                    expired_ok = await expire_subscription(sub_id)
+                    if not expired_ok:
+                        logger.warning(
+                            f"job_express_release: expire_subscription failed for {sub_id}, skipping to avoid double processing"
+                        )
+                        continue
 
                 # Change PIN + release profile
-                if profile_id:
+                if sub.get("status") == "expired":
+                    pass  # ya liberado arriba
+                elif profile_id:
                     new_pin = "".join(random.choices(string.digits, k=4))
                     from database import get_supabase
                     from utils.helpers import venezuela_now

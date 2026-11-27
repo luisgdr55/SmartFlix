@@ -96,6 +96,43 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern="^menu:main$"))
     app.add_handler(CallbackQueryHandler(show_subscription_platforms, pattern="^menu:subscribe$"))
 
+    async def _release_profile_on_cancel(old_sub: dict) -> None:
+        """Libera el perfil de una suscripción vencida que el cliente cancela (O02-H)."""
+        from database.profiles import release_profile_for_cut
+        from services.notification_service import send_to_admin
+
+        profile_id = old_sub.get("profile_id")
+        if not profile_id:
+            return
+        plat = old_sub.get("platforms") or {}
+        platform_label = f"{plat.get('icon_emoji', '')} {plat.get('name', '')}".strip() or "—"
+        sub_short = str(old_sub.get("id", ""))[:8]
+        info = await release_profile_for_cut(str(profile_id), exclude_sub_id=str(old_sub["id"]))
+        if info is None:
+            await send_to_admin(
+                f"⚠️ <b>Perfil NO liberado</b> (cliente canceló una suscripción vencida)\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n🔖 Suscripción: <code>{sub_short}</code>\n"
+                f"No se pudo leer el perfil. Revísalo en el panel y libéralo si corresponde."
+            )
+        elif info["released"]:
+            await send_to_admin(
+                f"🔓 <b>Perfil liberado</b> (cliente canceló una suscripción vencida)\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n"
+                f"👤 Perfil: <b>{info['profile_name']}</b>\n"
+                f"📧 Cuenta: <code>{info['account_email']}</code>\n"
+                f"🔢 PIN anterior: <code>{info['old_pin']}</code>\n"
+                f"🔄 PIN nuevo: <code>{info['new_pin']}</code>\n\n"
+                f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
+            )
+        elif info["reason"] == "otra_suscripcion_activa":
+            await send_to_admin(
+                f"⚠️ <b>Perfil NO liberado</b>: lo usa otra suscripción activa.\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n👤 Perfil: <b>{info['profile_name']}</b>\n"
+                f"🔖 Suscripción cancelada: <code>{sub_short}</code>\n"
+                f"Revisa en el panel que el perfil no esté compartido."
+            )
+        # reason == "no_ocupado": el perfil ya estaba libre; no hay nada que hacer.
+
     async def _handle_cancel_and_buy(update, context):
         """Cancel expired subs and redirect to new purchase flow."""
         query = update.callback_query
@@ -107,9 +144,23 @@ def build_telegram_app() -> Application:
             db_user = await get_user_by_telegram_id(user.id)
             if db_user:
                 sb = get_supabase()
-                sb.table("subscriptions").update({"status": "cancelled"}).eq(
-                    "user_id", db_user["id"]
-                ).eq("status", "expired").execute()
+                # O02-H: al cancelar, liberar el perfil de cada suscripción vencida (con las
+                # mismas guardas del corte) y avisar al admin para que cambie el PIN.
+                expired_res = (
+                    sb.table("subscriptions")
+                    .select("id, profile_id, platforms(name, icon_emoji)")
+                    .eq("user_id", db_user["id"])
+                    .eq("status", "expired")
+                    .execute()
+                )
+                for old_sub in (expired_res.data or []):
+                    try:
+                        await _release_profile_on_cancel(old_sub)
+                    except Exception as rel_err:
+                        logger.error(f"cancel_and_buy release error for {old_sub.get('id')}: {rel_err}")
+                    sb.table("subscriptions").update({"status": "cancelled"}).eq(
+                        "id", old_sub["id"]
+                    ).eq("status", "expired").execute()
             try:
                 await query.edit_message_text(
                     "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"
