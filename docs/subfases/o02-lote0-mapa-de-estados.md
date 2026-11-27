@@ -193,6 +193,8 @@ Otras observaciones:
 
 ---
 
+> **Actualización (O02-H, en rama, sin fusionar):** N3 (express vs `auto_expire`, solo las de <24 h), N4 (`cancel_and_buy`) y N5 (rechazar una `active`) tienen corrección construida; el doble aprobado de §3d queda cubierto en compras nuevas. Ver `docs/subfases/o02h-guardas-pagos-y-perfiles.md`. Nada se considera corregido hasta fusionar.
+
 ## 6. Evidencia: búsquedas realizadas
 
 - Escritores de `status` de suscripciones: `grep -n 'status' database/subscriptions.py`, `router.py`, `jobs.py`, `main.py`, `ai_admin.py`, `admin.py`.
