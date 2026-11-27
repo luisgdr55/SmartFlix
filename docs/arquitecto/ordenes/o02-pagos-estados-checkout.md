@@ -160,6 +160,7 @@ Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto 
 
 - Veredicto Lote 5: APROBADO; se aplican las recomendaciones (aprobación parcial por división de la orden, anulación con asiento contrario; `/renovar` por el motor queda en orden aparte) y arranca el Lote 6.
 - Lote 6 construido (opción B, sin corte automático). Detalle: `docs/subfases/o02-lote6-scheduler.md`.
+- Veredicto Lote 6: APROBADO. Lote 7 construido como herramienta no ejecutada. Detalle: `docs/subfases/o02-lote7-saneamiento.md`.
 
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
