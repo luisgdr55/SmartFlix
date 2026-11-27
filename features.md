@@ -670,7 +670,7 @@ El servicio es agnóstico al almacenamiento de sesión: el cliente persiste en R
 | 1 | `checkout_service.py`: cálculo períodos/mora/manifest/totales + helper de fecha único que unifica las 3 rutas | `services/checkout_service.py` (nuevo), `subscription.py`, `renovar.py`, `requirements.txt` | 🛠 Servicios construidos en rama (O02 Lote 1, sin llamadores); el reemplazo de las 3 rutas de fecha llega con el flag (Lotes 3-4) |
 | 2 | Migración BD: tabla `checkout_orders` (SQL manual en Supabase) | `supabase_schema.sql` + Supabase | 🛠 Migración escrita y probada en base local (O02 Lote 2); **sin ejecutar en Supabase** |
 | 3 | Motor de aprobación: procesa manifest atómicamente (N períodos / nueva / cambio) | `admin.py`, `profiles.py` | 🛠 Motor construido en rama (O02 Lote 3: `database/orders.py`, `checkout_service.approve`); sin conectar a handlers (Lotes 4-5); requiere la migración del Lote 2 |
-| 4 | UI cliente: multi-select de perfiles + selector de períodos + total en vivo | `subscription.py`, `keyboards.py` | 📋 Pendiente |
+| 4 | UI cliente: multi-select de perfiles + selector de períodos + total en vivo | `subscription.py`, `keyboards.py` | 🛠 Construido en rama como O02 Lote 4 (órdenes, comprobante, OCR como señales; **sin selector de periodos**), detrás de `CHECKOUT_V2_ENABLED=false` |
 | 5 | Paridad `/renovar`: reconectar al `checkout_service` + motor | `renovar.py` | 📋 Pendiente |
 | 6 | Scheduler: desactivar corte automático (PART 2), suspender recordatorios tras D+6 | `scheduler/jobs.py`, `subscriptions.py` | 📋 Pendiente |
 | 7 | Docs: `estado_actual.md` + cierre de Fase 8 en `features.md` | — | 📋 Pendiente |

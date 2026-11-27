@@ -147,6 +147,11 @@ Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto 
 - La migración **la ejecuta el Orquestador** antes de desplegar código que use las órdenes; aún no se ha confirmado su ejecución.
 - Lote 3 (motor) construido sin cablear a handlers: no se usa el candado Redis al aprobar (la fila bloqueada en SQL es la garantía) y `cancel_subscription`/`delete_subscription` no se tocan hasta el Lote 5. Detalle en `docs/subfases/o02-lote3-motor.md`.
 
+## Veredicto del Orquestador sobre el Lote 3 (27/11/2026): APROBADO — se aplican las recomendaciones de `docs/subfases/o02-lote3-motor.md`
+- `void_subscription` y el borrado «solo sin periodos» se conectan en el **Lote 5**, junto a la pantalla de anomalías.
+- Reactivar una `cancelled`: **sigue abierta**.
+- Lote 4 construido detrás de `CHECKOUT_V2_ENABLED=false` (por defecto). El flag **no se enciende** hasta ejecutar la migración del Lote 2 y construir el Lote 5. Detalle y preguntas abiertas (selector de periodos, prioridad sobre Hogar): `docs/subfases/o02-lote4-cliente-bot.md`.
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
