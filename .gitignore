@@ -30,3 +30,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# O02 Lote 7: propuestas de saneamiento (contienen UUID)
+saneamiento*.json
+*.deshacer.json
