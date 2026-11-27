@@ -108,9 +108,8 @@
         </div>
         <div>
           <label class="form-label">Contraseña del cupo adicional</label>
-          <input type="text" name="extra_password"
-            value="{{ profile.get('extra_password','') if profile else '' }}"
-            placeholder="Contraseña asignada al cupo"
+          <input type="text" name="extra_password" autocomplete="off"
+            placeholder="{% if profile %}Dejar vacío para conservar · «-» para borrarla{% else %}Contraseña asignada al cupo{% endif %}"
             class="form-input font-mono" />
         </div>
       </div>
@@ -118,10 +117,10 @@
       <!-- PIN (solo si NO es cupo adicional) -->
       <div x-show="!isExtraMember">
         <label class="form-label">PIN</label>
-        <input type="text" name="pin"
-          value="{{ profile.get('pin','') if profile else '' }}"
-          placeholder="Ej: 1234 (dejar vacío si no tiene)"
+        <input type="text" name="pin" autocomplete="off"
+          placeholder="{% if profile %}Dejar vacío para conservar · «-» para borrarlo{% else %}Ej: 1234 (dejar vacío si no tiene){% endif %}"
           class="form-input font-mono" maxlength="6" />
+        {% if profile %}<p class="text-xs text-slate-500 mt-1">Por seguridad no se muestra el PIN actual (puedes verlo con «Mostrar» en la lista de perfiles).</p>{% endif %}
       </div>
 
       <div class="grid grid-cols-2 gap-4">

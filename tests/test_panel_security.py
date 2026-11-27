@@ -7,9 +7,12 @@ una base falsa y un almacén en memoria.
 from tests import support  # noqa: F401  (fija las variables de entorno de prueba primero)
 
 import hashlib
+import re
 import unittest
 from contextlib import ExitStack
 from unittest import mock
+
+from types import SimpleNamespace
 
 from tests.support import (
     HOSTILE, PANEL_PASSWORD, WEBHOOK_SECRET, FakeSupabase, attribute_names, fake_request,
@@ -63,6 +66,25 @@ class ConfigTests(unittest.TestCase):
                 self._settings(ADMIN_PANEL_PASSWORD=marker)
         self.assertNotIn(marker, str(ctx.exception))
 
+    def test_default_check_ignores_case_and_surrounding_spaces(self):
+        import config
+        marker = "Public-Default-For-Test"
+        digest = hashlib.sha256(marker.lower().encode()).hexdigest()
+        with mock.patch.object(config, "_PUBLIC_DEFAULT_DIGESTS", frozenset({digest})):
+            for variant in (marker, marker.upper(), f"  {marker}  ", marker.lower()):
+                self.assertTrue(config.is_public_default(variant), repr(variant))
+            self.assertFalse(config.is_public_default(marker + "x"))
+
+    def test_webhook_secret_must_be_a_valid_telegram_secret_token(self):
+        from pydantic import ValidationError
+        self.assertEqual(self._settings(WEBHOOK_SECRET="abc_DEF-123").WEBHOOK_SECRET, "abc_DEF-123")
+        for bad in ("con espacio", "ñandú-secreto", "a.b", "x" * 257):
+            with self.assertRaises(ValidationError, msg=bad):
+                self._settings(WEBHOOK_SECRET=bad)
+
+    def test_proxy_hops_default_is_one(self):
+        self.assertEqual(self._settings().TRUSTED_PROXY_HOPS, 1)
+
     def test_source_no_longer_contains_default_secret_values(self):
         import pathlib
         root = pathlib.Path(__file__).resolve().parent.parent
@@ -107,21 +129,43 @@ class ThrottleTests(unittest.TestCase):
         self.t = [1000.0]
         self.th = sec.LoginThrottle(sec._MemoryStore(clock=lambda: self.t[0]))
 
+    def fail(self, ip):
+        """Un intento fallido completo, como en `login_post`: contar, verificar (mal), registrar."""
+        allowed, wait = self.th.begin_attempt(ip)
+        return self.th.register_failure(ip) if allowed else wait
+
     def test_locks_after_five_failures_and_unlocks_later(self):
         for _ in range(4):
-            self.assertEqual(self.th.register_failure("1.1.1.1"), 0)
+            self.assertEqual(self.fail("1.1.1.1"), 0)
         self.assertEqual(self.th.seconds_locked("1.1.1.1"), 0)
-        self.assertEqual(self.th.register_failure("1.1.1.1"), self.sec.LOGIN_BASE_LOCK_S)
+        self.assertEqual(self.fail("1.1.1.1"), self.sec.LOGIN_BASE_LOCK_S)
         self.assertGreater(self.th.seconds_locked("1.1.1.1"), 0)
+        self.assertFalse(self.th.begin_attempt("1.1.1.1")[0])          # ni siquiera se verifica la clave
         self.t[0] += self.sec.LOGIN_BASE_LOCK_S + 1
         self.assertEqual(self.th.seconds_locked("1.1.1.1"), 0)
+        self.assertTrue(self.th.begin_attempt("1.1.1.1")[0])
+
+    def test_burst_of_concurrent_attempts_cannot_test_more_than_the_limit(self):
+        """Antes se contaba DESPUÉS de verificar: N peticiones simultáneas evaluaban N claves."""
+        results = [self.th.begin_attempt("8.8.8.8") for _ in range(25)]   # nadie ha registrado un fallo aún
+        self.assertEqual(sum(1 for ok, _ in results if ok), self.sec.LOGIN_MAX_FAILS)
+        self.assertTrue(all(wait > 0 for ok, wait in results if not ok))
+        self.assertGreater(self.th.seconds_locked("8.8.8.8"), 0)
+
+    def test_fifth_attempt_with_the_right_password_still_gets_in(self):
+        for _ in range(4):
+            self.fail("2.0.0.2")
+        allowed, _ = self.th.begin_attempt("2.0.0.2")          # quinto intento
+        self.assertTrue(allowed)
+        self.th.register_success("2.0.0.2")
+        self.assertTrue(self.th.begin_attempt("2.0.0.2")[0])
 
     def test_lock_doubles_on_repeat_offence_and_is_capped(self):
         sec = self.sec
         expected = sec.LOGIN_BASE_LOCK_S
         for strike in range(1, 9):
             for _ in range(sec.LOGIN_MAX_FAILS):
-                lock = self.th.register_failure("2.2.2.2")
+                lock = self.fail("2.2.2.2")
             self.assertEqual(lock, min(expected, sec.LOGIN_MAX_LOCK_S), f"reincidencia {strike}")
             expected *= 2
             self.t[0] += lock + 1
@@ -129,26 +173,27 @@ class ThrottleTests(unittest.TestCase):
 
     def test_success_clears_the_failure_counter(self):
         for _ in range(4):
-            self.th.register_failure("3.3.3.3")
+            self.fail("3.3.3.3")
         self.th.register_success("3.3.3.3")
-        self.assertEqual(self.th.register_failure("3.3.3.3"), 0)
+        self.assertEqual(self.fail("3.3.3.3"), 0)
 
     def test_ips_are_independent(self):
         for _ in range(5):
-            self.th.register_failure("4.4.4.4")
+            self.fail("4.4.4.4")
         self.assertEqual(self.th.seconds_locked("5.5.5.5"), 0)
+        self.assertTrue(self.th.begin_attempt("5.5.5.5")[0])
 
     def test_global_delay_kicks_in_under_distributed_attack(self):
         self.assertEqual(self.th.global_delay(), 0.0)
         for i in range(self.sec.GLOBAL_SLOWDOWN_FAILS):
-            self.th.register_failure(f"10.0.0.{i}")
+            self.fail(f"10.0.0.{i}")
         self.assertGreater(self.th.global_delay(), 0.0)
 
     def test_failure_window_expires(self):
         for _ in range(4):
-            self.th.register_failure("6.6.6.6")
+            self.fail("6.6.6.6")
         self.t[0] += self.sec.LOGIN_WINDOW_S + 1
-        self.assertEqual(self.th.register_failure("6.6.6.6"), 0)  # empieza de cero
+        self.assertEqual(self.fail("6.6.6.6"), 0)  # empieza de cero
 
     def test_falls_back_to_memory_when_redis_is_down(self):
         sec = self.sec
@@ -161,15 +206,38 @@ class ThrottleTests(unittest.TestCase):
 
         th = sec.LoginThrottle(sec._FallbackStore(Broken(), sec._MemoryStore(clock=lambda: self.t[0])))
         for _ in range(5):
-            th.register_failure("7.7.7.7")
+            ok, _w = th.begin_attempt("7.7.7.7")
+            if ok:
+                th.register_failure("7.7.7.7")
         self.assertGreater(th.seconds_locked("7.7.7.7"), 0)   # sigue limitando sin Redis
 
-    def test_client_ip_uses_last_forwarded_entry(self):
+    def test_redis_counters_always_get_a_ttl(self):
+        """INCR + EXPIRE separados dejaban un contador eterno si fallaba el segundo paso."""
+        calls = []
+
+        class R:
+            def set(self, key, val, ex=None, nx=False):
+                calls.append(("set", key, ex, nx))
+
+            def incr(self, key):
+                calls.append(("incr", key))
+                return 1
+
+        self.sec._RedisStore(R()).incr("k", 60)
+        self.assertEqual(calls[0], ("set", "k", 60, True))   # nace con TTL
+        self.assertEqual(calls[1], ("incr", "k"))
+
+    def test_client_ip_uses_the_trusted_hop_from_the_end(self):
         from types import SimpleNamespace
+        sec = self.sec
         req = SimpleNamespace(headers={"x-forwarded-for": "6.6.6.6, 9.9.9.9"}, client=SimpleNamespace(host="127.0.0.1"))
-        self.assertEqual(self.sec.client_ip(req), "9.9.9.9")   # lo que añade el proxy, no lo que fija el cliente
+        self.assertEqual(sec.client_ip(req), "9.9.9.9")        # 1 proxy: lo que añadió Railway
+        with mock.patch.object(sec, "trusted_proxy_hops", return_value=2):
+            self.assertEqual(sec.client_ip(req), "6.6.6.6")    # 2 proxies (p. ej. un CDN delante)
+        with mock.patch.object(sec, "trusted_proxy_hops", return_value=5):
+            self.assertEqual(sec.client_ip(req), "6.6.6.6")    # cabecera más corta que los saltos
         req2 = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
-        self.assertEqual(self.sec.client_ip(req2), "127.0.0.1")
+        self.assertEqual(sec.client_ip(req2), "127.0.0.1")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -240,6 +308,34 @@ class PanelHttpTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertNotIn("sv_admin_session", r.headers.get("set-cookie", ""))
 
+    def test_burst_after_global_slowdown_still_respects_the_limit(self):
+        """Con la demora global activa, N peticiones simultáneas no pueden probar N claves."""
+        import asyncio
+        from admin_panel import security as sec
+        verified = []
+        from admin_panel import router as r
+        real_verify = r.verify_password
+        r.verify_password = lambda pw: (verified.append(pw), False)[1]
+        self.addCleanup(lambda: setattr(r, "verify_password", real_verify))
+        for i in range(sec.GLOBAL_SLOWDOWN_FAILS):                       # activa la demora global
+            sec.get_throttle().register_failure(f"10.1.0.{i}")
+        self.assertGreater(sec.get_throttle().global_delay(), 0)
+        with mock.patch.object(sec, "GLOBAL_SLOWDOWN_S", 0.05):
+            page = self.client.get("/panel/login")
+            token = login_csrf_from(page.text)
+
+            async def burst():
+                import httpx
+                transport = httpx.ASGITransport(app=self.main.app)
+                async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as ac:
+                    ac.cookies.set("sv_login_csrf", token, path="/panel/login")
+                    return await asyncio.gather(*[
+                        ac.post("/panel/login", data={"password": f"mal{i}", "csrf_token": token}) for i in range(30)
+                    ])
+            responses = asyncio.run(burst())
+        self.assertLessEqual(len(verified), sec.LOGIN_MAX_FAILS)
+        self.assertGreaterEqual(sum(1 for x in responses if x.status_code == 429), 25 - 5)
+
     def test_lockout_after_repeated_failures_even_with_right_password(self):
         for _ in range(5):
             self.login("mal")
@@ -269,6 +365,20 @@ class PanelHttpTests(unittest.TestCase):
         r = self.client.post("/panel/api/rate/fetch", headers={"accept": "application/json"})
         self.assertEqual(r.status_code, 403)
         self.assertFalse(r.json()["success"])
+
+    def test_non_ascii_csrf_token_is_rejected_cleanly_not_a_500(self):
+        """compare_digest con str no ASCII lanzaba TypeError y daba HTTP 500."""
+        self.login()
+        r1 = self.client.post("/panel/logout", headers={"X-CSRF-Token": "é".encode("latin-1")})
+        r2 = self.client.post("/panel/logout", data={"csrf_token": "é"})
+        self.assertEqual((r1.status_code, r2.status_code), (403, 403))
+        # y sin sesión (cliente nuevo), también en el login
+        fresh = self.TestClient(self.main.app, base_url="https://testserver", follow_redirects=False)
+        page = fresh.get("/panel/login")
+        r3 = fresh.post("/panel/login", data={"password": PANEL_PASSWORD, "csrf_token": "é"})
+        self.assertEqual(r3.status_code, 400)
+        r4 = fresh.post("/panel/accounts/new", data={"csrf_token": "é", "platform_id": "x", "email": "a", "password": "b"})
+        self.assertEqual(r4.status_code, 403)
 
     def test_token_from_another_session_is_rejected(self):
         self.login()
@@ -380,6 +490,97 @@ class PanelHttpTests(unittest.TestCase):
         self.assertEqual(audit.await_args.args[1], "panel:reveal_credentials")
 
 
+class ProfileSecretsTests(unittest.TestCase):
+    """PIN y contraseña del cupo: no van en el HTML y editar sin escribirlos los conserva."""
+
+    @classmethod
+    def setUpClass(cls):
+        from starlette.testclient import TestClient
+        import main
+        cls.main, cls.TestClient = main, TestClient
+
+    def setUp(self):
+        from admin_panel import security as sec
+        sec._throttle = sec.LoginThrottle(sec._MemoryStore())
+        self.client = self.TestClient(self.main.app, base_url="https://testserver", follow_redirects=False)
+        page = self.client.get("/panel/login")
+        self.client.post("/panel/login", data={"password": PANEL_PASSWORD, "csrf_token": login_csrf_from(page.text)})
+        from admin_panel.security import csrf_token_for
+        self.csrf = csrf_token_for(self.client.cookies.get("sv_admin_session"))
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+
+    def recording_db(self):
+        updates = []
+
+        class Q:
+            def __init__(self, name):
+                self.name = name
+
+            def update(self, data):
+                updates.append((self.name, dict(data)))
+                return self
+
+            def __getattr__(self, n):
+                return lambda *a, **k: self
+
+            def execute(self):
+                return SimpleNamespace(data=[], count=0)
+
+        class SB:
+            def table(self, name):
+                return Q(name)
+
+        for p in patch_database(SB()):
+            self.stack.enter_context(p)
+        return updates
+
+    def post_edit(self, **form):
+        data = {"platform_id": "p", "profile_name": "Perfil", "csrf_token": self.csrf}
+        data.update(form)
+        return self.client.post("/panel/profiles/00000000-0000-0000-0000-000000000001/edit", data=data)
+
+    def test_blank_pin_and_password_are_kept_not_erased(self):
+        updates = self.recording_db()
+        self.assertEqual(self.post_edit(pin="", extra_password="").status_code, 302)
+        data = [u for t, u in updates if t == "profiles"][0]
+        self.assertNotIn("pin", data)
+        self.assertNotIn("extra_password", data)
+
+    def test_new_values_are_saved_and_dash_clears(self):
+        updates = self.recording_db()
+        self.post_edit(pin="4321", extra_password="-")
+        data = [u for t, u in updates if t == "profiles"][0]
+        self.assertEqual(data["pin"], "4321")
+        self.assertIsNone(data["extra_password"])
+
+    def test_profile_credentials_endpoint(self):
+        row = {"id": "1", "pin": "4321", "is_extra_member": True, "extra_email": "x@ejemplo.test", "extra_password": "pw-cupo"}
+        for p in patch_database(FakeSupabase(data=[row])):
+            self.stack.enter_context(p)
+        audit = self.stack.enter_context(mock.patch("database.users.log_admin_action", new=mock.AsyncMock(return_value=True)))
+        url = "/panel/profiles/00000000-0000-0000-0000-000000000001/credentials"
+        self.assertEqual(self.client.post(url).status_code, 403)                      # sin CSRF
+        r = self.client.post(url, headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual((r.json()["pin"], r.json()["extra_password"]), ("4321", "pw-cupo"))
+        audit.assert_awaited_once()
+        bad = self.client.post("/panel/profiles/no-uuid/credentials", headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(bad.status_code, 404)
+
+    def test_failed_audit_is_logged_loudly_but_does_not_block(self):
+        row = {"id": "1", "platforms": {}, "profiles": {"pin": "1", "accounts": {"email": "e", "password": "p"}}}
+        for p in patch_database(FakeSupabase(data=[row])):
+            self.stack.enter_context(p)
+        self.stack.enter_context(mock.patch("database.users.log_admin_action", new=mock.AsyncMock(return_value=False)))
+        logging_ = self.stack.enter_context(mock.patch("admin_panel.router.logger"))
+        r = self.client.post("/panel/subscriptions/00000000-0000-0000-0000-0000000000aa/credentials",
+                             headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any("AUDITORÍA NO REGISTRADA" in str(c) for c in logging_.error.call_args_list))
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Plantillas con datos hostiles y sin credenciales incrustadas
 # ═════════════════════════════════════════════════════════════════════════════
@@ -480,6 +681,53 @@ class TemplateTests(unittest.TestCase):
                            form_title="Editar Cuenta")
         self.assertNotIn("CLAVE-SECRETA-123", html)
         self.assertIn("Dejar vacío para conservar", html)
+
+    def test_profiles_list_does_not_embed_pins(self):
+        prof = {"id": "00000000-0000-0000-0000-0000000000f1", "profile_name": "P", "pin": "PIN-MARCA-7391", "profile_type": "monthly",
+                "status": "available", "is_extra_member": False, "accounts": {"email": "a@ejemplo.test"}}
+        html = self.render("profiles.html", profiles=prof and [prof], platforms=[], total=1)
+        self.assertNotIn("PIN-MARCA-7391", html)
+        self.assertIn('data-id="00000000-0000-0000-0000-0000000000f1"', html)
+        self.assertIn("pinReveal()", html)
+
+    def test_profile_edit_form_does_not_prefill_secrets(self):
+        prof = {"id": "p1", "profile_name": "P", "pin": "PIN-MARCA-7391", "extra_password": "CLAVE-CUPO-123",
+                "extra_email": "x@ejemplo.test", "is_extra_member": True, "platform_id": "p", "profile_type": "monthly",
+                "status": "available", "account_id": "a"}
+        html = self.render("profile_form.html", profile=prof, platforms=[], accounts=[], form_action="/panel/profiles/p1/edit",
+                           form_title="Editar Perfil")
+        self.assertNotIn("PIN-MARCA-7391", html)
+        self.assertNotIn("CLAVE-CUPO-123", html)
+
+    def test_alpine_methods_never_read_dataset_from_this_el(self):
+        """Dentro de un método de x-data, `this.$el` es el elemento que dispara el evento (p. ej. el
+        botón), no la raíz del componente: así se pedía /profiles/undefined/credentials. Los datos
+        de la raíz se copian en init()."""
+        import glob
+        import os
+        tdir = os.path.join(os.path.dirname(support.__file__), "..", "admin_panel", "templates")
+        for path in glob.glob(os.path.join(tdir, "*.html")):
+            with open(path, encoding="utf8") as fh:
+                src = fh.read()
+            for m in re.finditer(r"this\.\$el\.dataset", src):
+                line = src[:m.start()].count("\n") + 1
+                names = re.findall(r"(\w+)\s*\([^)]*\)\s*\{", src[:m.start()])   # método que lo contiene
+                self.assertEqual(names[-1] if names else None, "init",
+                                 f"{os.path.basename(path)}:{line} usa this.$el.dataset fuera de init()")
+
+    def test_fetch_patch_does_not_send_the_token_to_protocol_relative_urls(self):
+        html = self.render("base.html")
+        self.assertIn("url.charAt(1) !== '/'", html)
+
+    def test_dashboard_buttons_do_not_interpolate_ids_into_javascript(self):
+        import pathlib
+        src = (pathlib.Path(support.__file__).resolve().parent.parent / "admin_panel" / "templates" / "dashboard.html").read_text(encoding="utf8")
+        self.assertNotRegex(src, r"fetch\('/panel/subscriptions/\{\{")
+
+    def test_list_queries_no_longer_select_account_passwords(self):
+        import pathlib
+        src = (pathlib.Path(support.__file__).resolve().parent.parent / "admin_panel" / "router.py").read_text(encoding="utf8")
+        self.assertEqual(src.count("accounts(email, password)"), 1)       # solo el endpoint bajo demanda
 
     def test_every_post_form_carries_a_csrf_field(self):
         import glob

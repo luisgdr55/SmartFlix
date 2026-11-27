@@ -20,7 +20,7 @@ from admin_panel.auth import (
 )
 from admin_panel.security import (
     LOGIN_CSRF_COOKIE, apply_global_delay, client_ip, cookie_secure, csrf_protect,
-    get_throttle, login_csrf_ok, new_login_csrf,
+    get_throttle, in_thread, login_csrf_ok, new_login_csrf,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,17 @@ def _parse_page(request: Request) -> tuple[int, Optional[str]]:
 _FILTER_CHARS = re.compile(r'[,()*%"\\]')
 
 
+_KEEP = object()
+
+
+def _secret_field(raw: str):
+    """Campo secreto que el formulario ya no muestra: vacío = conservar, «-» = borrar."""
+    v = (raw or "").strip()
+    if v == "":
+        return _KEEP
+    return None if v == "-" else v
+
+
 def _clean_search(raw: str) -> str:
     """Quita los caracteres que rompen el filtro `or_` de PostgREST."""
     return _FILTER_CHARS.sub(" ", raw or "").strip()[:80]
@@ -140,9 +151,10 @@ async def _audit(request: Request, action: str, detail: dict) -> None:
     logger.info("AUDIT panel %s %s", action, info)
     try:
         from database.users import log_admin_action
-        await log_admin_action(0, f"panel:{action}", info)
-    except Exception as e:  # el registro nunca debe romper la acción
-        logger.error("No se pudo registrar la auditoría: %s", e)
+        if not await log_admin_action(0, f"panel:{action}", info):
+            logger.error("AUDITORÍA NO REGISTRADA en admin_log: %s %s", action, info)
+    except Exception as e:  # el registro no rompe la acción (decisión del Orquestador pendiente)
+        logger.error("AUDITORÍA NO REGISTRADA (%s): %s %s", type(e).__name__, action, info)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,37 +186,37 @@ async def login_get(request: Request):
     return _login_page(request, None)
 
 
+def _locked_message(seconds: int) -> str:
+    minutes = max(1, math.ceil(seconds / 60))
+    return (f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
+            "Si no recuerdas la clave, quien administra el servidor puede cambiarla.")
+
+
 @panel_router.post("/login", response_class=HTMLResponse)
 async def login_post(request: Request, password: str = Form(...), csrf_token: str = Form(default="")):
-    throttle = get_throttle()
-    ip = client_ip(request)
-
-    locked = throttle.seconds_locked(ip)
-    if locked:
-        minutes = max(1, math.ceil(locked / 60))
-        return _login_page(
-            request,
-            f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
-            "Si no recuerdas la clave, quien administra el servidor puede cambiarla.",
-            status_code=429, retry_after=locked,
-        )
     if not login_csrf_ok(request, csrf_token):
         return _login_page(request, "La página de acceso venció. Vuelve a escribir la contraseña.", status_code=400)
 
+    throttle = get_throttle()
+    ip = client_ip(request)
+
+    # El intento se cuenta ANTES de verificar la clave: una ráfaga concurrente no puede
+    # evaluar más de LOGIN_MAX_FAILS contraseñas.
+    allowed, wait = await in_thread(throttle.begin_attempt, ip)
+    if not allowed:
+        return _login_page(request, _locked_message(wait), status_code=429, retry_after=wait)
+
     await apply_global_delay(throttle)
     if verify_password(password):
-        throttle.register_success(ip)
+        await in_thread(throttle.register_success, ip)
         response = RedirectResponse(url="/panel/dashboard", status_code=302)
         create_session(response)
         response.delete_cookie(LOGIN_CSRF_COOKIE, path="/panel/login")
         return response
 
-    lock = throttle.register_failure(ip)
+    lock = await in_thread(throttle.register_failure, ip)
     if lock:
-        minutes = max(1, math.ceil(lock / 60))
-        msg = (f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
-               "Si no recuerdas la clave, quien administra el servidor puede cambiarla.")
-        return _login_page(request, msg, status_code=429, retry_after=lock)
+        return _login_page(request, _locked_message(lock), status_code=429, retry_after=lock)
     return _login_page(request, "Contraseña incorrecta. Intenta de nuevo.", status_code=401)
 
 
@@ -724,13 +736,15 @@ async def profile_edit_save(
         update_data = {
             "platform_id": platform_id,
             "profile_name": profile_name,
-            "pin": pin or None,
             "profile_type": profile_type,
             "status": status,
             "is_extra_member": extra,
             "extra_email": extra_email or None,
-            "extra_password": extra_password or None,
         }
+        for column, raw in (("pin", pin), ("extra_password", extra_password)):
+            value = _secret_field(raw)
+            if value is not _KEEP:
+                update_data[column] = value
         if account_id:
             update_data["account_id"] = account_id
         sb.table("profiles").update(update_data).eq("id", profile_id).execute()
@@ -843,7 +857,7 @@ async def user_detail(request: Request, user_id: str):
         from database.subscriptions import auto_expire_overdue_subscriptions
         await auto_expire_overdue_subscriptions(user_id=user_id)
         subs_res = sb.table("subscriptions").select(
-            "*, platforms(name, icon_emoji), profiles(profile_name, pin, accounts(email, password))"
+            "*, platforms(name, icon_emoji), profiles(profile_name, accounts(email))"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
         subscriptions = subs_res.data or []
         platforms = await get_active_platforms()
@@ -1058,7 +1072,7 @@ async def subscriptions_list(request: Request):
         offset = (page - 1) * per_page
 
         query = sb.table("subscriptions").select(
-            "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, pin, accounts(email, password))"
+            "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, accounts(email))"
         )
         if status_filter:
             query = query.eq("status", status_filter)
@@ -1348,6 +1362,38 @@ async def subscription_delete(request: Request, sub_id: str):
         logger.error(f"subscription_delete error for sub_id={sub_id}: {e}")
         redirect_err = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
         return _error_redirect(f"{redirect_err}", e)
+
+
+@panel_router.post("/profiles/{profile_id}/credentials")
+async def profile_credentials(request: Request, profile_id: str):
+    """PIN y datos del cupo adicional de un perfil, solo bajo demanda y con auditoría."""
+    if not verify_session(request):
+        return JSONResponse({"ok": False, "error": "Sesión vencida. Vuelve a iniciar sesión."}, status_code=401)
+    try:
+        uuid.UUID(profile_id)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Identificador no válido."}, status_code=404)
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+        res = (
+            sb.table("profiles")
+            .select("id, pin, is_extra_member, extra_email, extra_password")
+            .eq("id", profile_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return JSONResponse({"ok": False, "error": "Perfil no encontrado."}, status_code=404)
+        row = res.data[0]
+        await _audit(request, "reveal_profile_credentials", {"profile_id": profile_id})
+        return JSONResponse(
+            {"ok": True, "pin": row.get("pin") or "—", "is_extra_member": bool(row.get("is_extra_member")),
+             "extra_email": row.get("extra_email") or "—", "extra_password": row.get("extra_password") or "—"},
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": _public_error(e)}, status_code=500)
 
 
 @panel_router.post("/subscriptions/{sub_id}/credentials")

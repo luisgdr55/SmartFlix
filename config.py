@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
@@ -17,7 +18,16 @@ _REQUIRED_SECRETS = ("WEBHOOK_SECRET", "SECRET_KEY", "ADMIN_PANEL_PASSWORD")
 
 
 def is_public_default(value: str) -> bool:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() in _PUBLIC_DEFAULT_DIGESTS
+    """Compara la huella del valor tal cual y normalizado (sin espacios ni mayúsculas)."""
+    for candidate in (value, value.strip(), value.strip().lower()):
+        if hashlib.sha256(candidate.encode("utf-8")).hexdigest() in _PUBLIC_DEFAULT_DIGESTS:
+            return True
+    return False
+
+
+# Telegram solo admite estos caracteres (1 a 256) en el `secret_token` del webhook.
+_WEBHOOK_SECRET_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
+MIN_RECOMMENDED_SECRET_LEN = 16
 
 
 class Settings(BaseSettings):
@@ -41,6 +51,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str
     ADMIN_PANEL_PASSWORD: str
+    # Proxies de confianza delante de la app (Railway = 1): decide qué entrada de
+    # X-Forwarded-For es la IP real del cliente para el límite de intentos de login.
+    TRUSTED_PROXY_HOPS: int = 1
 
     @field_validator(*_REQUIRED_SECRETS)
     @classmethod
@@ -50,6 +63,13 @@ class Settings(BaseSettings):
             raise ValueError("no puede estar vacío")
         if is_public_default(v):
             raise ValueError("es un valor por defecto público; define uno propio")
+        return v
+
+    @field_validator("WEBHOOK_SECRET")
+    @classmethod
+    def _webhook_secret_format(cls, v: str) -> str:
+        if not _WEBHOOK_SECRET_RE.fullmatch(v):
+            raise ValueError("solo admite letras, números, «_» y «-» (1 a 256 caracteres): Telegram rechaza otros")
         return v
 
     class Config:

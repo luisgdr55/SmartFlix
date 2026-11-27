@@ -589,6 +589,11 @@ async def lifespan(app: FastAPI):
     global _telegram_app
 
     logger.info("Starting SmartFlixVE Bot...")
+    from config import MIN_RECOMMENDED_SECRET_LEN
+    for _name in ("WEBHOOK_SECRET", "SECRET_KEY", "ADMIN_PANEL_PASSWORD"):
+        if len(getattr(settings, _name)) < MIN_RECOMMENDED_SECRET_LEN:
+            logger.warning("%s tiene menos de %s caracteres; se recomienda al menos 32 (no se muestra su valor)",
+                           _name, MIN_RECOMMENDED_SECRET_LEN)
 
     # Build telegram application
     _telegram_app = build_telegram_app()

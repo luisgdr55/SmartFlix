@@ -155,9 +155,13 @@
                 editing: false,
                 profiles: [],
                 profileId: '',
-                init() { this.profileId = this.$el.dataset.profileId || ''; },
+                platformId: '',
+                init() {   // $el en init() es la raíz; dentro de un método sería el botón que lo invoca
+                  this.profileId = this.$el.dataset.profileId || '';
+                  this.platformId = this.$el.dataset.platformId || '';
+                },
                 loadProfiles() {
-                  fetch('/panel/api/profiles/available/' + encodeURIComponent(this.$el.dataset.platformId))
+                  fetch('/panel/api/profiles/available/' + encodeURIComponent(this.platformId))
                     .then(r => r.json())
                     .then(d => { this.profiles = d.profiles || []; });
                 }

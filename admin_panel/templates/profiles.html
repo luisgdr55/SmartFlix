@@ -83,7 +83,14 @@
               {% if p.get('is_extra_member') %}
                 <span class="text-xs text-amber-400">{{ p.get('extra_email') or '—' }}</span>
               {% else %}
-                {{ p.get('pin') or '—' }}
+                {% if p.get('pin') %}
+                <span x-data="pinReveal()" data-id="{{ p['id'] }}" class="inline-flex items-center gap-2">
+                  <span x-text="loading ? '…' : (pin === null ? '••••' : pin)"></span>
+                  <button type="button" x-show="pin === null" @click="show()" :disabled="loading"
+                          class="text-xs underline" aria-label="Mostrar PIN">Mostrar</button>
+                  <span x-show="error" x-text="error" class="text-xs" style="color:#991B1B;"></span>
+                </span>
+                {% else %}—{% endif %}
               {% endif %}
             </td>
             <td class="table-cell">
@@ -163,4 +170,28 @@
   </div>
 
 </div>
+<script>
+// El PIN no viaja en el HTML: se pide al servidor al pulsar «Mostrar» (queda registrado).
+function pinReveal() {
+  return {
+    pin: null, loading: false, error: '', id: '',
+    init() { this.id = this.$el.dataset.id; },   // $el en init() es la raíz; en un método sería el botón
+    async show() {
+      if (this.loading) return;
+      this.loading = true; this.error = '';
+      try {
+        const r = await fetch('/panel/profiles/' + encodeURIComponent(this.id) + '/credentials', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo cargar el PIN.');
+        this.pin = d.pin;
+      } catch (e) {
+        this.error = (e && e.message) || 'No se pudo cargar el PIN. Intenta de nuevo.';
+      } finally {
+        this.loading = false;
+      }
+    }
+  }
+}
+</script>
+
 {% endblock %}

@@ -58,13 +58,26 @@ def cookie_secure() -> bool:
         return False
 
 
+def trusted_proxy_hops() -> int:
+    try:
+        from config import settings
+        return max(1, int(settings.TRUSTED_PROXY_HOPS))
+    except Exception:
+        return 1
+
+
 def client_ip(request: Request) -> str:
-    """IP del cliente. Railway añade la IP real al final de ``X-Forwarded-For``;
-    se usa la última entrada porque las anteriores las puede fijar el cliente."""
+    """IP del cliente detrás de los proxies de confianza.
+
+    Cada proxy añade al final de ``X-Forwarded-For`` la IP de quien le habló; las
+    entradas anteriores las puede fijar el cliente. Con N proxies de confianza
+    (``TRUSTED_PROXY_HOPS``, por defecto 1: Railway) la IP real es la N-ésima desde el final.
+    """
     xff = request.headers.get("x-forwarded-for", "")
     parts = [p.strip() for p in xff.split(",") if p.strip()]
     if parts:
-        return parts[-1][:64]
+        hops = trusted_proxy_hops()
+        return (parts[-hops] if len(parts) >= hops else parts[0])[:64]
     return (request.client.host if request.client else "desconocida")[:64]
 
 
@@ -74,6 +87,12 @@ def client_ip(request: Request) -> str:
 
 class CSRFError(Exception):
     """El token CSRF falta o no coincide."""
+
+
+def _safe_equal(a: str, b: str) -> bool:
+    """Comparación en tiempo constante sobre bytes: ``compare_digest`` lanza TypeError
+    con ``str`` no ASCII y eso daba un 500 en la ruta de rechazo."""
+    return hmac.compare_digest(a.encode("utf-8", "surrogatepass"), b.encode("utf-8", "surrogatepass"))
 
 
 def csrf_token_for(session_cookie: str) -> str:
@@ -101,7 +120,7 @@ async def csrf_protect(request: Request) -> None:
             token = form.get("csrf_token")
         except Exception:
             token = None
-    if not token or not hmac.compare_digest(str(token), request.state.csrf_token):
+    if not token or not _safe_equal(str(token), request.state.csrf_token):
         logger.warning("CSRF rechazado: %s %s", request.method, request.url.path)
         raise CSRFError()
 
@@ -112,7 +131,7 @@ def new_login_csrf() -> str:
 
 def login_csrf_ok(request: Request, form_token: Optional[str]) -> bool:
     cookie = request.cookies.get(LOGIN_CSRF_COOKIE, "")
-    return bool(cookie and form_token) and hmac.compare_digest(cookie, str(form_token))
+    return bool(cookie and form_token) and _safe_equal(cookie, str(form_token))
 
 
 def _wants_json(request: Request) -> bool:
@@ -226,10 +245,10 @@ class _RedisStore:
         self._r = client
 
     def incr(self, key: str, ttl: int) -> int:
-        n = int(self._r.incr(key))
-        if n == 1:
-            self._r.expire(key, ttl)
-        return n
+        # La clave nace siempre con TTL (SET NX EX); INCR lo conserva. Así un fallo entre
+        # dos llamadas no deja un contador eterno.
+        self._r.set(key, 0, ex=ttl, nx=True)
+        return int(self._r.incr(key))
 
     def ttl(self, key: str) -> int:
         t = int(self._r.ttl(key))
@@ -272,7 +291,11 @@ class _FallbackStore:
 
 
 class LoginThrottle:
-    """Bloqueo progresivo por IP: 5 fallos en 15 min → 15 min, luego 30, 60… hasta 24 h."""
+    """Bloqueo progresivo por IP: 5 fallos en 15 min → 15 min, luego 30, 60… hasta 24 h.
+
+    Cada intento se CUENTA antes de verificar la contraseña (``begin_attempt``), así una
+    ráfaga de peticiones concurrentes no puede evaluar más de ``LOGIN_MAX_FAILS`` claves.
+    """
 
     def __init__(self, store):
         self.s = store
@@ -280,12 +303,17 @@ class LoginThrottle:
     def seconds_locked(self, ip: str) -> int:
         return self.s.ttl(f"panel:login:lock:{ip}")
 
-    def register_failure(self, ip: str) -> int:
-        """Anota un fallo. Devuelve los segundos de bloqueo recién impuestos (0 si no hay)."""
-        self.s.incr("panel:login:gfail", GLOBAL_WINDOW_S)
+    def begin_attempt(self, ip: str) -> tuple[bool, int]:
+        """(permitido, segundos de espera). Si no está permitido, no se verifica la clave."""
+        lock = self.seconds_locked(ip)
+        if lock:
+            return False, lock
         n = self.s.incr(f"panel:login:fail:{ip}", LOGIN_WINDOW_S)
-        if n < LOGIN_MAX_FAILS:
-            return 0
+        if n > LOGIN_MAX_FAILS:
+            return False, (self.seconds_locked(ip) or self._impose_lock(ip))
+        return True, 0
+
+    def _impose_lock(self, ip: str) -> int:
         strikes = self.s.incr(f"panel:login:strikes:{ip}", LOGIN_STRIKE_TTL_S)
         self.s.touch(f"panel:login:strikes:{ip}", LOGIN_STRIKE_TTL_S)  # ventana deslizante
         lock = min(LOGIN_BASE_LOCK_S * (2 ** (strikes - 1)), LOGIN_MAX_LOCK_S)
@@ -293,6 +321,13 @@ class LoginThrottle:
         self.s.delete(f"panel:login:fail:{ip}")
         logger.warning("Login del panel bloqueado %ss para una IP (reincidencia %s)", lock, strikes)
         return lock
+
+    def register_failure(self, ip: str) -> int:
+        """Tras una clave incorrecta. Devuelve los segundos de bloqueo recién impuestos (0 si no hay)."""
+        self.s.incr("panel:login:gfail", GLOBAL_WINDOW_S)
+        if self.s.get(f"panel:login:fail:{ip}") >= LOGIN_MAX_FAILS:
+            return self._impose_lock(ip)
+        return 0
 
     def register_success(self, ip: str) -> None:
         self.s.delete(f"panel:login:fail:{ip}")
@@ -320,8 +355,14 @@ def get_throttle() -> LoginThrottle:
     return _throttle
 
 
+async def in_thread(fn, *args):
+    """Redis es síncrono: se ejecuta en un hilo para no congelar el bucle de eventos
+    (que también atiende el webhook del bot) si Upstash tarda en responder."""
+    return await asyncio.to_thread(fn, *args)
+
+
 async def apply_global_delay(throttle: LoginThrottle) -> None:
-    d = throttle.global_delay()
+    d = await in_thread(throttle.global_delay)
     if d:
         await asyncio.sleep(d)
 

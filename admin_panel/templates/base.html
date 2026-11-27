@@ -14,7 +14,7 @@
         init = init || {};
         var method = String(init.method || (input && input.method) || 'GET').toUpperCase();
         var url = typeof input === 'string' ? input : ((input && input.url) || '');
-        var sameOrigin = url.charAt(0) === '/' || url.indexOf(location.origin) === 0;
+        var sameOrigin = (url.charAt(0) === '/' && url.charAt(1) !== '/') || url.indexOf(location.origin) === 0;
         if (token && sameOrigin && method !== 'GET' && method !== 'HEAD') {
           var h = new Headers(init.headers || (input && input.headers) || {});
           if (!h.has('X-CSRF-Token')) h.set('X-CSRF-Token', token);
