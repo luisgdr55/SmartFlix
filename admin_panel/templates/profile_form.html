@@ -41,6 +41,7 @@
 
   <div class="stat-card">
     <form action="{{ form_action }}" method="POST" class="space-y-5" novalidate>
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
 
       <div>
         <label class="form-label">Plataforma *</label>

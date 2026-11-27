@@ -35,6 +35,7 @@
     {% endif %}
 
     <form method="POST" action="/panel/login" @submit="loading = true">
+      <input type="hidden" name="csrf_token" value="{{ login_csrf }}">
       <div class="mb-6">
         <label class="block text-sm font-medium text-slate-300 mb-2">Contraseña de administrador</label>
         <div class="relative">

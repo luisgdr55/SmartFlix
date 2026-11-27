@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
+import uuid
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from typing import Optional
 
 from fastapi import APIRouter, Request, Response, Form, Depends
@@ -13,6 +17,10 @@ from fastapi.templating import Jinja2Templates
 from admin_panel.auth import (
     create_session, clear_session, verify_session, verify_password,
     _AuthRedirectException,
+)
+from admin_panel.security import (
+    LOGIN_CSRF_COOKIE, apply_global_delay, client_ip, cookie_secure, csrf_protect,
+    get_throttle, login_csrf_ok, new_login_csrf,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,7 +57,7 @@ templates.env.filters["fmt_date"] = _fmt_date
 templates.env.filters["fmt_dt"] = _fmt_dt
 
 # ── Router ────────────────────────────────────────────────────────────────────
-panel_router = APIRouter(prefix="/panel", tags=["admin_panel"])
+panel_router = APIRouter(prefix="/panel", tags=["admin_panel"], dependencies=[Depends(csrf_protect)])
 
 
 # ── Auth guard helper ─────────────────────────────────────────────────────────
@@ -60,33 +68,149 @@ def _auth_guard(request: Request) -> Optional[RedirectResponse]:
     return None
 
 
+# ── Errores sin detalle interno y validación de entradas ─────────────────────
+class InputError(Exception):
+    """Error de entrada del usuario: su mensaje es seguro de mostrar."""
+
+
+def _public_error(e: Exception) -> str:
+    """Registra el detalle en el log y devuelve un mensaje sin información interna."""
+    if isinstance(e, InputError):
+        return str(e)
+    eid = uuid.uuid4().hex[:8]
+    logger.error("Error en el panel [%s]: %s", eid, e, exc_info=True)
+    return (f"No se pudo completar la acción (código {eid}). "
+            "Intenta de nuevo; si se repite, avisa con ese código.")
+
+
+def _error_redirect(base_url: str, e: Exception) -> RedirectResponse:
+    sep = "&" if "?" in base_url else "?"
+    return RedirectResponse(url=f"{base_url}{sep}error={quote(_public_error(e))}", status_code=302)
+
+
+def _parse_amount(raw, label: str, default: float = 0.0, max_value: float = 100000.0,
+                  positive: bool = False) -> float:
+    """Importe decimal: vacío = valor por defecto; rechaza texto, negativos, NaN e infinito.
+    Con ``positive=True`` también rechaza el cero (tasas de cambio)."""
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        v = float(str(raw).strip().replace(",", "."))
+    except ValueError:
+        raise InputError(f"{label} no es un número válido")
+    if not math.isfinite(v) or v < 0 or v > max_value or (positive and v == 0):
+        raise InputError(f"{label} debe ser un número {'mayor que 0' if positive else 'de 0'} y menor o igual a {max_value:g}")
+    return round(v, 4)
+
+
+def _parse_positive_int(raw, label: str) -> int:
+    try:
+        v = int(str(raw).strip())
+    except ValueError:
+        raise InputError(f"{label} debe ser un número entero")
+    if v <= 0:
+        raise InputError(f"{label} debe ser un número positivo")
+    return v
+
+
+def _parse_page(request: Request) -> tuple[int, Optional[str]]:
+    """Número de página; si no es válido, vuelve a la primera y avisa."""
+    raw = request.query_params.get("page", "1")
+    try:
+        p = int(raw)
+    except ValueError:
+        return 1, "El número de página no es válido; se muestra la primera."
+    if p < 1 or p > 100000:
+        return 1, "El número de página no es válido; se muestra la primera."
+    return p, None
+
+
+_FILTER_CHARS = re.compile(r'[,()*%"\\]')
+
+
+def _clean_search(raw: str) -> str:
+    """Quita los caracteres que rompen el filtro `or_` de PostgREST."""
+    return _FILTER_CHARS.sub(" ", raw or "").strip()[:80]
+
+
+async def _audit(request: Request, action: str, detail: dict) -> None:
+    """Registro de acciones sensibles del panel. Lote 0: tabla `admin_log` existente
+    (telegram_id 0 = panel). O01 Lote 1 lo reemplaza por `admin_audit_log`."""
+    info = {**detail, "ip": client_ip(request)}
+    logger.info("AUDIT panel %s %s", action, info)
+    try:
+        from database.users import log_admin_action
+        await log_admin_action(0, f"panel:{action}", info)
+    except Exception as e:  # el registro nunca debe romper la acción
+        logger.error("No se pudo registrar la auditoría: %s", e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTH ROUTES
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _login_page(request: Request, error: Optional[str], status_code: int = 200,
+                retry_after: int = 0):
+    """Página de login con un token CSRF nuevo (doble envío con cookie)."""
+    token = new_login_csrf()
+    response = templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": error, "login_csrf": token},
+        status_code=status_code,
+    )
+    response.set_cookie(
+        LOGIN_CSRF_COOKIE, token, max_age=3600, path="/panel/login",
+        httponly=True, samesite="lax", secure=cookie_secure(),
+    )
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
 
 @panel_router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request):
     if verify_session(request):
         return RedirectResponse(url="/panel/dashboard", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return _login_page(request, None)
 
 
 @panel_router.post("/login", response_class=HTMLResponse)
-async def login_post(request: Request, password: str = Form(...)):
+async def login_post(request: Request, password: str = Form(...), csrf_token: str = Form(default="")):
+    throttle = get_throttle()
+    ip = client_ip(request)
+
+    locked = throttle.seconds_locked(ip)
+    if locked:
+        minutes = max(1, math.ceil(locked / 60))
+        return _login_page(
+            request,
+            f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
+            "Si no recuerdas la clave, quien administra el servidor puede cambiarla.",
+            status_code=429, retry_after=locked,
+        )
+    if not login_csrf_ok(request, csrf_token):
+        return _login_page(request, "La página de acceso venció. Vuelve a escribir la contraseña.", status_code=400)
+
+    await apply_global_delay(throttle)
     if verify_password(password):
+        throttle.register_success(ip)
         response = RedirectResponse(url="/panel/dashboard", status_code=302)
         create_session(response)
+        response.delete_cookie(LOGIN_CSRF_COOKIE, path="/panel/login")
         return response
-    return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "error": "Contraseña incorrecta. Intenta de nuevo."},
-        status_code=401,
-    )
+
+    lock = throttle.register_failure(ip)
+    if lock:
+        minutes = max(1, math.ceil(lock / 60))
+        msg = (f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
+               "Si no recuerdas la clave, quien administra el servidor puede cambiarla.")
+        return _login_page(request, msg, status_code=429, retry_after=lock)
+    return _login_page(request, "Contraseña incorrecta. Intenta de nuevo.", status_code=401)
 
 
-@panel_router.get("/logout")
+@panel_router.post("/logout")
 async def logout(request: Request):
-    response = RedirectResponse(url="/panel/login", status_code=302)
+    response = RedirectResponse(url="/panel/login", status_code=303)
     clear_session(response)
     return response
 
@@ -240,7 +364,7 @@ async def dashboard(request: Request):
             "expired_subs": [],
             "today_str": _ve_now().strftime("%Y-%m-%d"),
             "now_ve": _ve_now(),
-            "error": str(e),
+            "error": _public_error(e),
         }
     return templates.TemplateResponse("dashboard.html", context)
 
@@ -331,7 +455,7 @@ async def account_new_save(
         return RedirectResponse(url="/panel/accounts?success=Cuenta+creada+exitosamente", status_code=302)
     except Exception as e:
         logger.error(f"Account create error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.get("/accounts/{account_id}/edit", response_class=HTMLResponse)
@@ -347,7 +471,7 @@ async def account_edit_form(request: Request, account_id: str):
         if not account:
             return RedirectResponse(url="/panel/accounts?error=Cuenta+no+encontrada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
     return templates.TemplateResponse("account_form.html", {
         "request": request,
         "page": "accounts",
@@ -364,11 +488,11 @@ async def account_edit_save(
     account_id: str,
     platform_id: str = Form(...),
     email: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(default=""),
     billing_date: str = Form(default=""),
     notes: str = Form(default=""),
     status: str = Form(default="active"),
-    cost_usd_monthly: float = Form(default=0.0),
+    cost_usd_monthly: str = Form(default="0"),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -379,10 +503,11 @@ async def account_edit_save(
         data = {
             "platform_id": platform_id,
             "email": email,
-            "password": password,
             "status": status,
-            "cost_usd_monthly": cost_usd_monthly,
+            "cost_usd_monthly": _parse_amount(cost_usd_monthly, "El costo mensual"),
         }
+        if password.strip():
+            data["password"] = password  # vacío = conservar la contraseña actual
         if billing_date:
             data["billing_date"] = billing_date
         if notes:
@@ -391,7 +516,7 @@ async def account_edit_save(
         return RedirectResponse(url="/panel/accounts?success=Cuenta+actualizada", status_code=302)
     except Exception as e:
         logger.error(f"Account edit error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.post("/accounts/{account_id}/delete")
@@ -406,7 +531,7 @@ async def account_delete(request: Request, account_id: str):
         return RedirectResponse(url="/panel/accounts?success=Cuenta+eliminada", status_code=302)
     except Exception as e:
         logger.error(f"Account delete error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.post("/accounts/{account_id}/set-status")
@@ -425,7 +550,7 @@ async def account_set_status(request: Request, account_id: str):
         return RedirectResponse(url=request.headers.get("referer", "/panel/accounts"), status_code=302)
     except Exception as e:
         logger.error(f"Account set-status error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -542,7 +667,7 @@ async def profile_new_save(
         return RedirectResponse(url="/panel/profiles?success=Perfil+creado+exitosamente", status_code=302)
     except Exception as e:
         logger.error(f"Profile create error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 @panel_router.get("/profiles/{profile_id}/edit", response_class=HTMLResponse)
@@ -561,7 +686,7 @@ async def profile_edit_form(request: Request, profile_id: str):
         if not profile:
             return RedirectResponse(url="/panel/profiles?error=Perfil+no+encontrado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
     return templates.TemplateResponse("profile_form.html", {
         "request": request,
         "page": "profiles",
@@ -612,7 +737,7 @@ async def profile_edit_save(
         return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?success=1", status_code=302)
     except Exception as e:
         logger.error(f"Profile edit error: {e}")
-        return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles/{profile_id}/edit", e)
 
 
 @panel_router.post("/profiles/{profile_id}/set-status")
@@ -631,7 +756,7 @@ async def profile_set_status(request: Request, profile_id: str):
         return RedirectResponse(url=request.headers.get("referer", "/panel/profiles"), status_code=302)
     except Exception as e:
         logger.error(f"Profile set-status error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 @panel_router.post("/profiles/{profile_id}/delete")
@@ -646,7 +771,7 @@ async def profile_delete(request: Request, profile_id: str):
         return RedirectResponse(url="/panel/profiles?success=Perfil+eliminado", status_code=302)
     except Exception as e:
         logger.error(f"Profile delete error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -661,8 +786,8 @@ async def users_list(request: Request):
     try:
         from database import get_supabase
         sb = get_supabase()
-        page = int(request.query_params.get("page", 1))
-        search = request.query_params.get("q", "").strip()
+        page, page_error = _parse_page(request)
+        search = _clean_search(request.query_params.get("q", ""))
         per_page = 20
         offset = (page - 1) * per_page
 
@@ -680,7 +805,7 @@ async def users_list(request: Request):
         users = result.data or []
         total_pages = (total + per_page - 1) // per_page
     except Exception as e:
-        logger.error(f"Users list error: {e}")
+        page_error = _public_error(e)
         users = []
         total = 0
         page = 1
@@ -697,7 +822,7 @@ async def users_list(request: Request):
         "total_pages": total_pages,
         "search": search,
         "success": request.query_params.get("success"),
-        "error": request.query_params.get("error"),
+        "error": page_error or request.query_params.get("error"),
     })
 
 
@@ -724,7 +849,7 @@ async def user_detail(request: Request, user_id: str):
         platforms = await get_active_platforms()
     except Exception as e:
         logger.error(f"User detail error: {e}")
-        return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users", e)
     from utils.helpers import venezuela_now
     return templates.TemplateResponse("user_detail.html", {
         "request": request,
@@ -756,7 +881,7 @@ async def user_add_subscription(request: Request, user_id: str):
         platform_id  = (form.get("platform_id") or "").strip()
         plan_type    = (form.get("plan_type") or "monthly").strip()
         end_date_str = (form.get("end_date") or "").strip()
-        price        = float(form.get("price_usd") or 0)
+        price        = _parse_amount(form.get("price_usd"), "El precio")
         reference    = (form.get("payment_reference") or "MIGRADO").strip()
         profile_mode = (form.get("profile_mode") or "existing").strip()
 
@@ -830,7 +955,7 @@ async def user_add_subscription(request: Request, user_id: str):
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Suscripcion+agregada+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"Add subscription error: {e}")
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/block")
@@ -844,7 +969,7 @@ async def user_block(request: Request, user_id: str):
         sb.table("users").update({"status": "blocked"}).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Usuario+bloqueado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/unblock")
@@ -858,7 +983,7 @@ async def user_unblock(request: Request, user_id: str):
         sb.table("users").update({"status": "active"}).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Usuario+desbloqueado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/edit")
@@ -883,15 +1008,15 @@ async def user_edit(request: Request, user_id: str):
             upd["username"] = username
         if telegram_id_raw:
             try:
-                upd["telegram_id"] = int(telegram_id_raw)
-            except ValueError:
+                upd["telegram_id"] = _parse_positive_int(telegram_id_raw, "El Telegram ID")
+            except InputError:
                 return RedirectResponse(url=f"/panel/users/{user_id}?error=Telegram+ID+debe+ser+un+numero", status_code=302)
         if upd:
             sb.table("users").update(upd).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Cliente+actualizado+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"User edit error: {e}")
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/delete")
@@ -904,7 +1029,7 @@ async def user_delete(request: Request, user_id: str):
         await delete_user(user_id)
         return RedirectResponse(url="/panel/users?success=Cliente+eliminado+correctamente", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -928,7 +1053,7 @@ async def subscriptions_list(request: Request):
         status_filter = request.query_params.get("status", "")
         platform_filter = request.query_params.get("platform", "")
         plan_filter = request.query_params.get("plan", "")
-        page = int(request.query_params.get("page", 1))
+        page, page_error = _parse_page(request)
         per_page = 25
         offset = (page - 1) * per_page
 
@@ -958,7 +1083,7 @@ async def subscriptions_list(request: Request):
 
         platforms = await get_active_platforms()
     except Exception as e:
-        logger.error(f"Subscriptions list error: {e}")
+        page_error = _public_error(e)
         subscriptions = []
         platforms = []
         total = 0
@@ -977,6 +1102,8 @@ async def subscriptions_list(request: Request):
         "current_page": page,
         "per_page": per_page,
         "total_pages": total_pages,
+        "error": page_error or request.query_params.get("error"),
+        "success": request.query_params.get("success"),
     })
 
 
@@ -1014,10 +1141,7 @@ async def subscription_edit(request: Request, sub_id: str):
         if plan_type:
             upd["plan_type"] = plan_type
         if price_usd:
-            try:
-                upd["price_usd"] = float(price_usd)
-            except ValueError:
-                pass
+            upd["price_usd"] = _parse_amount(price_usd, "El precio")
 
         # Handle profile assignment change
         if new_profile_id != old_profile_id:
@@ -1036,7 +1160,7 @@ async def subscription_edit(request: Request, sub_id: str):
         return RedirectResponse(url=redirect_url, status_code=302)
     except Exception as e:
         logger.error(f"Subscription edit error: {e}")
-        return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/subscriptions", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/soft-cut")
@@ -1116,7 +1240,7 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         return RedirectResponse(url=f"{redirect_base}?success=Corte+suave+aplicado+y+PIN+cambiado", status_code=302)
     except Exception as e:
         logger.error(f"Soft cut error: {e}")
-        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/release")
@@ -1200,7 +1324,7 @@ async def subscription_release(request: Request, sub_id: str):
         return RedirectResponse(url=f"{redirect_base}?success=Perfil+liberado+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"Release subscription error: {e}")
-        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/delete")
@@ -1223,7 +1347,49 @@ async def subscription_delete(request: Request, sub_id: str):
     except Exception as e:
         logger.error(f"subscription_delete error for sub_id={sub_id}: {e}")
         redirect_err = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
-        return RedirectResponse(url=f"{redirect_err}?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"{redirect_err}", e)
+
+
+@panel_router.post("/subscriptions/{sub_id}/credentials")
+async def subscription_credentials(request: Request, sub_id: str):
+    """Entrega las credenciales de la cuenta de una suscripción SOLO bajo demanda.
+    Las listas y fichas ya no las incrustan en el HTML. Cada consulta queda registrada."""
+    if not verify_session(request):
+        return JSONResponse({"ok": False, "error": "Sesión vencida. Vuelve a iniciar sesión."}, status_code=401)
+    try:
+        uuid.UUID(sub_id)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Identificador no válido."}, status_code=404)
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+        res = (
+            sb.table("subscriptions")
+            .select("id, platforms(name, icon_emoji), profiles(profile_name, pin, accounts(email, password))")
+            .eq("id", sub_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return JSONResponse({"ok": False, "error": "Suscripción no encontrada."}, status_code=404)
+        row = res.data[0]
+        plat = row.get("platforms") or {}
+        prof = row.get("profiles") or {}
+        acc = prof.get("accounts") or {}
+        await _audit(request, "reveal_credentials", {"sub_id": sub_id})
+        return JSONResponse(
+            {
+                "ok": True,
+                "platform": f"{plat.get('icon_emoji') or ''} {plat.get('name') or '—'}".strip(),
+                "email": acc.get("email") or "—",
+                "password": acc.get("password") or "—",
+                "profile": prof.get("profile_name") or "—",
+                "pin": prof.get("pin") or "—",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": _public_error(e)}, status_code=500)
 
 
 @panel_router.post("/subscriptions/{sub_id}/notify-reminder")
@@ -1237,7 +1403,7 @@ async def subscription_notify_reminder(request: Request, sub_id: str):
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.error(f"notify-reminder error: {e}")
-        return JSONResponse({"ok": False, "error": str(e)})
+        return JSONResponse({"ok": False, "error": _public_error(e)})
 
 
 @panel_router.post("/subscriptions/{sub_id}/notify-expiry")
@@ -1251,7 +1417,7 @@ async def subscription_notify_expiry(request: Request, sub_id: str):
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.error(f"notify-expiry error: {e}")
-        return JSONResponse({"ok": False, "error": str(e)})
+        return JSONResponse({"ok": False, "error": _public_error(e)})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1457,7 +1623,7 @@ async def payment_approve(
         return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+pago", status_code=302)
     except Exception as e:
         logger.error(f"Payment approve error: {e}")
-        return RedirectResponse(url=f"/panel/payments?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/payments", e)
 
 
 @panel_router.post("/payments/{sub_id}/reject")
@@ -1518,7 +1684,7 @@ async def payment_reject(
         return RedirectResponse(url="/panel/payments?success=Pago+rechazado", status_code=302)
     except Exception as e:
         logger.error(f"Payment reject error: {e}")
-        return RedirectResponse(url=f"/panel/payments?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/payments", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1558,7 +1724,7 @@ async def platform_edit_form(request: Request, platform_id: str):
         if not platform:
             return RedirectResponse(url="/panel/platforms?error=Plataforma+no+encontrada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/platforms?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/platforms", e)
     return templates.TemplateResponse("platform_form.html", {
         "request": request,
         "page": "platforms",
@@ -1573,8 +1739,8 @@ async def platform_edit_save(
     name: str = Form(...),
     slug: str = Form(...),
     icon_emoji: str = Form(default=""),
-    monthly_price_usd: float = Form(default=0.0),
-    express_price_usd: float = Form(default=0.0),
+    monthly_price_usd: str = Form(default="0"),
+    express_price_usd: str = Form(default="0"),
     is_active: str = Form(default="off"),
     instructions_monthly: str = Form(default=""),
     instructions_express: str = Form(default=""),
@@ -1589,8 +1755,8 @@ async def platform_edit_save(
             "name": name,
             "slug": slug,
             "icon_emoji": icon_emoji,
-            "monthly_price_usd": monthly_price_usd,
-            "express_price_usd": express_price_usd,
+            "monthly_price_usd": _parse_amount(monthly_price_usd, "El precio mensual", max_value=1000),
+            "express_price_usd": _parse_amount(express_price_usd, "El precio express", max_value=1000),
             "is_active": is_active == "on",
             "instructions_monthly": instructions_monthly or None,
             "instructions_express": instructions_express or None,
@@ -1598,7 +1764,7 @@ async def platform_edit_save(
         return RedirectResponse(url="/panel/platforms?success=Plataforma+actualizada", status_code=302)
     except Exception as e:
         logger.error(f"Platform edit error: {e}")
-        return RedirectResponse(url=f"/panel/platforms?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/platforms", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1634,36 +1800,38 @@ async def settings_page(request: Request):
 @panel_router.post("/settings/rate")
 async def settings_update_rate(
     request: Request,
-    usd_binance: float = Form(...),
+    usd_binance: str = Form(...),
 ):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
         from services.exchange_service import update_rate
-        await update_rate(usd_binance, 0)
+        await update_rate(_parse_amount(usd_binance, "La tasa", positive=True), 0)
         return RedirectResponse(url="/panel/settings?success=Tasa+Binance+actualizada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 @panel_router.post("/settings/bcv")
 async def settings_update_bcv(
     request: Request,
-    usd_bcv: float = Form(...),
-    eur_bcv: float = Form(default=0.0),
+    usd_bcv: str = Form(...),
+    eur_bcv: str = Form(default=""),
 ):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
         from services.exchange_service import get_current_rate, update_rate
+        usd_bcv = _parse_amount(usd_bcv, "La tasa BCV en dólares", positive=True)
+        eur_bcv = _parse_amount(eur_bcv, "La tasa BCV en euros")
         current = await get_current_rate()
         current_binance = float(current.get("usd_binance", 0)) if current else 0.0
         await update_rate(current_binance or usd_bcv, 0, usd_bcv=usd_bcv, eur_bcv=eur_bcv if eur_bcv > 0 else None)
         return RedirectResponse(url="/panel/settings?success=Tasas+BCV+actualizadas", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 @panel_router.post("/settings/payment")
@@ -1688,7 +1856,7 @@ async def settings_update_payment(
             sb.table("payment_config").insert(data).execute()
         return RedirectResponse(url="/panel/settings?success=Configuracion+de+pago+actualizada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1732,7 +1900,7 @@ async def migrate_post(request: Request):
         tz_ve = pytz.timezone("America/Caracas")
 
         telegram_id_raw = form.get("telegram_id", "").strip()
-        telegram_id   = int(telegram_id_raw) if telegram_id_raw else None
+        telegram_id   = _parse_positive_int(telegram_id_raw, "El Telegram ID") if telegram_id_raw else None
         client_name   = form.get("client_name", "").strip()
         username      = form.get("username", "").strip().lstrip("@")
         phone         = form.get("phone", "").strip()
@@ -1796,7 +1964,7 @@ async def migrate_post(request: Request):
             mode     = profile_modes[i] if i < len(profile_modes) else "existing"
             plan     = plan_types[i]  if i < len(plan_types)  else "monthly"
             ed_str   = end_dates[i]   if i < len(end_dates)   else ""
-            price    = float(prices[i]) if i < len(prices) and prices[i] else 0.0
+            price    = _parse_amount(prices[i] if i < len(prices) else None, "El precio")
             ref      = references[i]  if i < len(references)  else "MIGRADO"
 
             if not pid or not ed_str:
@@ -1878,7 +2046,7 @@ async def migrate_post(request: Request):
         )
     except Exception as e:
         logger.error(f"Migrate error: {e}")
-        return RedirectResponse(url=f"/panel/migrate?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/migrate", e)
 
 
 @panel_router.get("/api/profiles/available/{platform_id}")
@@ -1895,7 +2063,7 @@ async def api_profiles_by_platform(request: Request, platform_id: str):
         ).eq("platform_id", platform_id).order("status").order("profile_type").execute()
         return JSONResponse({"profiles": res.data or []})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/accounts/by-platform/{platform_id}")
@@ -1911,7 +2079,7 @@ async def api_accounts_by_platform(request: Request, platform_id: str):
         ).eq("platform_id", platform_id).eq("status", "active").order("email").execute()
         return JSONResponse({"accounts": res.data or []})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1927,10 +2095,10 @@ async def api_stats(request: Request):
         stats = await get_dashboard_stats()
         return JSONResponse(stats)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
-@panel_router.get("/api/rate/fetch")
+@panel_router.post("/api/rate/fetch")
 async def api_fetch_rate(request: Request):
     if not verify_session(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -1942,7 +2110,7 @@ async def api_fetch_rate(request: Request):
             return JSONResponse({"success": True, "rate": rate, "message": f"Tasa actualizada: Bs {rate:.2f}/USD"})
         return JSONResponse({"success": False, "message": "No se pudo obtener la tasa de Binance P2P"})
     except Exception as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "message": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/payments/pending")
@@ -1954,7 +2122,7 @@ async def api_payments_pending(request: Request):
         pending = await get_pending_subscriptions()
         return JSONResponse({"count": len(pending), "payments": pending})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/debug/availability")
@@ -1996,4 +2164,4 @@ async def api_debug_availability(request: Request):
             })
         return JSONResponse({"platforms": result})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)

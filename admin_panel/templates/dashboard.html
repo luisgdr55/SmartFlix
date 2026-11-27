@@ -162,12 +162,14 @@
         {% if has_profile %}
         <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
           onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
             🔒 Corte suave
           </button>
         </form>
         <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
           onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 px-2 py-1 rounded-lg transition-colors font-medium">
             📤 Liberar
           </button>
@@ -175,6 +177,7 @@
         {% else %}
         <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
           onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg transition-colors font-medium">
             ✓ Cerrar
           </button>
@@ -441,7 +444,7 @@ function dashboardApp() {
       this.rateLoading = true;
       this.rateMessage = '';
       try {
-        const res = await fetch('/panel/api/rate/fetch');
+        const res = await fetch('/panel/api/rate/fetch', { method: 'POST' });
         const data = await res.json();
         this.rateSuccess = data.success;
         this.rateMessage = data.message;

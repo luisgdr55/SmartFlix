@@ -100,6 +100,7 @@
         {% set profiles = profiles_map.get(pid, []) %}
         {% set is_renewal = renewal_map.get(sub['id'], False) %}
         <form action="/panel/payments/{{ sub['id'] }}/approve" method="POST" class="space-y-3">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           {% if is_renewal %}
           <div class="bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs text-indigo-300">
             🔄 <b>Renovación</b> — el cliente ya tiene perfil asignado. Se extenderá la fecha de corte automáticamente.
@@ -124,7 +125,7 @@
               ✅ {% if is_renewal %}Aprobar Renovación{% else %}Aprobar{% endif %}
             </button>
             <button type="button"
-              @click="rejectSub('{{ sub['id'] }}')"
+              data-id="{{ sub['id'] }}" @click="rejectSub($el.dataset.id)"
               class="btn-danger flex-1 justify-center text-sm py-2.5">
               ❌ Rechazar
             </button>
@@ -202,6 +203,7 @@
       <h3 class="text-lg font-semibold text-white mb-2">❌ Rechazar pago</h3>
       <p class="text-slate-400 text-sm mb-4">El cliente será notificado por Telegram.</p>
       <form :action="'/panel/payments/' + rejectId + '/reject'" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
         <div class="mb-4">
           <label class="form-label text-sm">Motivo del rechazo</label>
           <textarea name="reason" rows="3" class="form-input resize-none text-sm" placeholder="Ej: Comprobante ilegible, monto incorrecto...">Pago rechazado por el administrador</textarea>

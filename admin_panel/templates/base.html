@@ -3,6 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="csrf-token" content="{{ request.state.csrf_token | default('') }}" />
+  <script>
+    // Añade el token CSRF a toda petición fetch que modifica datos (mismo origen).
+    (function () {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      var token = meta ? meta.content : '';
+      var orig = window.fetch;
+      window.fetch = function (input, init) {
+        init = init || {};
+        var method = String(init.method || (input && input.method) || 'GET').toUpperCase();
+        var url = typeof input === 'string' ? input : ((input && input.url) || '');
+        var sameOrigin = url.charAt(0) === '/' || url.indexOf(location.origin) === 0;
+        if (token && sameOrigin && method !== 'GET' && method !== 'HEAD') {
+          var h = new Headers(init.headers || (input && input.headers) || {});
+          if (!h.has('X-CSRF-Token')) h.set('X-CSRF-Token', token);
+          init.headers = h;
+        }
+        return orig.call(this, input, init);
+      };
+    })();
+  </script>
   <title>{% block title %}SmartFlixVE Admin{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -237,9 +258,12 @@
 
     <!-- Footer -->
     <div class="px-3 py-4 border-t border-slate-100">
-      <a href="/panel/logout" class="sidebar-link text-rose-400 hover:text-rose-600 hover:bg-rose-50">
-        <span class="text-base">🚪</span> Cerrar sesión
-      </a>
+      <form method="POST" action="/panel/logout">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+        <button type="submit" class="sidebar-link w-full text-left text-rose-400 hover:text-rose-600 hover:bg-rose-50">
+          <span class="text-base">🚪</span> Cerrar sesión
+        </button>
+      </form>
     </div>
   </aside>
 

@@ -47,7 +47,7 @@
         </thead>
         <tbody>
           {% for u in users %}
-          <tr class="table-row cursor-pointer" onclick="window.location='/panel/users/{{ u['id'] }}'">
+          <tr class="table-row cursor-pointer" data-href="/panel/users/{{ u['id'] }}" onclick="window.location=this.dataset.href">
             <td class="table-cell font-bold text-slate-900">{{ u.get('name') or 'Sin nombre' }}</td>
             <td class="table-cell text-slate-800 font-medium">{% if u.get('username') %}@{{ u['username'] }}{% else %}—{% endif %}</td>
             <td class="table-cell font-mono text-xs text-slate-800 font-semibold">{{ u.get('telegram_id', '—') }}</td>
@@ -68,14 +68,17 @@
                 <a href="/panel/users/{{ u['id'] }}" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">Ver</a>
                 {% if u.get('status') == 'blocked' %}
                 <form action="/panel/users/{{ u['id'] }}/unblock" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                   <button type="submit" class="text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 px-3 py-1.5 rounded-lg transition-colors">Desbloquear</button>
                 </form>
                 {% else %}
                 <form action="/panel/users/{{ u['id'] }}/block" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                   <button type="submit" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">Bloquear</button>
                 </form>
                 {% endif %}
-                <form action="/panel/users/{{ u['id'] }}/delete" method="POST" onsubmit="return confirm('¿Eliminar a {{ u.get('name','este cliente') }} y todas sus suscripciones? Esta acción no se puede deshacer.')">
+                <form action="/panel/users/{{ u['id'] }}/delete" method="POST" data-name="{{ u.get('name') or 'este cliente' }}" onsubmit="return confirm('¿Eliminar a ' + this.dataset.name + ' y todas sus suscripciones? Esta acción no se puede deshacer.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                   <button type="submit" class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
                 </form>
               </div>
@@ -103,10 +106,10 @@
       </p>
       <div class="flex items-center gap-2">
         {% if current_page > 1 %}
-        <a href="?page={{ current_page - 1 }}{% if search %}&q={{ search }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
+        <a href="?page={{ current_page - 1 }}{% if search %}&q={{ search|urlencode }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
         {% endif %}
         {% if current_page < total_pages %}
-        <a href="?page={{ current_page + 1 }}{% if search %}&q={{ search }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
+        <a href="?page={{ current_page + 1 }}{% if search %}&q={{ search|urlencode }}{% endif %}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
         {% endif %}
       </div>
     </div>

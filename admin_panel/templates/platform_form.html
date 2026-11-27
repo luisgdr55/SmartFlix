@@ -17,6 +17,7 @@
   </div>
 
   <form action="/panel/platforms/{{ platform['id'] }}/edit" method="POST" class="space-y-6">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
 
     <!-- Basic info -->
     <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">

@@ -66,17 +66,14 @@
                 {% set acc = pr.get('accounts') or {} %}
                 {% set plat = sub.get('platforms') or {} %}
                 <button
+                  type="button"
                   style="font-weight:700;color:#111827;text-align:left;background:none;border:none;cursor:pointer;padding:0;"
-                  @click="open({
-                    name:         {{ (u.get('name') or 'Sin nombre') | tojson }},
-                    username:     {{ (u.get('username') or '') | tojson }},
-                    platform:     {{ ((plat.get('icon_emoji') or '') ~ ' ' ~ (plat.get('name') or '—')) | tojson }},
-                    profile_name: {{ (pr.get('profile_name') or '—') | tojson }},
-                    pin:          {{ (pr.get('pin') or '—') | tojson }},
-                    email:        {{ (acc.get('email') or '—') | tojson }},
-                    password:     {{ (acc.get('password') or '—') | tojson }},
-                    end_date:     {{ ((sub.get('end_date') or '')[:10]) | tojson }}
-                  })">
+                  data-sub-id="{{ sub['id'] }}"
+                  data-name="{{ u.get('name') or 'Sin nombre' }}"
+                  data-username="{{ u.get('username') or '' }}"
+                  data-platform="{{ (plat.get('icon_emoji') or '') ~ ' ' ~ (plat.get('name') or '—') }}"
+                  data-end="{{ (sub.get('end_date') or '')[:10] }}"
+                  @click="open(Object.assign({}, $el.dataset))">
                   {{ u.get('name') or 'Sin nombre' }}
                 </button>
                 {% if u.get('username') %}
@@ -119,18 +116,21 @@
                   {% if sub.get('profile_id') %}
                   <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST"
                     onsubmit="return confirm('¿Corte suave? Se cambia el PIN y se notifica al cliente. El perfil queda reservado.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                     <button type="submit" title="Corte suave: cambia PIN, notifica al cliente"
                       class="text-xs bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/40 text-amber-300 px-2 py-1 rounded-lg transition-colors">🔒</button>
                   </form>
                   {% endif %}
                   <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST"
                     onsubmit="return confirm('¿Liberar perfil y cortar acceso? Se notifica al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                     <button type="submit" title="Cortar acceso y liberar perfil"
                       class="text-xs bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 text-red-400 px-2 py-1 rounded-lg transition-colors">✂️</button>
                   </form>
                 {% else %}
                   <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
                     onsubmit="return confirm('¿Eliminar esta suscripción permanentemente?')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                     <button type="submit" title="Eliminar registro"
                       class="text-xs bg-red-900/30 hover:bg-red-900/60 text-red-500 px-2 py-1 rounded-lg transition-colors">🗑️</button>
                   </form>
@@ -158,19 +158,17 @@
       <p class="text-sm text-slate-400">Página {{ current_page }} de {{ total_pages }} — {{ total }} registros</p>
       <div class="flex items-center gap-2">
         {% if current_page > 1 %}
-        <a href="?page={{ current_page - 1 }}&status={{ status_filter }}&platform={{ platform_filter }}&plan={{ plan_filter }}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
+        <a href="?page={{ current_page - 1 }}&status={{ status_filter|urlencode }}&platform={{ platform_filter|urlencode }}&plan={{ plan_filter|urlencode }}" class="btn-secondary py-1.5 px-3 text-sm">← Anterior</a>
         {% endif %}
         {% if current_page < total_pages %}
-        <a href="?page={{ current_page + 1 }}&status={{ status_filter }}&platform={{ platform_filter }}&plan={{ plan_filter }}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
+        <a href="?page={{ current_page + 1 }}&status={{ status_filter|urlencode }}&platform={{ platform_filter|urlencode }}&plan={{ plan_filter|urlencode }}" class="btn-secondary py-1.5 px-3 text-sm">Siguiente →</a>
         {% endif %}
       </div>
     </div>
     {% endif %}
   </div>
 
-</div>
-
-<!-- Modal detalle suscripción -->
+<!-- Modal detalle suscripción (dentro del x-data para que x-show funcione) -->
 <div x-show="show" x-cloak
      class="fixed inset-0 z-50 flex items-center justify-center"
      style="background:rgba(0,0,0,0.55);"
@@ -178,7 +176,7 @@
   <div class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md mx-4">
     <div class="flex items-center justify-between mb-5">
       <h3 class="text-lg font-bold text-slate-800">🔎 Detalle de suscripción</h3>
-      <button @click="close()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+      <button type="button" @click="close()" class="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Cerrar">✕</button>
     </div>
     <template x-if="sub">
       <dl class="space-y-3 text-sm">
@@ -191,28 +189,47 @@
           <dd class="font-semibold text-slate-800" x-text="sub.platform"></dd>
         </div>
         <div class="flex justify-between border-b border-slate-100 pb-2">
-          <dt class="text-slate-500">Correo de cuenta</dt>
-          <dd class="font-mono text-slate-800 text-right break-all" x-text="sub.email"></dd>
-        </div>
-        <div class="flex justify-between border-b border-slate-100 pb-2">
-          <dt class="text-slate-500">Contraseña</dt>
-          <dd class="font-mono text-slate-800" x-text="sub.password"></dd>
-        </div>
-        <div class="flex justify-between border-b border-slate-100 pb-2">
-          <dt class="text-slate-500">Perfil</dt>
-          <dd class="text-slate-800" x-text="sub.profile_name"></dd>
-        </div>
-        <div class="flex justify-between border-b border-slate-100 pb-2">
-          <dt class="text-slate-500">PIN</dt>
-          <dd class="font-mono font-bold text-slate-800 tracking-widest" x-text="sub.pin"></dd>
-        </div>
-        <div class="flex justify-between">
           <dt class="text-slate-500">Vence</dt>
-          <dd class="text-slate-800" x-text="sub.end_date"></dd>
+          <dd class="text-slate-800" x-text="sub.end"></dd>
         </div>
       </dl>
     </template>
+
+    <!-- Credenciales: se piden al servidor solo al pulsar; cada consulta queda registrada -->
+    <div class="mt-4">
+      <template x-if="!creds">
+        <div>
+          <button type="button" @click="reveal()" :disabled="loading"
+                  class="w-full py-2 rounded-xl text-sm font-semibold"
+                  style="background:#1e293b;color:white;" x-text="loading ? 'Cargando…' : (error ? '↻ Reintentar' : '🔓 Mostrar credenciales')"></button>
+          <p x-show="error" x-text="error" class="text-sm mt-2" style="color:#991B1B;"></p>
+          <p class="text-xs text-slate-500 mt-2">Por seguridad las credenciales no se cargan con la página. Esta consulta queda registrada.</p>
+        </div>
+      </template>
+      <template x-if="creds">
+        <dl class="space-y-3 text-sm">
+          <div class="flex justify-between border-b border-slate-100 pb-2">
+            <dt class="text-slate-500">Correo de cuenta</dt>
+            <dd class="font-mono text-slate-800 text-right break-all" x-text="creds.email"></dd>
+          </div>
+          <div class="flex justify-between border-b border-slate-100 pb-2">
+            <dt class="text-slate-500">Contraseña</dt>
+            <dd class="font-mono text-slate-800" x-text="creds.password"></dd>
+          </div>
+          <div class="flex justify-between border-b border-slate-100 pb-2">
+            <dt class="text-slate-500">Perfil</dt>
+            <dd class="text-slate-800" x-text="creds.profile"></dd>
+          </div>
+          <div class="flex justify-between">
+            <dt class="text-slate-500">PIN</dt>
+            <dd class="font-mono font-bold text-slate-800 tracking-widest" x-text="creds.pin"></dd>
+          </div>
+        </dl>
+      </template>
+    </div>
   </div>
+</div>
+
 </div>
 
 <script>
@@ -220,8 +237,25 @@ function subModal() {
   return {
     show: false,
     sub: null,
-    open(data) { this.sub = data; this.show = true; },
-    close() { this.show = false; this.sub = null; }
+    creds: null,
+    loading: false,
+    error: '',
+    open(data) { this.sub = data; this.creds = null; this.error = ''; this.show = true; },
+    close() { this.show = false; this.sub = null; this.creds = null; this.error = ''; },
+    async reveal() {
+      if (!this.sub || this.loading) return;
+      this.loading = true; this.error = '';
+      try {
+        const r = await fetch('/panel/subscriptions/' + encodeURIComponent(this.sub.subId) + '/credentials', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudieron cargar las credenciales.');
+        this.creds = d;
+      } catch (e) {
+        this.error = (e && e.message) || 'No se pudieron cargar las credenciales. Intenta de nuevo.';
+      } finally {
+        this.loading = false;   // siempre se rehabilita el botón
+      }
+    }
   }
 }
 </script>

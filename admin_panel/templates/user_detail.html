@@ -78,15 +78,17 @@
         <div class="mt-5 space-y-2">
           {% if user.get('status') == 'blocked' %}
           <form action="/panel/users/{{ user['id'] }}/unblock" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
             <button type="submit" class="btn-success w-full justify-center">✅ Desbloquear usuario</button>
           </form>
           {% else %}
           <form action="/panel/users/{{ user['id'] }}/block" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
             <button type="submit" class="btn-danger w-full justify-center">🚫 Bloquear usuario</button>
           </form>
           {% endif %}
           {% if user.get('telegram_id') %}
-          <a href="https://t.me/{{ user.get('username', '') }}" target="_blank" class="btn-secondary w-full justify-center text-sm">
+          <a href="https://t.me/{{ (user.get('username') or '')|urlencode }}" target="_blank" class="btn-secondary w-full justify-center text-sm">
             📱 Ver en Telegram
           </a>
           {% endif %}
@@ -103,6 +105,7 @@
         </button>
         <div x-show="open" x-cloak class="px-5 pb-5" style="border-top:1px solid #E2E8F0;">
           <form action="/panel/users/{{ user['id'] }}/edit" method="POST" class="space-y-3 mt-4">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
             <div>
               <label class="form-label text-xs">Nombre</label>
               <input type="text" name="name" value="{{ user.get('name') or '' }}" placeholder="Nombre completo" class="form-input text-sm py-2" />
@@ -147,12 +150,14 @@
             </thead>
             <tbody>
               {% for sub in subscriptions %}
-              <tr x-data="{
+              <tr data-profile-id="{{ sub.get('profile_id') or '' }}" data-platform-id="{{ sub['platform_id'] }}"
+                x-data="{
                 editing: false,
                 profiles: [],
-                profileId: '{{ sub.get('profile_id') or '' }}',
+                profileId: '',
+                init() { this.profileId = this.$el.dataset.profileId || ''; },
                 loadProfiles() {
-                  fetch('/panel/api/profiles/available/{{ sub['platform_id'] }}')
+                  fetch('/panel/api/profiles/available/' + encodeURIComponent(this.$el.dataset.platformId))
                     .then(r => r.json())
                     .then(d => { this.profiles = d.profiles || []; });
                 }
@@ -164,13 +169,9 @@
                   {% set acc = prof.get('accounts') or {} %}
                   <button
                     type="button"
-                    @click="$dispatch('open-credentials', {
-                      platform: '{{ (sub.get('platforms') or {}).get('icon_emoji','') }} {{ (sub.get('platforms') or {}).get('name','—') }}',
-                      email: '{{ acc.get('email','—') }}',
-                      password: '{{ acc.get('password','—') }}',
-                      profile: '{{ prof.get('profile_name','—') }}',
-                      pin: '{{ prof.get('pin','—') }}'
-                    })"
+                    data-sub-id="{{ sub['id'] }}"
+                    data-platform="{{ (sub.get('platforms') or {}).get('icon_emoji','') }} {{ (sub.get('platforms') or {}).get('name','—') }}"
+                    @click="$dispatch('open-credentials', { id: $el.dataset.subId, platform: $el.dataset.platform })"
                     class="font-semibold text-left hover:underline transition-colors"
                     style="color:#1e293b; cursor:pointer;"
                     title="Ver credenciales"
@@ -216,16 +217,19 @@
                       {% if sub.get('profile_id') %}
                       <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST"
                         onsubmit="return confirm('¿Corte suave? Se cambia el PIN y se notifica al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                         <button type="submit" title="Corte suave" class="text-xs px-2 py-0.5 rounded-lg transition-colors font-semibold" style="background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;">🔒 Corte</button>
                       </form>
                       {% endif %}
                       <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST"
                         onsubmit="return confirm('¿Cortar acceso y liberar perfil? Se notifica al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                         <button type="submit" title="Cortar y liberar perfil" class="text-xs px-2 py-0.5 rounded-lg transition-colors font-semibold" style="background:#FEE2E2;border:1px solid #FECACA;color:#991B1B;">✂️ Cortar</button>
                       </form>
                     {% elif s in ('expired', 'cancelled') %}
                     <form action="/panel/subscriptions/{{ sub['id'] }}/delete" method="POST"
                       onsubmit="return confirm('¿Eliminar esta suscripción? No se puede deshacer.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                       <button type="submit" class="text-xs font-medium transition-colors" style="color:#DC2626;">🗑️</button>
                     </form>
                     {% endif %}
@@ -235,6 +239,7 @@
                 <!-- Edit mode -->
                 <td colspan="6" x-show="editing" x-cloak class="px-4 py-3" style="background:#F8FAFC;">
                   <form action="/panel/subscriptions/{{ sub['id'] }}/edit" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                       <div>
                         <label class="form-label text-xs">Fecha vencimiento</label>
@@ -321,6 +326,7 @@
         </button>
         <div x-show="open" x-cloak class="px-5 pb-6" style="border-top:1px solid #E2E8F0;">
           <form action="/panel/users/{{ user['id'] }}/add-subscription" method="POST" class="space-y-4 mt-4">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -421,56 +427,70 @@
   </div>
 </div>
 
-<!-- Modal credenciales -->
+<!-- Modal credenciales: se piden al servidor solo al pulsar «Mostrar»; cada consulta queda registrada -->
 <div
   x-data="{
-    open: false,
-    platform: '',
-    email: '',
-    password: '',
-    profile: '',
-    pin: '',
-    copied: ''
+    open: false, id: '', platform: '',
+    email: '', password: '', profile: '', pin: '',
+    loaded: false, loading: false, error: '', copied: '',
+    async reveal() {
+      if (!this.id || this.loading) return;
+      this.loading = true; this.error = '';
+      try {
+        const r = await fetch('/panel/subscriptions/' + encodeURIComponent(this.id) + '/credentials', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudieron cargar las credenciales.');
+        this.email = d.email; this.password = d.password; this.profile = d.profile; this.pin = d.pin;
+        this.loaded = true;
+      } catch (e) {
+        this.error = (e && e.message) || 'No se pudieron cargar las credenciales. Intenta de nuevo.';
+      } finally {
+        this.loading = false;
+      }
+    },
+    close() { this.open = false; this.email = this.password = this.profile = this.pin = ''; this.loaded = false; this.error = ''; }
   }"
   @open-credentials.window="
-    platform = $event.detail.platform;
-    email = $event.detail.email;
-    password = $event.detail.password;
-    profile = $event.detail.profile;
-    pin = $event.detail.pin;
-    open = true;
-    copied = '';
+    id = $event.detail.id; platform = $event.detail.platform;
+    email = password = profile = pin = ''; loaded = false; error = ''; copied = ''; open = true;
   "
+  @keydown.escape.window="close()"
   x-show="open"
   x-cloak
   class="fixed inset-0 z-50 flex items-center justify-center"
   style="background:rgba(0,0,0,0.5);"
-  @click.self="open = false"
+  @click.self="close()"
 >
   <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-base font-bold" style="color:#1e293b;" x-text="platform"></h3>
-      <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl font-bold">×</button>
+      <button type="button" @click="close()" aria-label="Cerrar" class="text-gray-400 hover:text-gray-600 text-xl font-bold">×</button>
     </div>
     <div class="space-y-3">
       <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
         <p class="text-xs font-semibold mb-1" style="color:#64748B;">📧 CORREO</p>
-        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="email"></p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="loaded ? email : '••••••••'"></p>
       </div>
       <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
         <p class="text-xs font-semibold mb-1" style="color:#64748B;">🔑 CONTRASEÑA</p>
-        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="password"></p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="loaded ? password : '••••••••'"></p>
       </div>
       <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
         <p class="text-xs font-semibold mb-1" style="color:#64748B;">👤 PERFIL</p>
-        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="profile"></p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="loaded ? profile : '••••••••'"></p>
       </div>
       <div class="rounded-lg p-3" style="background:#F8FAFC; border:1px solid #E2E8F0;">
         <p class="text-xs font-semibold mb-1" style="color:#64748B;">🔢 PIN</p>
-        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="pin"></p>
+        <p class="text-sm font-mono font-bold" style="color:#1e293b;" x-text="loaded ? pin : '••••'"></p>
       </div>
     </div>
-    <button
+    <p x-show="error" x-text="error" class="text-sm mt-3" style="color:#991B1B;"></p>
+    <button type="button" x-show="!loaded" @click="reveal()" :disabled="loading"
+      class="w-full mt-4 py-2 rounded-xl text-sm font-semibold transition-colors"
+      style="background:#1e293b; color:white;"
+      x-text="loading ? 'Cargando…' : (error ? '↻ Reintentar' : '🔓 Mostrar credenciales')"></button>
+    <p x-show="!loaded" class="text-xs mt-2" style="color:#64748B;">Por seguridad no se cargan con la página. Esta consulta queda registrada.</p>
+    <button type="button" x-show="loaded"
       @click="
         navigator.clipboard.writeText(
           'Plataforma: ' + platform + '\n' +

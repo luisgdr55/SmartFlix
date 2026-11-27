@@ -81,7 +81,7 @@
               <div class="flex items-center gap-2">
                 <a href="/panel/accounts/{{ acc['id'] }}/edit" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">✏️ Editar</a>
                 <a href="/panel/profiles?platform={{ acc.get('platform_id','') }}" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">👤 Perfiles</a>
-                <button @click="deleteId = '{{ acc['id'] }}'; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+                <button data-id="{{ acc['id'] }}" @click="deleteId = $el.dataset.id; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
               </div>
             </td>
           </tr>
@@ -109,6 +109,7 @@
       <div class="flex gap-3">
         <button @click="showDeleteModal = false" class="btn-secondary flex-1 justify-center">Cancelar</button>
         <form :action="'/panel/accounts/' + deleteId + '/delete'" method="POST" class="flex-1">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="btn-danger w-full justify-center">Eliminar</button>
         </form>
       </div>

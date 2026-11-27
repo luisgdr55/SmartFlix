@@ -20,6 +20,7 @@ from config import settings
 
 # Admin panel router
 from admin_panel.router import panel_router
+from admin_panel.security import register_security
 
 # Configure logging
 logging.basicConfig(
@@ -624,12 +625,20 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI app
+# La documentación interactiva (/docs, /redoc, /openapi.json) solo existe en
+# desarrollo (DEBUG=true): en producción no debe listar las rutas del panel.
 app = FastAPI(
     title="SmartFlixVE Bot",
     description="Telegram bot for streaming profile rental in Venezuela",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
+
+# Cabeceras de seguridad y manejo del error CSRF del panel
+register_security(app)
 
 # Mount admin panel
 app.include_router(panel_router)
@@ -639,8 +648,8 @@ app.include_router(panel_router)
 async def telegram_webhook(request: Request) -> Response:
     """Receive Telegram webhook updates."""
     # Verify secret token
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret != settings.WEBHOOK_SECRET:
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+    if not hmac.compare_digest(secret.encode("utf-8"), settings.WEBHOOK_SECRET.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
     try:
