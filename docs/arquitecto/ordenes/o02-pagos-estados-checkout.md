@@ -158,6 +158,9 @@ Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto 
 - Imagen repetida: sin recomendación; se mantiene «solo marca».
 - Lote 5 construido: aprobación por orden, anomalías y borrado seguro. **Pendientes de decisión:** aprobación parcial por ítem (recomendado: dividir la orden), anular una orden aprobada con asiento contrario (recomendado: función SQL que revierta renovaciones y nuevas) y `/renovar` por el motor. Detalle: `docs/subfases/o02-lote5-admin.md`.
 
+- Veredicto Lote 5: APROBADO; se aplican las recomendaciones (aprobación parcial por división de la orden, anulación con asiento contrario; `/renovar` por el motor queda en orden aparte) y arranca el Lote 6.
+- Lote 6 construido (opción B, sin corte automático). Detalle: `docs/subfases/o02-lote6-scheduler.md`.
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
