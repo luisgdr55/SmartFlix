@@ -119,6 +119,22 @@ Dos servicios de la misma plataforma pagados juntos y por separado · doble clic
 ## Pruebas obligatorias
 Suite `unittest` de lógica pura con repositorio falso: aritmética de fechas y zona horaria, totales con `Decimal`, transiciones válidas e inválidas, idempotencia, el escenario de dos servicios por plataforma, detector de anomalías. Lo que dependa de Supabase/Telegram real lo prueba el Orquestador; el cierre lo declara.
 
+## Veredicto del Orquestador sobre el Lote 0 (27/11/2026): APROBADO — se aplican las recomendaciones de `docs/subfases/o02-lote0-decisiones.md`
+Detalle, costo y riesgo de cada una en ese informe; el diagnóstico en `o02-lote0-mapa-de-estados.md`.
+1. Resumen diario de mora al admin: **sí** (9:00 Caracas, mora ≥ 7 días, tope 15, a todos los admins, botón a la ficha).
+2. `expired` heredado: **se lee como mora, sin migrar** (`is_overdue`); migración por categorías solo en el Lote 7 y con autorización.
+3. Aprobación: **función SQL atómica** (`approve_checkout_order`); debe reiniciar `reminder_sent`, `expiry_notified` y `debt_reminder_count` en cada renovación.
+4. TTL de la orden: **24 h**; reserva de perfil 30 min solo para ítems `nueva`. Pendiente de definir: quién asume la diferencia de tasa si la orden caduca.
+5. Redondeo de Bs: **una vez, `Decimal`, `ROUND_HALF_UP`, 2 decimales**; los ítems suman exactamente el total.
+6. `streamvip/`: **no se toca en O02**; orden de limpieza aparte tras verificar Railway (solo lectura).
+- N-A: al reactivar, el motor comprueba/reasigna el perfil; sin stock, la orden queda pendiente con aviso.
+- N-B: reinicio de avisos al renovar (saneamiento de filas existentes solo en el Lote 7).
+- N-C: el checkout nuevo se bloquea si no hay tasa válida (sin respaldo 36).
+- N-D: se reescriben los textos de mora; **el texto exacto se presenta al Orquestador antes de construir** (Lote 6).
+- N-E: mini-orden **O02-H** (guardas de aprobar/rechazar solo desde `pending_payment`, `cancel_and_buy` libera perfil, express acepta `active|expired`), **sin tocar `auto_expire` ni el corte** (se retiran juntos en el Lote 6).
+- N-F: el periodo empieza en la aprobación (fin de día Caracas, mes calendario).
+Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto de arranque del Lote 1 y de la orden O02-H, y el resultado del script SQL.
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
