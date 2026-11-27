@@ -182,7 +182,32 @@ class RateFlowTests(unittest.IsolatedAsyncioTestCase):
         nonce = self.ctx.user_data["rate_draft"]["nonce"]
         upd, q = make_callback(f"admin_nl:rate_ok:{nonce}")
         await self.m.handle_admin_nl_callback(upd, self.ctx)
-        self.assertIn("/tasa", q.edit_message_text.await_args.args[0])
+        self.assertIn("panel web", q.edit_message_text.await_args.args[0])
+        self.assertNotIn("/tasa", q.edit_message_text.await_args.args[0])   # /tasa no valida: no se recomienda
+
+    async def test_lookup_failure_at_confirmation_still_answers_and_changes_nothing(self):
+        await self.propose()
+        nonce = self.ctx.user_data["rate_draft"]["nonce"]
+        with mock.patch("services.exchange_service.get_current_rate", new=mock.AsyncMock(side_effect=RuntimeError("redis"))):
+            upd, q = make_callback(f"admin_nl:rate_ok:{nonce}")
+            await self.m.handle_admin_nl_callback(upd, self.ctx)
+        self.update_rate.assert_not_awaited()
+        self.assertIn("No pude completar", q.edit_message_text.await_args.args[0])
+        self.assertIsNotNone(q.edit_message_text.await_args.kwargs.get("reply_markup"))
+
+    async def test_audit_failure_after_applying_does_not_hide_the_success(self):
+        self.log_action.side_effect = RuntimeError("tabla caída")
+        await self.propose()
+        nonce = self.ctx.user_data["rate_draft"]["nonce"]
+        upd, q = make_callback(f"admin_nl:rate_ok:{nonce}")
+        await self.m.handle_admin_nl_callback(upd, self.ctx)
+        self.update_rate.assert_awaited_once()
+        self.assertIn("Tasa actualizada", q.edit_message_text.await_args.args[0])
+
+    async def test_implausible_message_points_to_the_panel_not_to_slash_tasa(self):
+        msg = await self.propose("actualiza la tasa a 2")
+        self.assertIn("panel web", msg.reply_text.await_args.args[0])
+        self.assertNotIn("/tasa", msg.reply_text.await_args.args[0])
 
     async def test_non_admin_cannot_confirm(self):
         await self.propose()

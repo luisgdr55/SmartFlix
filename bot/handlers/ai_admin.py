@@ -428,7 +428,8 @@ async def _propose_rate_change(message, context, text: str, admin_id: int) -> No
     if not ok:
         await message.reply_text(
             f"⚠️ No cambié la tasa: {reason}\n\n"
-            "Revisa el número y vuelve a escribirlo. Si de verdad es ese valor, usa el comando /tasa.",
+            "Revisa el número y vuelve a escribirlo. Si de verdad es ese valor, cámbialo desde el panel web "
+            "(Configuración → Tasa de cambio).",
             reply_markup=_back_keyboard(),
         )
         return
@@ -468,21 +469,35 @@ async def _handle_rate_confirmation(query, context, admin_id: int, action: str, 
         return
 
     value = float(draft["value"])
-    ok, reason = rate_is_plausible(value, await _current_rate_value())   # la tasa pudo cambiar mientras tanto
-    if not ok:
-        await query.edit_message_text(f"⚠️ No cambié la tasa: {reason}", reply_markup=_back_keyboard())
+    try:
+        ok, reason = rate_is_plausible(value, await _current_rate_value())   # la tasa pudo cambiar mientras tanto
+        if not ok:
+            await query.edit_message_text(f"⚠️ No cambié la tasa: {reason}", reply_markup=_back_keyboard())
+            return
+        from services.exchange_service import update_rate
+        applied = await update_rate(value, admin_id)
+    except Exception as e:
+        logger.error(f"rate confirmation error: {e}", exc_info=True)
+        await query.edit_message_text(
+            "❌ No pude completar el cambio de tasa. La tasa no se modificó; escríbeme la orden de nuevo "
+            "o cámbiala desde el panel web (Configuración).",
+            reply_markup=_back_keyboard(),
+        )
         return
-    from services.exchange_service import update_rate
-    from database.users import log_admin_action
-    if await update_rate(value, admin_id):
-        await log_admin_action(admin_id, "update_rate_nl", {"rate": value})
+
+    if applied:
+        try:
+            from database.users import log_admin_action
+            await log_admin_action(admin_id, "update_rate_nl", {"rate": value})
+        except Exception as e:  # la tasa ya cambió: el registro no debe ocultarlo
+            logger.error(f"update_rate_nl audit error: {e}")
         await query.edit_message_text(
             f"✅ Tasa actualizada: <b>Bs {value:,.2f} / USD</b>", parse_mode="HTML",
             reply_markup=_back_keyboard(),
         )
     else:
         await query.edit_message_text(
-            "❌ No se pudo actualizar la tasa. Intenta de nuevo o usa el comando /tasa.",
+            "❌ No se pudo actualizar la tasa. Intenta de nuevo o cámbiala desde el panel web (Configuración).",
             reply_markup=_back_keyboard(),
         )
 
