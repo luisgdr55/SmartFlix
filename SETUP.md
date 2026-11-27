@@ -139,6 +139,8 @@ DEBUG=false
 el servicio **no arranca** y el log nombra la variable. `SECRET_KEY` firma la cookie del panel y deriva el
 token CSRF; `ADMIN_PANEL_PASSWORD` es la clave del panel. Usa valores distintos entre sí.
 Con `DEBUG=false` (producción) `/docs`, `/redoc` y `/openapi.json` no existen.
+`WEBHOOK_SECRET` solo admite letras, números, `_` y `-` (lo exige Telegram). `TRUSTED_PROXY_HOPS` (opcional, por defecto `1`) es el número de proxies de confianza
+delante de la app; decide qué entrada de `X-Forwarded-For` es la IP real del cliente para el límite de intentos de login.
 
 **Generate the random values**: Use any random string, e.g.:
 ```bash

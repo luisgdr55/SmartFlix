@@ -16,9 +16,12 @@ En `bot/handlers/ai_admin.py`, cualquier texto del admin con «tasa», «cambio�
 - Las demás acciones con efecto (cancelar suscripción, bloquear, desbloquear) ya pedían confirmación con botón; no se tocaron.
 
 ## Verificación (ejecutada aquí)
-- `python -m unittest discover -s tests -t .` → **65 pruebas OK**, 16 de ellas de este lote (`tests/test_ai_admin_rate.py`): formatos de número, qué es una orden, plausibilidad, tarjeta sin efecto, confirmación una sola vez, cancelar, código ajeno, borrador vencido, revalidación, fallo de la actualización, no administrador, pregunta que no cambia la tasa, y clasificación de la IA sin orden explícita.
+- `python -m unittest discover -s tests -t .` → **86 pruebas OK**, 19 de ellas de este lote (`tests/test_ai_admin_rate.py`): formatos de número, qué es una orden, plausibilidad, tarjeta sin efecto, confirmación una sola vez, cancelar, código ajeno, borrador vencido, revalidación, fallo de la actualización, no administrador, pregunta que no cambia la tasa, y clasificación de la IA sin orden explícita.
 - **Pruebas de mutación**: quitar el «un solo uso», ampliar la banda de plausibilidad o aplicar la tasa sin confirmar hace fallar 2, 3 y 7 pruebas respectivamente.
 - **No verificado**: el flujo real en Telegram y la tasa real en Supabase/Redis (lo prueba el Orquestador).
+
+## Revisión independiente
+Sin defectos en el flujo: el número sale del texto (nunca de la IA), el borrador es de un solo uso y se consume antes de cualquier `await`, la banda se revalida al confirmar y el callback exige admin. Corregido por sus observaciones: la confirmación responde siempre aunque falle una consulta, un fallo de auditoría no oculta que la tasa cambió, y los avisos ya no recomiendan `/tasa` (sin validación) sino el panel web. Observación aceptada: en «actualiza los 3 pagos con tasa 1050» se interpreta 1050; es inocuo porque exige confirmar.
 
 ## Para probar en Telegram (Orquestador)
 1. «¿cuánto cambió la tasa en 2 días?» → solo muestra la tasa.
