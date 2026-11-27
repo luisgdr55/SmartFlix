@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Orden #{{ o.short }} — SmartFlixVE Admin{% endblock %}
+{% block header_title %}Orden #{{ o.short }}{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+  {% if success %}<div class="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>{% endif %}
+  {% if error %}<div class="mb-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>{% endif %}
+  <p class="mb-4"><a href="/panel/orders" class="text-sm text-indigo-500 underline">← Órdenes de pago</a></p>
+
+  <div class="bg-white border border-slate-300 rounded-2xl p-6 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <p class="font-semibold text-slate-800">{{ o.client }}{% if o.telegram_id %} <span class="text-xs text-slate-400">({{ o.telegram_id }})</span>{% endif %}</p>
+        <p class="text-xs text-slate-400">Creada: {{ o.created_at|fmt_dt }}{% if o.expires_at %} · Vence: {{ o.expires_at|fmt_dt }}{% endif %}</p>
+      </div>
+      <span class="{{ o.badge }}">{{ o.status_label }}</span>
+    </div>
+
+    <h3 class="font-semibold text-slate-700 mb-2">Qué incluye</h3>
+    <ul class="text-sm text-slate-700 space-y-1 mb-3">
+      {% for it in o['items'] %}<li>{{ it.label }} — ${{ it.usd }}{% if it.bs %} / Bs {{ it.bs }}{% endif %}</li>{% endfor %}
+    </ul>
+    {% if o.parent_id %}<p class="text-sm text-slate-500 mb-2">Resto de la orden <a class="text-indigo-500 underline" href="/panel/orders/{{ o.parent_id }}">#{{ o.parent_short }}</a> (aprobación parcial).</p>{% endif %}
+    <p class="font-bold text-slate-800">Total: ${{ o.total_usd }} / Bs {{ o.total_bs }} <span class="text-xs font-normal text-slate-400">(tasa {{ o.rate }})</span></p>
+    {% if o.reference %}<p class="text-sm text-slate-500 mt-1">Referencia leída: <span class="font-mono">{{ o.reference }}</span></p>{% endif %}
+    {% if o.decided_by %}<p class="text-xs text-slate-400 mt-2">Decidida por {{ o.decided_by }}{% if o.decision_reason %} — {{ o.decision_reason }}{% endif %}</p>{% endif %}
+  </div>
+
+  <div class="bg-white border border-slate-300 rounded-2xl p-6 mb-6">
+    <h3 class="font-semibold text-slate-700 mb-1">Señales del comprobante</h3>
+    <p class="text-xs text-slate-400 mb-3">Solo orientan: aprueba o rechaza tú. El comprobante (imagen o PDF) llegó al chat de Telegram de los admins.</p>
+    {% if o.signals %}
+    <ul class="text-sm space-y-1">{% for line in o.signals %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% else %}<p class="text-sm text-slate-400">El cliente aún no envió comprobante.</p>{% endif %}
+  </div>
+
+  {% if o.status in ('pending', 'expired') %}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+    <form method="post" action="/panel/orders/{{ o.id }}/approve" class="bg-white border border-slate-300 rounded-2xl p-5"
+          onsubmit="return confirm('¿Aprobar esta orden? Se activan/renuevan TODOS sus servicios y se avisa al cliente.')">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+      <h3 class="font-semibold text-emerald-700 mb-3">✅ Aprobar</h3>
+      <label class="form-label text-xs">Referencia del pago (opcional)</label>
+      <input name="payment_reference" class="form-input text-sm mb-3" maxlength="100" placeholder="Solo si el comprobante la trae">
+      <label class="form-label text-xs">Motivo {% if o.status == 'expired' %}(obligatorio: la orden caducó){% else %}(opcional){% endif %}</label>
+      <input name="reason" class="form-input text-sm mb-3" maxlength="200" {% if o.status == 'expired' %}required placeholder="Ej.: comprobante tardío verificado"{% endif %}>
+      <button type="submit" class="btn-success text-sm">Aprobar orden</button>
+    </form>
+    {% if o.status == 'pending' %}
+    <form method="post" action="/panel/orders/{{ o.id }}/reject" class="bg-white border border-slate-300 rounded-2xl p-5"
+          onsubmit="return confirm('¿Rechazar esta orden? Se avisa al cliente con el motivo.')">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+      <h3 class="font-semibold text-red-700 mb-3">❌ Rechazar</h3>
+      <label class="form-label text-xs">Motivo (se le explica al cliente)</label>
+      <select name="reason_code" class="form-input text-sm mb-3" required>
+        {% for code, text in reject_reasons.items() %}<option value="{{ code }}">{{ text }}</option>{% endfor %}
+      </select>
+      <label class="form-label text-xs">Detalle adicional (opcional)</label>
+      <input name="detail" class="form-input text-sm mb-3" maxlength="300">
+      <button type="submit" class="btn-danger text-sm">Rechazar orden</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if o.status in ('pending', 'expired') and o['items']|length > 1 %}
+  <form method="post" action="/panel/orders/{{ o.id }}/approve-partial" class="bg-white border border-slate-300 rounded-2xl p-5 mt-5"
+        onsubmit="return confirm('Se aprueban SOLO los ítems marcados y el resto queda en una orden nueva pendiente. ¿Continuar?')">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+    <h3 class="font-semibold text-slate-700 mb-1">✂️ Aprobar solo una parte</h3>
+    <p class="text-xs text-slate-400 mb-3">Marca lo que sí apruebas; lo demás pasa a una orden nueva pendiente (con su propio total). Si apruebas todo, usa «Aprobar orden».</p>
+    {% for it in o['items'] %}
+    <label class="flex items-center gap-2 text-sm text-slate-700 mb-1"><input type="checkbox" name="items" value="{{ it.index }}"> {{ it.label }} — ${{ it.usd }}</label>
+    {% endfor %}
+    <label class="form-label text-xs mt-3">Motivo {% if o.status == 'expired' %}(obligatorio: la orden caducó){% else %}(opcional){% endif %}</label>
+    <input name="reason" class="form-input text-sm mb-3" maxlength="200" {% if o.status == 'expired' %}required{% endif %}>
+    <button type="submit" class="btn-secondary text-sm">Aprobar lo marcado</button>
+  </form>
+  {% endif %}
+
+  {% if o.status == 'approved' %}
+  <form method="post" action="/panel/orders/{{ o.id }}/void" class="bg-white border border-red-200 rounded-2xl p-5 mt-5"
+        onsubmit="return confirm('¿Anular esta orden aprobada? Las renovaciones vuelven a su fecha anterior y las compras nuevas se anulan. Queda el historial con la reversa y se avisa al cliente.')">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+    <h3 class="font-semibold text-red-700 mb-1">↩️ Anular esta orden aprobada</h3>
+    <p class="text-xs text-slate-400 mb-3">Para corregir una aprobación hecha por error. No borra nada: agrega un asiento contrario al historial.
+      {% if o.has_change_item %}<strong class="text-red-600">Esta orden incluye un cambio de plataforma: no se revierte sola; usa «Anomalías».</strong>{% endif %}</p>
+    <label class="form-label text-xs">Motivo (obligatorio, queda auditado)</label>
+    <input name="reason" class="form-input text-sm mb-3" required minlength="5" maxlength="300">
+    <button type="submit" class="btn-danger text-sm">Anular orden</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

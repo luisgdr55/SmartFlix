@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from datetime import timedelta
 
@@ -15,25 +16,47 @@ VENEZUELA_TZ = pytz.timezone("America/Caracas")
 scheduler = AsyncIOScheduler(timezone=VENEZUELA_TZ)
 
 
+def _locked_job(name: str, ttl_seconds: int):
+    """Candado Redis por job (O02 Lote 6): dos pasadas o dos procesos no corren el mismo job a la vez.
+    Falla cerrada: si Redis no responde, esta pasada se omite (mejor saltarla que correrla dos veces)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            from services.locks import lock
+            with lock(f"job:{name}", ttl_seconds) as token:
+                if token is None:
+                    logger.warning(f"job {name}: otra pasada lo tiene o Redis no responde; se omite esta pasada")
+                    return None
+                return await fn(*args, **kwargs)
+        return wrapper
+    return deco
+
+
 # ============================================================
 # JOB 1: Expiry reminders (D-3) - daily at 10AM VE time
 # ============================================================
+@_locked_job("expiry_reminders", 900)
 async def job_expiry_reminders() -> None:
-    """Send 3-day expiry reminders."""
+    """Send 3-day expiry reminders. Cada aviso se reclama antes de enviarlo (UPDATE condicional) para
+    que dos pasadas simultáneas no lo manden dos veces; si el envío falla, se devuelve el reclamo."""
     logger.info("Running job: expiry_reminders")
     try:
-        from database.subscriptions import get_expiring_subscriptions
+        from database.subscriptions import claim_flag, get_expiring_subscriptions, release_flag
         from services.notification_service import send_expiry_reminder
 
         expiring = await get_expiring_subscriptions(days_ahead=3)
         logger.info(f"Found {len(expiring)} expiring subscriptions to remind")
 
         for sub in expiring:
+            sub_id = str(sub["id"])
             try:
-                await send_expiry_reminder(str(sub["id"]))
+                if not await claim_flag(sub_id, "reminder_sent"):
+                    continue
+                if not await send_expiry_reminder(sub_id):
+                    await release_flag(sub_id, "reminder_sent")
                 await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error sending expiry reminder for {sub['id']}: {e}")
+                logger.error(f"Error sending expiry reminder for {sub_id}: {e}")
     except Exception as e:
         logger.error(f"Error in job_expiry_reminders: {e}")
 
@@ -41,22 +64,28 @@ async def job_expiry_reminders() -> None:
 # ============================================================
 # JOB 2: Expiry notifications (D+0) - hourly
 # ============================================================
+@_locked_job("expiry_notifications", 900)
 async def job_expiry_notifications() -> None:
-    """Send expiry notifications for subscriptions that just expired."""
+    """Aviso D+0 a las suscripciones recién vencidas (`active` o `expired` heredado, últimas 48 h),
+    reclamado de forma atómica antes de enviar."""
     logger.info("Running job: expiry_notifications")
     try:
-        from database.subscriptions import get_expired_subscriptions_to_notify
+        from database.subscriptions import claim_flag, get_expired_subscriptions_to_notify, release_flag
         from services.notification_service import send_expiry_notification
 
         expired = await get_expired_subscriptions_to_notify()
         logger.info(f"Found {len(expired)} expired subscriptions to notify")
 
         for sub in expired:
+            sub_id = str(sub["id"])
             try:
-                await send_expiry_notification(str(sub["id"]))
+                if not await claim_flag(sub_id, "expiry_notified"):
+                    continue
+                if not await send_expiry_notification(sub_id):
+                    await release_flag(sub_id, "expiry_notified")
                 await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error sending expiry notification for {sub['id']}: {e}")
+                logger.error(f"Error sending expiry notification for {sub_id}: {e}")
     except Exception as e:
         logger.error(f"Error in job_expiry_notifications: {e}")
 
@@ -64,6 +93,7 @@ async def job_expiry_notifications() -> None:
 # ============================================================
 # JOB 3: Express release - every 5 minutes
 # ============================================================
+@_locked_job("express_release", 240)
 async def job_express_release() -> None:
     """Release expired express subscriptions, rotate PIN, notify admin and queue."""
     logger.info("Running job: express_release")
@@ -90,16 +120,32 @@ async def job_express_release() -> None:
                 user = sub.get("users") or {}
                 client_name = user.get("name") or user.get("username") or "Sin nombre"
 
-                # Expire subscription
-                expired_ok = await expire_subscription(sub_id)
-                if not expired_ok:
-                    logger.warning(
-                        f"job_express_release: expire_subscription failed for {sub_id}, skipping to avoid double processing"
-                    )
-                    continue
+                if sub.get("status") == "expired":
+                    # O02-H: `auto_expire` la marcó antes que este job. Se libera solo si el perfil
+                    # sigue ocupado y ninguna otra suscripción activa lo usa (idempotente).
+                    from database.profiles import release_profile_for_cut
+                    rel = await release_profile_for_cut(str(profile_id), exclude_sub_id=sub_id)
+                    if not rel or not rel["released"]:
+                        logger.info(
+                            f"job_express_release: express {sub_id} (expired) no liberada: "
+                            f"{(rel or {}).get('reason') or 'error al leer el perfil'}"
+                        )
+                        continue
+                    old_pin = rel["old_pin"]
+                    new_pin = rel["new_pin"]
+                else:
+                    # Expire subscription
+                    expired_ok = await expire_subscription(sub_id)
+                    if not expired_ok:
+                        logger.warning(
+                            f"job_express_release: expire_subscription failed for {sub_id}, skipping to avoid double processing"
+                        )
+                        continue
 
                 # Change PIN + release profile
-                if profile_id:
+                if sub.get("status") == "expired":
+                    pass  # ya liberado arriba
+                elif profile_id:
                     new_pin = "".join(random.choices(string.digits, k=4))
                     from database import get_supabase
                     from utils.helpers import venezuela_now
@@ -144,6 +190,7 @@ async def job_express_release() -> None:
 # ============================================================
 # JOB 4: Queue cleanup - daily at 3AM
 # ============================================================
+@_locked_job("queue_cleanup", 600)
 async def job_queue_cleanup() -> None:
     """Remove expired entries from express_queue."""
     logger.info("Running job: queue_cleanup")
@@ -162,6 +209,7 @@ async def job_queue_cleanup() -> None:
 # ============================================================
 # JOB 5: New releases scan - Mon+Thu 9AM
 # ============================================================
+@_locked_job("new_releases_scan", 900)
 async def job_new_releases_scan() -> None:
     """Scan for new content releases in Venezuela."""
     logger.info("Running job: new_releases_scan")
@@ -212,6 +260,7 @@ async def job_new_releases_scan() -> None:
 # ============================================================
 # JOB 6: Pending payment cleanup - every 45 minutes
 # ============================================================
+@_locked_job("pending_payment_cleanup", 300)
 async def job_pending_payment_cleanup() -> None:
     """Cancel pending subscriptions older than 45 minutes."""
     logger.info("Running job: pending_payment_cleanup")
@@ -227,6 +276,7 @@ async def job_pending_payment_cleanup() -> None:
 # ============================================================
 # JOB 7: Daily admin report - 8AM VE time
 # ============================================================
+@_locked_job("daily_admin_report", 600)
 async def job_daily_admin_report() -> None:
     """Send daily stats report to admins."""
     logger.info("Running job: daily_admin_report")
@@ -272,123 +322,68 @@ async def job_daily_admin_report() -> None:
 # ============================================================
 # JOB 8: Debt reminders + hard cut - daily at 9AM VE time
 # ============================================================
+@_locked_job("debt_reminders", 1800)
 async def job_debt_reminders_and_cuts() -> None:
+    """Recordatorios de deuda D+1 a D+6 y resumen diario de mora al admin.
+
+    OPCIÓN B (decisión del Orquestador, 27/11/2026): **no hay corte automático**. El servicio de un
+    cliente en mora sigue activo; cortar es una acción manual del admin. Después del día 6 no se envían más
+    recordatorios. (El nombre de la función se conserva por compatibilidad con el id del job.)
     """
-    Daily job for expired monthly subscriptions:
-    - Days 1-6 after expiration: send a debt reminder and increment counter.
-    - Day 7+ (counter >= 6): release profile, cancel subscription, notify client + admin.
-    """
-    logger.info("Running job: debt_reminders_and_cuts")
+    logger.info("Running job: debt_reminders")
     try:
         from database.subscriptions import (
-            get_subscriptions_in_grace_period,
-            increment_debt_reminder,
+            claim_debt_reminder, get_subscriptions_for_debt_reminders, release_debt_reminder,
         )
-        from services.notification_service import (
-            send_debt_reminder,
-        )
+        from services.notification_service import send_debt_reminder
 
-        # ── PART 1: Send daily debt reminders (days 1-6) ──────────────
-        grace_subs = await get_subscriptions_in_grace_period()
-        logger.info(f"Found {len(grace_subs)} subscriptions in grace period")
+        subs = await get_subscriptions_for_debt_reminders()
+        logger.info(f"Found {len(subs)} subscriptions due a debt reminder today")
 
-        for sub in grace_subs:
+        for sub in subs:
+            sub_id = str(sub["id"])
+            day = int(sub["days_overdue"])
             try:
-                sub_id = str(sub["id"])
-                current_count = sub.get("debt_reminder_count") or 0
-                day_number = current_count + 1
-                await send_debt_reminder(sub, day_number)
-                await increment_debt_reminder(sub_id, current_count)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Error sending debt reminder for {sub.get('id')}: {e}")
-
-        # ── PART 2: Cut service for subscriptions past grace period (day 7+) ──
-        from database.subscriptions import (
-            get_subscriptions_past_grace_period,
-            cancel_subscription,
-        )
-        from database.profiles import release_profile
-        from services.notification_service import send_to_user, send_to_admin
-
-        import random
-        import string
-
-        past_grace = await get_subscriptions_past_grace_period()
-        logger.info(f"Found {len(past_grace)} subscriptions past grace period — cutting")
-
-        for sub in past_grace:
-            try:
-                sub_id = str(sub["id"])
-                profile = sub.get("profiles") or {}
-                profile_id = str(profile.get("id", "")) if profile.get("id") else None
-                profile_name = profile.get("profile_name", "—")
-                old_pin = profile.get("pin", "—")
-                platform = sub.get("platforms") or {}
-                platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
-                user = sub.get("users") or {}
-                client_tid = user.get("telegram_id")
-                client_name = user.get("name") or "Sin nombre"
-
-                # 1. Cancelar suscripción primero (guard anti-doble corte)
-                cancelled_ok = await cancel_subscription(sub_id)
-                if not cancelled_ok:
-                    logger.warning(f"job_debt_cuts: cancel_subscription failed for {sub_id}, skipping")
+                if not await claim_debt_reminder(sub_id, day):
                     continue
-
-                # 2. Rotar PIN y liberar perfil
-                new_pin = "—"
-                if profile_id:
-                    new_pin = "".join(random.choices(string.digits, k=4))
-                    from database import get_supabase
-                    from utils.helpers import venezuela_now
-                    sb = get_supabase()
-                    sb.table("profiles").update({
-                        "pin": new_pin,
-                        "status": "available",
-                        "last_released": venezuela_now().isoformat(),
-                        "reserved_for": None,
-                        "reserved_until": None,
-                    }).eq("id", profile_id).execute()
-
-                # 3. Notificar al cliente (si tiene Telegram)
-                if client_tid:
-                    await send_to_user(
-                        client_tid,
-                        f"😔 <b>Tu suscripción de {platform_name} ha sido cancelada</b>\n\n"
-                        f"No recibimos tu pago de renovación después de 7 días.\n"
-                        f"Tu perfil ha sido liberado.\n\n"
-                        f"Cuando quieras reactivar tu servicio, escribe <b>renovar</b> "
-                        f"o visita el menú principal. 🙏"
-                    )
-
-                # 4. Notificar al admin con credenciales completas
-                account = profile.get("accounts") or {}
-                await send_to_admin(
-                    f"✂️ <b>Corte automático día 7</b>\n\n"
-                    f"🎬 Plataforma: <b>{platform_name}</b>\n"
-                    f"👤 Perfil: <b>{profile_name}</b>\n"
-                    f"👥 Cliente: <b>{client_name}</b>\n\n"
-                    f"🔐 <b>Datos de la cuenta:</b>\n"
-                    f"📧 Email: <code>{account.get('email', '—')}</code>\n"
-                    f"🔑 Contraseña: <code>{account.get('password', '—')}</code>\n"
-                    f"🔢 PIN anterior: <code>{old_pin}</code>\n"
-                    f"🔄 PIN nuevo asignado: <code>{new_pin}</code>\n\n"
-                    f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
-                )
-
+                if not await send_debt_reminder(sub, day):
+                    await release_debt_reminder(sub_id, day)
                 await asyncio.sleep(0.5)
-
             except Exception as e:
-                logger.error(f"Error cutting subscription {sub.get('id')}: {e}")
-
+                logger.error(f"Error sending debt reminder for {sub_id}: {e}")
     except Exception as e:
-        logger.error(f"Error in job_debt_reminders_and_cuts: {e}")
+        logger.error(f"Error in job_debt_reminders_and_cuts (recordatorios): {e}")
+
+    await _send_mora_summary()
+
+
+async def _send_mora_summary() -> None:
+    """Resumen diario al admin: clientes con 7 días de mora o más, su deuda y un botón por cliente."""
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from config import settings
+        from database.subscriptions import get_overdue_subscriptions
+        from services import mora
+        from services.notification_service import send_to_admin
+
+        rows = mora.mora_rows(await get_overdue_subscriptions(mora.MIN_DAYS))
+        if not rows:
+            return
+        base = (settings.APP_URL or "").rstrip("/")
+        panel_url = f"{base}/panel/subscriptions?status=overdue" if base.startswith("http") else ""
+        buttons = [[InlineKeyboardButton(text, callback_data=cb)] for text, cb in mora.client_buttons(rows)]
+        if panel_url.startswith("https://"):
+            buttons.append([InlineKeyboardButton("📋 Ver todos en el panel", url=panel_url)])
+        await send_to_admin(mora.summary_text(rows, panel_url), keyboard=InlineKeyboardMarkup(buttons) if buttons else None)
+    except Exception as e:
+        logger.error(f"Error in _send_mora_summary: {e}")
 
 
 # ============================================================
 # JOB 9: Release expired profile reservations - every 10 min
 # ============================================================
+@_locked_job("release_expired_reservations", 300)
 async def job_release_expired_reservations() -> None:
     """Release profiles whose 30-min reservation TTL has expired."""
     try:
@@ -401,19 +396,30 @@ async def job_release_expired_reservations() -> None:
 
 
 # ============================================================
-# JOB 10: Auto-expire overdue subscriptions - every 15 min
+# JOB 10 (retirado): auto_expire. La mora es un dato derivado (end_date < ahora); ningún job cambia
+# el estado de una suscripción por estar vencida (O02 Lote 6, opción B).
 # ============================================================
-async def job_auto_expire() -> None:
-    """Mark active-but-overdue subscriptions as expired."""
+
+# ============================================================
+# JOB 12: Vencimiento de órdenes de pago sin pagar (24 h) - cada 30 min, solo con CHECKOUT_V2_ENABLED
+# ============================================================
+@_locked_job("expire_orders", 300)
+async def job_expire_orders() -> None:
+    """Pasa a `expired` las órdenes pendientes cuyo plazo (24 h) venció. No se borran: si el cliente
+    pagó tarde, el admin puede aprobarlas con motivo."""
     try:
-        from database.subscriptions import auto_expire_overdue_subscriptions
-        count = await auto_expire_overdue_subscriptions()
-        if count:
-            logger.info(f"job_auto_expire: expired {count} overdue subscription(s)")
+        from config import settings
+        if not settings.CHECKOUT_V2_ENABLED:
+            return
+        from database.orders import expire_stale_orders
+        n = await expire_stale_orders()
+        if n:
+            logger.info(f"job_expire_orders: {n} orden(es) vencida(s)")
     except Exception as e:
-        logger.error(f"Error in job_auto_expire: {e}")
+        logger.error(f"Error in job_expire_orders: {e}")
 
 
+@_locked_job("monthly_closing_report", 900)
 async def job_monthly_closing_report():
     """Job 11 — Monthly closing report. Runs 1st of each month at 9:00 AM Venezuela."""
     logger.info("Job 11: Sending monthly closing report")
@@ -476,108 +482,29 @@ async def job_monthly_closing_report():
         await send_to_admin(f"⚠️ Error en reporte mensual: {e}")
 
 
+def _add(func, trigger, job_id: str, name: str, grace: int) -> None:
+    """Registra un job con `coalesce` (pasadas perdidas = una sola), una instancia a la vez y una
+    tolerancia explícita de retraso (`misfire_grace_time`)."""
+    scheduler.add_job(
+        func, trigger, id=job_id, name=name, replace_existing=True,
+        coalesce=True, max_instances=1, misfire_grace_time=grace,
+    )
+
+
 def setup_scheduler() -> AsyncIOScheduler:
     """Configure and return the scheduler with all jobs."""
-    # Job 1: Expiry reminders - daily at 10:00 AM Venezuela time
-    scheduler.add_job(
-        job_expiry_reminders,
-        CronTrigger(hour=10, minute=0, timezone=VENEZUELA_TZ),
-        id="expiry_reminders",
-        name="Expiry Reminders (D-3)",
-        replace_existing=True,
-    )
+    _add(job_expiry_reminders, CronTrigger(hour=10, minute=0, timezone=VENEZUELA_TZ), "expiry_reminders", "Expiry Reminders (D-3)", 3600)
+    _add(job_expiry_notifications, IntervalTrigger(hours=1), "expiry_notifications", "Expiry Notifications (D+0)", 900)
+    _add(job_express_release, IntervalTrigger(minutes=5), "express_release", "Express Release", 120)
+    _add(job_queue_cleanup, CronTrigger(hour=3, minute=0, timezone=VENEZUELA_TZ), "queue_cleanup", "Queue Cleanup", 3600)
+    _add(job_new_releases_scan, CronTrigger(day_of_week="mon,thu", hour=9, minute=0, timezone=VENEZUELA_TZ), "new_releases_scan", "New Releases Scan", 3600)
+    _add(job_pending_payment_cleanup, IntervalTrigger(hours=4), "pending_payment_cleanup", "Pending Payment Cleanup", 900)
+    _add(job_daily_admin_report, CronTrigger(hour=8, minute=0, timezone=VENEZUELA_TZ), "daily_admin_report", "Daily Admin Report", 3600)
+    # Recordatorios de deuda D+1..D+6 y resumen de mora (SIN corte automático).
+    _add(job_debt_reminders_and_cuts, CronTrigger(hour=9, minute=0, timezone=VENEZUELA_TZ), "debt_reminders_and_cuts", "Debt Reminders + Mora Summary", 3600)
+    _add(job_release_expired_reservations, IntervalTrigger(minutes=10), "release_expired_reservations", "Release Expired Profile Reservations", 300)
+    _add(job_monthly_closing_report, CronTrigger(day=1, hour=9, minute=0, timezone=VENEZUELA_TZ), "job_monthly_closing_report", "Monthly Closing Report", 3600)
+    _add(job_expire_orders, IntervalTrigger(minutes=30), "expire_orders", "Expire Unpaid Orders (24h)", 600)
 
-    # Job 2: Expiry notifications - every hour
-    scheduler.add_job(
-        job_expiry_notifications,
-        IntervalTrigger(hours=1),
-        id="expiry_notifications",
-        name="Expiry Notifications",
-        replace_existing=True,
-    )
-
-    # Job 3: Express release - every 5 minutes
-    scheduler.add_job(
-        job_express_release,
-        IntervalTrigger(minutes=5),
-        id="express_release",
-        name="Express Release",
-        replace_existing=True,
-    )
-
-    # Job 4: Queue cleanup - daily at 3:00 AM Venezuela time
-    scheduler.add_job(
-        job_queue_cleanup,
-        CronTrigger(hour=3, minute=0, timezone=VENEZUELA_TZ),
-        id="queue_cleanup",
-        name="Queue Cleanup",
-        replace_existing=True,
-    )
-
-    # Job 5: New releases scan - Monday and Thursday at 9:00 AM Venezuela time
-    scheduler.add_job(
-        job_new_releases_scan,
-        CronTrigger(day_of_week="mon,thu", hour=9, minute=0, timezone=VENEZUELA_TZ),
-        id="new_releases_scan",
-        name="New Releases Scan",
-        replace_existing=True,
-    )
-
-    # Job 6: Pending payment cleanup - every 4 hours
-    scheduler.add_job(
-        job_pending_payment_cleanup,
-        IntervalTrigger(hours=4),
-        id="pending_payment_cleanup",
-        name="Pending Payment Cleanup",
-        replace_existing=True,
-    )
-
-    # Job 7: Daily admin report - 8:00 AM Venezuela time
-    scheduler.add_job(
-        job_daily_admin_report,
-        CronTrigger(hour=8, minute=0, timezone=VENEZUELA_TZ),
-        id="daily_admin_report",
-        name="Daily Admin Report",
-        replace_existing=True,
-    )
-
-    # Job 8: Debt reminders - 9:00 AM Venezuela time
-    scheduler.add_job(
-        job_debt_reminders_and_cuts,
-        CronTrigger(hour=9, minute=0, timezone=VENEZUELA_TZ),
-        id="debt_reminders_and_cuts",
-        name="Debt Reminders",
-        replace_existing=True,
-    )
-
-    # Job 9: Release expired profile reservations - every 10 min
-    scheduler.add_job(
-        job_release_expired_reservations,
-        "interval",
-        minutes=10,
-        id="release_expired_reservations",
-        name="Release Expired Profile Reservations",
-        replace_existing=True,
-    )
-
-    # Job 10: Auto-expire overdue subscriptions - every 15 minutes
-    scheduler.add_job(
-        job_auto_expire,
-        IntervalTrigger(minutes=15),
-        id="auto_expire",
-        name="Auto Expire Overdue Subscriptions",
-        replace_existing=True,
-    )
-
-    # Job 11 — Monthly closing report (día 1 de cada mes, 9:00 AM Venezuela)
-    scheduler.add_job(
-        job_monthly_closing_report,
-        CronTrigger(day=1, hour=9, minute=0, timezone=VENEZUELA_TZ),
-        id="job_monthly_closing_report",
-        name="Monthly Closing Report",
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
-
-    logger.info("Scheduler configured with 11 jobs")
+    logger.info("Scheduler configured with 11 jobs (sin auto_expire ni corte automático)")
     return scheduler

@@ -121,6 +121,9 @@ async def handle_express_platform_selected(update: Update, context: ContextTypes
 
 async def handle_express_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle express order confirmation."""
+    from bot.handlers import checkout_v2  # O02 Lote 4: con el flag encendido se crea una orden, no suscripciones
+    if checkout_v2.v2_enabled():
+        return await checkout_v2.confirm_express_order(update, context)
     query = update.callback_query
     if not query or not update.effective_user:
         return

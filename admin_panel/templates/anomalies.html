@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Anomalías — SmartFlixVE Admin{% endblock %}
+{% block header_title %}Revisión de anomalías{% endblock %}
+
+{% block content %}
+<div>
+  {% if success %}<div class="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>{% endif %}
+  {% if error %}<div class="mb-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>{% endif %}
+  {% if not ok %}<div class="mb-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ No se pudieron leer los datos: {{ load_error }} Esto NO significa que no haya anomalías.</div>{% endif %}
+
+  <div class="mb-6">
+    <h2 class="text-xl font-bold text-slate-800">🔎 Anomalías de suscripciones y perfiles</h2>
+    <p class="text-sm text-slate-400 mt-0.5">{{ data.total }} hallazgo(s). Solo lista: nada se corrige solo. Cada acción exige un motivo y queda auditada.</p>
+  </div>
+
+  {% for key, title, hint in categories %}
+  {% set rows = data.get(key, []) %}
+  <div class="mb-8">
+    <h3 class="font-semibold text-slate-800">{{ title }} <span class="text-xs {% if rows %}text-amber-600{% else %}text-emerald-600{% endif %}">({{ rows|length }})</span></h3>
+    <p class="text-xs text-slate-400 mb-2">{{ hint }}</p>
+    {% for r in rows %}
+    <div class="bg-white border border-slate-300 rounded-xl p-4 mb-2 text-sm">
+      {% if key in ('duplicates', 'shared_profiles') %}
+        <p class="font-medium text-slate-700 mb-2">{{ r.platform }}{% if r.user %} — {{ r.user }}{% endif %}{% if r.profile %} — perfil {{ r.profile }}{% endif %}{% if r.same_profile %} <span class="text-red-600">(mismo perfil)</span>{% endif %}</p>
+        {% for s in r.subs %}
+        <div class="flex flex-wrap items-center gap-3 py-1 border-t border-slate-100">
+          <span class="font-mono text-xs">#{{ s.short }}</span><span>{{ s.status|status_label }}</span>
+          <span class="text-slate-500">vence {{ s.end_date|fmt_date }}</span>{% if s.days_overdue %}<span class="text-amber-600">mora {{ s.days_overdue }} d</span>{% endif %}
+          <form method="post" action="/panel/anomalies/void" class="flex items-center gap-2 ml-auto" onsubmit="return confirm('¿Anular la suscripción #{{ s.short }}?')">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}"><input type="hidden" name="sub_id" value="{{ s.id }}">
+            <input name="reason" class="form-input text-xs py-1" placeholder="Motivo" required minlength="5" maxlength="300">
+            <button class="btn-danger text-xs py-1">Anular</button>
+          </form>
+        </div>
+        {% endfor %}
+        {% if key == 'duplicates' %}
+        <form method="post" action="/panel/anomalies/merge" class="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-slate-200" onsubmit="return confirm('Se conserva la primera elegida y se anula la otra. ¿Continuar?')">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+          <span class="text-xs text-slate-500">Fusionar: conservar</span>
+          <select name="keep_id" class="form-input text-xs py-1">{% for s in r.subs %}<option value="{{ s.id }}">#{{ s.short }} ({{ s.status|status_label }})</option>{% endfor %}</select>
+          <span class="text-xs text-slate-500">y anular</span>
+          <select name="void_id" class="form-input text-xs py-1">{% for s in r.subs %}<option value="{{ s.id }}" {% if loop.index == 2 %}selected{% endif %}>#{{ s.short }} ({{ s.status|status_label }})</option>{% endfor %}</select>
+          <input name="reason" class="form-input text-xs py-1" placeholder="Motivo" required minlength="5" maxlength="300">
+          <button class="btn-secondary text-xs py-1">Fusionar</button>
+        </form>
+        {% endif %}
+      {% elif key == 'orphan_profiles' %}
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-medium">{{ r.platform }} — {{ r.profile }}</span>
+          <span class="text-slate-500">{{ 'solo canceladas lo usaron' if r.kind == 'solo_cancelada' else 'ninguna suscripción lo usa' }}</span>
+          <form method="post" action="/panel/anomalies/release-profile" class="flex items-center gap-2 ml-auto" onsubmit="return confirm('¿Liberar este perfil y rotar su PIN?')">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}"><input type="hidden" name="profile_id" value="{{ r.profile_id }}">
+            <input name="reason" class="form-input text-xs py-1" placeholder="Motivo" required minlength="5" maxlength="300">
+            <button class="btn-secondary text-xs py-1">Liberar perfil</button>
+          </form>
+        </div>
+      {% else %}
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-medium">{{ r.platform }}</span><span>{{ r.user }}</span>
+          <span class="font-mono text-xs">#{{ r.short }}</span><span>{{ r.status|status_label }}</span>
+          {% if r.days_overdue %}<span class="text-amber-600">mora {{ r.days_overdue }} d</span>{% endif %}
+          {% if r.age_days is defined and r.age_days is not none %}<span class="text-slate-500">hace {{ r.age_days }} d</span>{% endif %}
+          {% if r.age_hours is defined %}<span class="text-slate-500">hace {{ r.age_hours }} h</span>{% endif %}
+          {% if r.has_receipt %}<span class="text-red-600">envió comprobante</span>{% endif %}
+          <form method="post" action="/panel/anomalies/void" class="flex items-center gap-2 ml-auto" onsubmit="return confirm('¿Anular la suscripción #{{ r.short }}?')">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}"><input type="hidden" name="sub_id" value="{{ r.id }}">
+            <input name="reason" class="form-input text-xs py-1" placeholder="Motivo" required minlength="5" maxlength="300">
+            <button class="btn-danger text-xs py-1">Anular</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="text-sm text-emerald-600">✅ Sin hallazgos.</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

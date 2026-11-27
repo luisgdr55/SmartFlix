@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Confirmar corte — SmartFlixVE Admin{% endblock %}
+{% block header_title %}Confirmar corte{% endblock %}
+
+{% block content %}
+<div class="max-w-xl">
+  <div class="bg-amber-500/10 border border-amber-500/40 rounded-2xl p-6 mb-5">
+    <h2 class="text-lg font-bold text-amber-700 mb-2">⚠️ Este cliente tiene un pago pendiente</h2>
+    <p class="text-sm text-slate-700 mb-3">
+      {{ (sub.users or {}).name or (sub.users or {}).username or 'El cliente' }} tiene
+      {% if pending.orders %}{{ pending.orders|length }} orden(es) de pago pendiente(s): {% for o in pending.orders %}#{{ o }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+      {% if pending.orders and pending.legacy %} y {% endif %}
+      {% if pending.legacy %}{{ pending.legacy|length }} pedido(s) pendiente(s): {% for o in pending.legacy %}#{{ o }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.
+      Revisa «Órdenes de pago» antes de cortar: puede que ya haya pagado.
+    </p>
+    <p class="text-sm text-slate-600">
+      Acción: <strong>{% if kind == 'release' %}cortar y liberar el perfil{% else %}corte suave (cambia el PIN){% endif %}</strong>
+      de {{ (sub.platforms or {}).icon_emoji }} {{ (sub.platforms or {}).name }}.
+    </p>
+  </div>
+  <div class="flex flex-wrap gap-3">
+    <a href="/panel/orders" class="btn-secondary text-sm">🧾 Ver órdenes de pago</a>
+    <a href="/panel/users/{{ user_id }}" class="btn-secondary text-sm">↩️ Volver al cliente (no cortar)</a>
+    <form method="post" action="{{ action }}">
+      <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
+      <input type="hidden" name="confirm_pending" value="1">
+      <button type="submit" class="btn-danger text-sm">Cortar de todos modos</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

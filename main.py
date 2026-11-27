@@ -20,6 +20,7 @@ from config import settings
 
 # Admin panel router
 from admin_panel.router import panel_router
+from admin_panel.security import register_security
 
 # Configure logging
 logging.basicConfig(
@@ -95,6 +96,43 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern="^menu:main$"))
     app.add_handler(CallbackQueryHandler(show_subscription_platforms, pattern="^menu:subscribe$"))
 
+    async def _release_profile_on_cancel(old_sub: dict) -> None:
+        """Libera el perfil de una suscripción vencida que el cliente cancela (O02-H)."""
+        from database.profiles import release_profile_for_cut
+        from services.notification_service import send_to_admin
+
+        profile_id = old_sub.get("profile_id")
+        if not profile_id:
+            return
+        plat = old_sub.get("platforms") or {}
+        platform_label = f"{plat.get('icon_emoji', '')} {plat.get('name', '')}".strip() or "—"
+        sub_short = str(old_sub.get("id", ""))[:8]
+        info = await release_profile_for_cut(str(profile_id), exclude_sub_id=str(old_sub["id"]))
+        if info is None:
+            await send_to_admin(
+                f"⚠️ <b>Perfil NO liberado</b> (cliente canceló una suscripción vencida)\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n🔖 Suscripción: <code>{sub_short}</code>\n"
+                f"No se pudo leer el perfil. Revísalo en el panel y libéralo si corresponde."
+            )
+        elif info["released"]:
+            await send_to_admin(
+                f"🔓 <b>Perfil liberado</b> (cliente canceló una suscripción vencida)\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n"
+                f"👤 Perfil: <b>{info['profile_name']}</b>\n"
+                f"📧 Cuenta: <code>{info['account_email']}</code>\n"
+                f"🔢 PIN anterior: <code>{info['old_pin']}</code>\n"
+                f"🔄 PIN nuevo: <code>{info['new_pin']}</code>\n\n"
+                f"⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma."
+            )
+        elif info["reason"] == "otra_suscripcion_activa":
+            await send_to_admin(
+                f"⚠️ <b>Perfil NO liberado</b>: lo usa otra suscripción activa.\n\n"
+                f"🎬 Plataforma: <b>{platform_label}</b>\n👤 Perfil: <b>{info['profile_name']}</b>\n"
+                f"🔖 Suscripción cancelada: <code>{sub_short}</code>\n"
+                f"Revisa en el panel que el perfil no esté compartido."
+            )
+        # reason == "no_ocupado": el perfil ya estaba libre; no hay nada que hacer.
+
     async def _handle_cancel_and_buy(update, context):
         """Cancel expired subs and redirect to new purchase flow."""
         query = update.callback_query
@@ -103,12 +141,28 @@ def build_telegram_app() -> Application:
         try:
             from database.users import get_user_by_telegram_id
             from database import get_supabase
+            from utils.helpers import venezuela_now
             db_user = await get_user_by_telegram_id(user.id)
             if db_user:
                 sb = get_supabase()
-                sb.table("subscriptions").update({"status": "cancelled"}).eq(
-                    "user_id", db_user["id"]
-                ).eq("status", "expired").execute()
+                # O02-H: al cancelar, liberar el perfil de cada suscripción vencida (con las
+                # mismas guardas del corte) y avisar al admin para que cambie el PIN.
+                expired_res = (
+                    sb.table("subscriptions")
+                    .select("id, profile_id, platforms(name, icon_emoji)")
+                    .eq("user_id", db_user["id"])
+                    .in_("status", ["active", "expired"])   # mora derivada: ya no hay un job que las pase a `expired`
+                    .lt("end_date", venezuela_now().isoformat())
+                    .execute()
+                )
+                for old_sub in (expired_res.data or []):
+                    try:
+                        await _release_profile_on_cancel(old_sub)
+                    except Exception as rel_err:
+                        logger.error(f"cancel_and_buy release error for {old_sub.get('id')}: {rel_err}")
+                    sb.table("subscriptions").update({"status": "cancelled"}).eq(
+                        "id", old_sub["id"]
+                    ).in_("status", ["active", "expired"]).execute()
             try:
                 await query.edit_message_text(
                     "✅ <b>Listo</b> — tus servicios anteriores fueron cancelados.\n\n"
@@ -157,6 +211,9 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(handle_queue_join, pattern="^queue:join:"))
 
     # Admin callbacks
+    # Aprobación por orden de pago (O02 Lote 5): antes del manejador general de `admin:`
+    from bot.handlers.admin_orders import handle_order_admin_callback
+    app.add_handler(CallbackQueryHandler(handle_order_admin_callback, pattern=r"^admin:o(view|approve|reject|reason):"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^admin:"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^campaign:"))
 
@@ -222,11 +279,25 @@ def build_telegram_app() -> Application:
 
     # Photos - hogar flow takes priority, then payment comprobantes
     async def _photo_router(update, context):
-        handled = await handle_hogar_photo(update, context)
-        if not handled:
-            await handle_payment_image(update, context)
+        # O02 Lote 4: con el flag encendido, un cliente con una orden pendiente tiene prioridad
+        # sobre el flujo de Hogar (el comprobante se asocia a su orden).
+        from bot.handlers.checkout_v2 import route_photo
+        await route_photo(update, context, handle_hogar_photo, handle_payment_image)
 
     app.add_handler(MessageHandler(filters.PHOTO, _photo_router))
+
+    # Comprobante enviado como archivo (imagen o PDF). Sin orden pendiente o con el flag apagado no hace nada,
+    # igual que antes (los documentos no tenían handler).
+    async def _document_router(update, context):
+        from bot.handlers.checkout_v2 import handle_order_receipt
+        await handle_order_receipt(update, context)
+
+    app.add_handler(MessageHandler(filters.Document.ALL, _document_router))
+
+    # Reenviar comprobante y cancelar pedido (órdenes de pago, Lote 4)
+    from bot.handlers.checkout_v2 import handle_order_cancel, handle_payment_resend
+    app.add_handler(CallbackQueryHandler(handle_payment_resend, pattern="^payment:resend$"))
+    app.add_handler(CallbackQueryHandler(handle_order_cancel, pattern="^order:cancel:"))
 
     # Text messages - for name capture and admin flows
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text_message_router))
@@ -588,6 +659,11 @@ async def lifespan(app: FastAPI):
     global _telegram_app
 
     logger.info("Starting SmartFlixVE Bot...")
+    from config import MIN_RECOMMENDED_SECRET_LEN
+    for _name in ("WEBHOOK_SECRET", "SECRET_KEY", "ADMIN_PANEL_PASSWORD"):
+        if len(getattr(settings, _name)) < MIN_RECOMMENDED_SECRET_LEN:
+            logger.warning("%s tiene menos de %s caracteres; se recomienda al menos 32 (no se muestra su valor)",
+                           _name, MIN_RECOMMENDED_SECRET_LEN)
 
     # Build telegram application
     _telegram_app = build_telegram_app()
@@ -624,12 +700,20 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI app
+# La documentación interactiva (/docs, /redoc, /openapi.json) solo existe en
+# desarrollo (DEBUG=true): en producción no debe listar las rutas del panel.
 app = FastAPI(
     title="SmartFlixVE Bot",
     description="Telegram bot for streaming profile rental in Venezuela",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
+
+# Cabeceras de seguridad y manejo del error CSRF del panel
+register_security(app)
 
 # Mount admin panel
 app.include_router(panel_router)
@@ -639,8 +723,8 @@ app.include_router(panel_router)
 async def telegram_webhook(request: Request) -> Response:
     """Receive Telegram webhook updates."""
     # Verify secret token
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret != settings.WEBHOOK_SECRET:
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+    if not hmac.compare_digest(secret.encode("utf-8"), settings.WEBHOOK_SECRET.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
     try:

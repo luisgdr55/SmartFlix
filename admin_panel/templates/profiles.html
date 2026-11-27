@@ -83,7 +83,14 @@
               {% if p.get('is_extra_member') %}
                 <span class="text-xs text-amber-400">{{ p.get('extra_email') or '—' }}</span>
               {% else %}
-                {{ p.get('pin') or '—' }}
+                {% if p.get('pin') %}
+                <span x-data="pinReveal()" data-id="{{ p['id'] }}" class="inline-flex items-center gap-2">
+                  <span x-text="loading ? '…' : (pin === null ? '••••' : pin)"></span>
+                  <button type="button" x-show="pin === null" @click="show()" :disabled="loading"
+                          class="text-xs underline" aria-label="Mostrar PIN">Mostrar</button>
+                  <span x-show="error" x-text="error" class="text-xs" style="color:#991B1B;"></span>
+                </span>
+                {% else %}—{% endif %}
               {% endif %}
             </td>
             <td class="table-cell">
@@ -95,6 +102,7 @@
             <td class="table-cell">
               {% set s = p.get('status', '') %}
               <form action="/panel/profiles/{{ p['id'] }}/set-status" method="POST">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
                 <select name="status" onchange="this.form.submit()"
                   class="text-xs rounded-lg px-2 py-1 border font-medium cursor-pointer focus:outline-none
                   {% if s == 'available' %}bg-emerald-500/15 border-emerald-500/40 text-emerald-300
@@ -126,7 +134,7 @@
             <td class="table-cell">
               <div class="flex items-center gap-2">
                 <a href="/panel/profiles/{{ p['id'] }}/edit" class="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg transition-colors">✏️ Editar</a>
-                <button @click="deleteId = '{{ p['id'] }}'; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
+                <button data-id="{{ p['id'] }}" @click="deleteId = $el.dataset.id; showDeleteModal = true" class="text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 px-3 py-1.5 rounded-lg transition-colors">🗑️</button>
               </div>
             </td>
           </tr>
@@ -154,6 +162,7 @@
       <div class="flex gap-3">
         <button @click="showDeleteModal = false" class="btn-secondary flex-1 justify-center">Cancelar</button>
         <form :action="'/panel/profiles/' + deleteId + '/delete'" method="POST" class="flex-1">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="btn-danger w-full justify-center">Eliminar</button>
         </form>
       </div>
@@ -161,4 +170,28 @@
   </div>
 
 </div>
+<script>
+// El PIN no viaja en el HTML: se pide al servidor al pulsar «Mostrar» (queda registrado).
+function pinReveal() {
+  return {
+    pin: null, loading: false, error: '', id: '',
+    init() { this.id = this.$el.dataset.id; },   // $el en init() es la raíz; en un método sería el botón
+    async show() {
+      if (this.loading) return;
+      this.loading = true; this.error = '';
+      try {
+        const r = await fetch('/panel/profiles/' + encodeURIComponent(this.id) + '/credentials', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo cargar el PIN.');
+        this.pin = d.pin;
+      } catch (e) {
+        this.error = (e && e.message) || 'No se pudo cargar el PIN. Intenta de nuevo.';
+      } finally {
+        this.loading = false;
+      }
+    }
+  }
+}
+</script>
+
 {% endblock %}

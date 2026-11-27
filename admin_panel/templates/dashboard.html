@@ -85,7 +85,7 @@
         {% set _fecha = sub['end_date'] | fmt_date %}
         {% set _ticket = "📺 *SmartFlixVE* — Recordatorio de Renovación\n\nHola *" ~ _name ~ "* 👋\n\nTe recordamos que tu suscripción de *" ~ _plat ~ "* vence el " ~ _fecha ~ ".\n\nPara renovar y seguir disfrutando sin interrupciones, realiza tu pago de:\n\n💰 *" ~ sub.get('monto_fmt', '') ~ "*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
-        <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-reminder',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Aviso enviado':'❌ Error al enviar')})"
+        <button data-id="{{ sub['id'] }}" @click.stop="fetch('/panel/subscriptions/' + $el.dataset.id + '/notify-reminder',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Aviso enviado':'❌ Error al enviar')})"
           class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
           📨 Enviar aviso
         </button>
@@ -146,7 +146,7 @@
         {% set _fecha = sub.get('end_date') | fmt_date %}
         {% set _ticket = "📺 *SmartFlixVE* — Aviso de Vencimiento\n\nHola *" ~ _name ~ "* 👋\n\nTu suscripción de *" ~ _plat ~ "* *venció* el " ~ _fecha ~ ".\n\nPara reactivar tu acceso, realiza tu pago de:\n\n💰 *" ~ sub.get('monto_fmt', '') ~ "*\n\n📲 Escríbenos para confirmar tu renovación.\n¡Gracias por preferirnos! 🙏" %}
         {% if _tg %}
-        <button @click.stop="fetch('/panel/subscriptions/{{ sub['id'] }}/notify-expiry',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Enviado':'❌ Error')})"
+        <button data-id="{{ sub['id'] }}" @click.stop="fetch('/panel/subscriptions/' + $el.dataset.id + '/notify-expiry',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.ok?'✅ Enviado':'❌ Error')})"
           class="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 px-2 py-1 rounded-lg transition-colors font-medium">
           📨 Recordatorio
         </button>
@@ -162,12 +162,14 @@
         {% if has_profile %}
         <form action="/panel/subscriptions/{{ sub['id'] }}/soft-cut" method="POST" class="inline"
           onsubmit="return confirm('¿Aplicar corte suave? Se cambiará el PIN del perfil y se notificará al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg transition-colors font-medium">
             🔒 Corte suave
           </button>
         </form>
         <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
           onsubmit="return confirm('¿Liberar perfil? El perfil quedará disponible para otro cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 px-2 py-1 rounded-lg transition-colors font-medium">
             📤 Liberar
           </button>
@@ -175,6 +177,7 @@
         {% else %}
         <form action="/panel/subscriptions/{{ sub['id'] }}/release" method="POST" class="inline"
           onsubmit="return confirm('¿Marcar como expirada? Se notificará al cliente.')">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
           <button type="submit" class="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg transition-colors font-medium">
             ✓ Cerrar
           </button>
@@ -348,7 +351,7 @@
                 {% elif s == 'pending_payment' %}<span class="badge-pending">Pendiente</span>
                 {% elif s == 'expired' %}<span class="badge-expired">Expirada</span>
                 {% elif s == 'cancelled' %}<span class="badge-cancelled">Cancelada</span>
-                {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
+                {% else %}<span class="badge-expired">{{ s|status_label }}</span>{% endif %}
               </td>
             </tr>
             {% else %}
@@ -441,7 +444,7 @@ function dashboardApp() {
       this.rateLoading = true;
       this.rateMessage = '';
       try {
-        const res = await fetch('/panel/api/rate/fetch');
+        const res = await fetch('/panel/api/rate/fetch', { method: 'POST' });
         const data = await res.json();
         this.rateSuccess = data.success;
         this.rateMessage = data.message;

@@ -1,7 +1,7 @@
 """Session management for SmartFlixVE Admin Panel using itsdangerous."""
 from __future__ import annotations
 
-import os
+import hmac
 import logging
 from typing import Optional
 
@@ -15,36 +15,34 @@ COOKIE_NAME = "sv_admin_session"
 COOKIE_MAX_AGE = 60 * 60 * 24  # 24 hours in seconds
 SESSION_VALUE = "authenticated"
 
-_SECRET_KEY: Optional[str] = None
+def get_secret_key() -> str:
+    """Clave para firmar la cookie y derivar el token CSRF.
 
-
-def _get_secret_key() -> str:
-    global _SECRET_KEY
-    if _SECRET_KEY is None:
-        try:
-            from config import settings
-            key = getattr(settings, "SECRET_KEY", None) or os.environ.get("SECRET_KEY", "")
-        except Exception:
-            key = ""
-        if not key:
-            key = os.environ.get("SECRET_KEY", "smartflixve_admin_secret_key_2025")
-        _SECRET_KEY = key
-    return _SECRET_KEY
+    No hay valor por defecto: ``config.Settings`` exige ``SECRET_KEY`` al arrancar.
+    """
+    from config import settings
+    key = settings.SECRET_KEY
+    if not key:
+        raise RuntimeError("SECRET_KEY no está definida")
+    return key
 
 
 def _get_signer() -> TimestampSigner:
-    return TimestampSigner(_get_secret_key())
+    return TimestampSigner(get_secret_key())
 
 
 def _get_admin_password() -> str:
-    try:
-        from config import settings
-        pwd = getattr(settings, "ADMIN_PANEL_PASSWORD", None)
-        if pwd:
-            return pwd
-    except Exception:
-        pass
-    return os.environ.get("ADMIN_PANEL_PASSWORD", "smartflixve2025")
+    """Contraseña del panel. Sin valor por defecto: ``config.Settings`` la exige."""
+    from config import settings
+    pwd = settings.ADMIN_PANEL_PASSWORD
+    if not pwd:
+        raise RuntimeError("ADMIN_PANEL_PASSWORD no está definida")
+    return pwd
+
+
+def _cookie_flags() -> dict:
+    from admin_panel.security import cookie_secure
+    return {"httponly": True, "samesite": "lax", "secure": cookie_secure()}
 
 
 def create_session(response: Response) -> None:
@@ -55,14 +53,14 @@ def create_session(response: Response) -> None:
         key=COOKIE_NAME,
         value=token,
         max_age=COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
+        path="/",
+        **_cookie_flags(),
     )
 
 
 def clear_session(response: Response) -> None:
     """Clears the admin session cookie."""
-    response.delete_cookie(key=COOKIE_NAME)
+    response.delete_cookie(key=COOKIE_NAME, path="/", **_cookie_flags())
 
 
 def verify_session(request: Request) -> bool:
@@ -86,8 +84,8 @@ def verify_session(request: Request) -> bool:
 
 
 def verify_password(password: str) -> bool:
-    """Verify the submitted admin password."""
-    return password == _get_admin_password()
+    """Verify the submitted admin password (comparación en tiempo constante)."""
+    return hmac.compare_digest(password.encode("utf-8"), _get_admin_password().encode("utf-8"))
 
 
 async def require_auth(request: Request) -> Optional[bool]:

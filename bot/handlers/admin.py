@@ -24,6 +24,20 @@ from database.users import block_user, unblock_user, log_admin_action, get_user_
 from services.exchange_service import update_rate, get_current_rate, fetch_binance_p2p_rate, auto_update_rate
 from utils.helpers import format_datetime_vzla, short_id
 from utils.validators import is_admin
+from services.payment_guards import can_decide_payment, status_label
+
+
+async def _reply_payment_not_pending(query, sub_id: str, status) -> None:
+    """O02-H: el pedido ya no está pendiente; no se cambia nada y el admin tiene salida."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    await query.edit_message_text(
+        f"ℹ️ El pedido #{short_id(sub_id)} ya no está pendiente (estado: {status_label(status)}).\n"
+        f"No se hizo ningún cambio.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏳ Pendientes", callback_data="admin:pending")],
+            [InlineKeyboardButton("🔙 Panel admin", callback_data="admin:back")],
+        ]),
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -326,19 +340,28 @@ async def cmd_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show and review pending payments."""
-    if not update.message or not update.effective_user:
+    """Show and review pending payments (comando y botón «Pendientes»)."""
+    message = update.effective_message  # `update.message` es None cuando llega desde un botón
+    if not message or not update.effective_user:
         return
     telegram_id = update.effective_user.id
 
     if not _check_admin(telegram_id):
-        await update.message.reply_text("❌ Sin permisos.")
+        await message.reply_text("❌ Sin permisos.")
         return
+
+    # O02 Lote 5: con el flag encendido, primero las órdenes de pago pendientes.
+    orders_shown = 0
+    from bot.handlers import checkout_v2
+    if checkout_v2.v2_enabled():
+        from bot.handlers.admin_orders import send_pending_orders
+        orders_shown = await send_pending_orders(message)
 
     subs = await get_pending_subscriptions()
 
     if not subs:
-        await update.message.reply_text("✅ No hay pagos pendientes.")
+        if not orders_shown:
+            await message.reply_text("✅ No hay pagos pendientes.", reply_markup=admin_dashboard_keyboard())
         return
 
     for sub in subs[:5]:
@@ -358,7 +381,7 @@ async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"📸 Comprobante: {sub.get('payment_image_url') or 'No enviado'}"
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             text,
             parse_mode="HTML",
             reply_markup=pending_payment_keyboard(sub_id),
@@ -868,6 +891,9 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
         if not sub:
             await query.edit_message_text("Suscripción no encontrada.")
             return
+        if not can_decide_payment(sub.get("status")):
+            await _reply_payment_not_pending(query, sub_id, sub.get("status"))
+            return
 
         platform_id = str(sub.get("platform_id", ""))
         plan_type = sub.get("plan_type", "monthly")
@@ -960,7 +986,17 @@ async def handle_admin_approve_payment(update: Update, context: ContextTypes.DEF
         profile = profiles[0]
         profile_id = str(profile["id"])
 
-        await confirm_subscription(sub_id, profile_id, "MANUAL-ADMIN", "manual_approval")
+        confirmed = await confirm_subscription(sub_id, profile_id, "MANUAL-ADMIN", "manual_approval")
+        if not confirmed:
+            # Otra aprobación (panel o Telegram) se adelantó o hubo un error: no se asigna el perfil.
+            fresh = await get_subscription_by_id(sub_id)
+            if fresh and not can_decide_payment(fresh.get("status")):
+                await _reply_payment_not_pending(query, sub_id, fresh.get("status"))
+            else:
+                await query.edit_message_text(
+                    "⚠️ No se pudo confirmar el pago. No se asignó ningún perfil; revisa el pedido e inténtalo de nuevo."
+                )
+            return
         await assign_profile(profile_id)
         await log_admin_action(telegram_id, "approve_payment", {"sub_id": sub_id})
 
@@ -1025,6 +1061,9 @@ async def handle_admin_reject_payment(update: Update, context: ContextTypes.DEFA
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             await query.edit_message_text("Suscripción no encontrada.")
+            return
+        if not can_decide_payment(sub.get("status")):
+            await _reply_payment_not_pending(query, sub_id, sub.get("status"))
             return
 
         from database.subscriptions import delete_subscription
@@ -1282,11 +1321,31 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data.startswith("admin:cancel_sub_confirm:"):
         await query.answer()
-        sub_id = data.split(":")[2]
+        cparts = data.split(":")
+        sub_id = cparts[2]
+        force = len(cparts) > 3 and cparts[3] == "force"
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             await query.answer("Suscripción no encontrada.", show_alert=True)
             return
+        # O02 Lote 6: el corte manual advierte si el cliente tiene un pago pendiente.
+        if not force:
+            from database.orders import pending_for_user
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            pend = await pending_for_user(str(sub.get("user_id")))
+            if pend["orders"] or pend["legacy"]:
+                ids = ", ".join(f"#{i}" for i in pend["orders"] + pend["legacy"])
+                await query.edit_message_text(
+                    f"⚠️ <b>Este cliente tiene un pago pendiente</b> ({ids}).\n\n"
+                    "Revisa los pendientes antes de cortar: puede que ya haya pagado.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⏳ Ver pendientes", callback_data="admin:pending")],
+                        [InlineKeyboardButton("✂️ Cortar de todos modos", callback_data=f"admin:cancel_sub_confirm:{sub_id}:force")],
+                        [InlineKeyboardButton("↩️ No cortar", callback_data="admin:back")],
+                    ]),
+                )
+                return
         profile_id = sub.get("profile_id")
         user = sub.get("users") or {}
         user_tid = user.get("telegram_id")

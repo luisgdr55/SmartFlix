@@ -24,6 +24,7 @@
   </div>
 
   <form method="POST" action="/panel/migrate" class="space-y-5">
+<input type="hidden" name="csrf_token" value="{{ request.state.csrf_token | default('') }}">
 
     <!-- Datos del cliente -->
     <div class="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-6">

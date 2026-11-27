@@ -210,3 +210,64 @@ async def release_expired_reservations() -> int:
     except Exception as e:
         logger.error(f"Error in release_expired_reservations: {e}")
         return 0
+
+
+async def release_profile_for_cut(profile_id: str, exclude_sub_id: Optional[str] = None) -> Optional[dict]:
+    """Libera un perfil como en el corte (O02-H): `available`, PIN nuevo de 4 dígitos,
+    `last_released` y reserva limpia. NO lo hace si el perfil no está `occupied` o si otra
+    suscripción activa (distinta de `exclude_sub_id`) lo usa: pudo entregarse a otro cliente.
+
+    Devuelve None si no se pudo leer el perfil (no se toca nada). Si lo leyó, devuelve
+    {"released": bool, "reason": str|None, "profile_name", "old_pin", "new_pin", "account_email"};
+    `reason` es "no_ocupado" u "otra_suscripcion_activa" cuando `released` es False.
+    """
+    import random
+    import string
+
+    from services.payment_guards import profile_is_safe_to_release
+
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("profiles")
+            .select("id, profile_name, pin, status, accounts(email)")
+            .eq("id", profile_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return None
+        prof = res.data[0]
+        account = prof.get("accounts") or {}
+        info = {
+            "released": False,
+            "reason": None,
+            "profile_name": prof.get("profile_name") or "—",
+            "old_pin": prof.get("pin") or "—",
+            "new_pin": "—",
+            "account_email": account.get("email") or "—",
+        }
+
+        q = sb.table("subscriptions").select("id").eq("profile_id", profile_id).eq("status", "active")
+        if exclude_sub_id:
+            q = q.neq("id", exclude_sub_id)
+        other_active = len(q.execute().data or [])
+
+        if not profile_is_safe_to_release(prof.get("status"), other_active):
+            info["reason"] = "otra_suscripcion_activa" if other_active else "no_ocupado"
+            return info
+
+        new_pin = "".join(random.choices(string.digits, k=4))
+        sb.table("profiles").update({
+            "status": "available",
+            "pin": new_pin,
+            "last_released": venezuela_now().isoformat(),
+            "reserved_for": None,
+            "reserved_until": None,
+        }).eq("id", profile_id).execute()
+        info["released"] = True
+        info["new_pin"] = new_pin
+        return info
+    except Exception as e:
+        logger.error(f"Error in release_profile_for_cut: {e}")
+        return None

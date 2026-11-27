@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from telegram import Bot, InlineKeyboardMarkup
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 
 from config import settings
 from utils.helpers import parse_telegram_ids, format_datetime_vzla, days_remaining
@@ -35,31 +35,38 @@ async def send_to_user(
     keyboard: Optional[InlineKeyboardMarkup] = None,
     photo_bytes: Optional[bytes] = None,
 ) -> bool:
-    """Send a message or photo to a user."""
-    try:
-        bot = get_bot()
-        if photo_bytes:
-            await bot.send_photo(
-                chat_id=telegram_id,
-                photo=photo_bytes,
-                caption=message,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        else:
-            await bot.send_message(
-                chat_id=telegram_id,
-                text=message,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        return True
-    except TelegramError as e:
-        logger.error(f"Telegram error sending to {telegram_id}: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Error sending to user {telegram_id}: {e}")
-        return False
+    """Send a message or photo to a user. Ante un límite de Telegram (`RetryAfter`) espera lo que pide
+    (hasta 30 s) y reintenta, hasta 3 intentos (O02 Lote 6: las difusiones respetan el límite)."""
+    for attempt in range(3):
+        try:
+            bot = get_bot()
+            if photo_bytes:
+                await bot.send_photo(
+                    chat_id=telegram_id,
+                    photo=photo_bytes,
+                    caption=message,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            else:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            return True
+        except RetryAfter as e:
+            wait = min(float(getattr(e, "retry_after", 1) or 1), 30.0)
+            logger.warning(f"Telegram pide esperar {wait}s al enviar a {telegram_id} (intento {attempt + 1}/3)")
+            await asyncio.sleep(wait)
+        except TelegramError as e:
+            logger.error(f"Telegram error sending to {telegram_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error sending to user {telegram_id}: {e}")
+            return False
+    return False
 
 
 async def send_to_admin(
@@ -267,7 +274,8 @@ async def send_expiry_reminder(subscription_id: str) -> bool:
         if success:
             await mark_reminder_sent(subscription_id)
             platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
-            end_date_fmt = (sub.get("end_date") or "")[:10]
+            from utils.dates import caracas_date
+            end_date_fmt = caracas_date(sub["end_date"]).strftime("%d/%m/%Y") if sub.get("end_date") else "—"
             await send_to_admin(
                 f"🔔 <b>Recordatorio D-3 enviado</b>\n\n"
                 f"👤 {user.get('name') or user.get('username') or 'Sin nombre'}\n"
@@ -306,7 +314,8 @@ async def send_expiry_notification(subscription_id: str) -> bool:
             plan_label = {"monthly": "Mensual (30 días)", "express": "Express (24h)"}.get(plan_type, plan_type)
             price_usd = sub.get("price_usd", 0)
             end_date_str = sub.get("end_date", "")
-            end_fmt = end_date_str[:10] if end_date_str else "N/A"
+            from utils.dates import caracas_date
+            end_fmt = caracas_date(end_date_str).strftime("%d/%m/%Y") if end_date_str else "N/A"
             message = (
                 f"🔴 <b>Suscripción Vencida — Cliente Externo</b>\n\n"
                 f"👤 <b>Cliente:</b> {client_name}\n"
@@ -346,7 +355,8 @@ async def send_expiry_notification(subscription_id: str) -> bool:
         if success:
             await mark_expiry_notified(subscription_id)
             platform_name = f"{platform.get('icon_emoji', '')} {platform.get('name', '')}".strip()
-            end_date_fmt = (sub.get("end_date") or "")[:10]
+            from utils.dates import caracas_date
+            end_date_fmt = caracas_date(sub["end_date"]).strftime("%d/%m/%Y") if sub.get("end_date") else "—"
             await send_to_admin(
                 f"🔴 <b>Vencimiento notificado al cliente</b>\n\n"
                 f"👤 {user.get('name') or user.get('username') or 'Sin nombre'}\n"
@@ -361,7 +371,7 @@ async def send_expiry_notification(subscription_id: str) -> bool:
 
 
 async def send_debt_reminder(sub: dict, day_number: int) -> bool:
-    """Send a daily debt reminder (day 1-6 after expiration).
+    """Send a daily debt reminder (day 1-6 of mora; there is NO automatic cut).
     If the user has no telegram_id (external client), notifies admin instead."""
     from bot.messages import DEBT_REMINDER
     from utils.helpers import format_datetime_vzla
@@ -377,14 +387,10 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
             client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
             platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
             end_date_str = sub.get("end_date", "")
-            end_fmt = end_date_str[:10] if end_date_str else "N/A"
-            days_left = 6 - day_number
-            if days_left > 1:
-                urgency = f"Quedan {days_left} días antes del corte."
-            elif days_left == 1:
-                urgency = "¡Mañana se libera el perfil si no renueva!"
-            else:
-                urgency = "¡Hoy es el último día! El perfil se libera si no renueva."
+            from utils.dates import caracas_date
+            end_fmt = caracas_date(end_date_str).strftime("%d/%m/%Y") if end_date_str else "N/A"
+            urgency = (f"Lleva {day_number} día(s) de mora (último recordatorio automático)." if day_number >= 6
+                       else f"Lleva {day_number} día(s) de mora.")
             message = (
                 f"⚠️ <b>Recordatorio de Deuda #{day_number} — Cliente Externo</b>\n\n"
                 f"El siguiente cliente sin Telegram aún no ha renovado. {urgency}\n\n"
@@ -408,16 +414,15 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
         end_date_fmt = format_datetime_vzla(end_dt) if end_dt else "N/A"
         platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
 
-        days_left = 6 - day_number
-        if days_left > 1:
-            urgency_line = f"⏳ Te quedan <b>{days_left} días</b> antes de que se libere tu perfil."
-        elif days_left == 1:
-            urgency_line = "🚨 <b>¡Último día!</b> Mañana se liberará tu perfil si no renuevas."
+        if day_number >= 6:
+            urgency_line = ("🚨 Este es nuestro <b>último recordatorio automático</b>. "
+                            "Renueva pronto: el equipo puede suspender el servicio cuando lo considere necesario.")
         else:
-            urgency_line = "🚨 <b>¡Hoy es el último día!</b> Tu perfil se liberará si no renuevas."
+            urgency_line = "Tu servicio sigue activo, pero tu renovación está pendiente. Renueva hoy para evitar una suspensión."
 
         message = DEBT_REMINDER.format(
-            day=day_number,
+            days=day_number,
+            plural="" if day_number == 1 else "s",
             name=user.get("name", ""),
             platform=platform_label,
             end_date=end_date_fmt,
@@ -429,60 +434,6 @@ async def send_debt_reminder(sub: dict, day_number: int) -> bool:
         return await send_to_user(telegram_id, message, keyboard)
     except Exception as e:
         logger.error(f"Error in send_debt_reminder: {e}")
-        return False
-
-
-async def send_hard_cut_notification(sub: dict) -> bool:
-    """Notify user their subscription was cut after grace period.
-    If the user has no telegram_id (external client), notifies admin instead."""
-    from bot.messages import HARD_CUT_NOTIFICATION
-    from utils.helpers import format_datetime_vzla
-
-    try:
-        user = sub.get("users") or {}
-        platform = sub.get("platforms") or {}
-        telegram_id = user.get("telegram_id")
-
-        # External client: notify admin
-        if not telegram_id:
-            client_name = user.get("name") or "Sin nombre"
-            client_contact = user.get("phone") or user.get("notes") or "Sin contacto"
-            platform_label = f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip()
-            end_date_str = sub.get("end_date", "")
-            end_fmt = end_date_str[:10] if end_date_str else "N/A"
-            message = (
-                f"🔴 <b>Corte Ejecutado — Cliente Externo</b>\n\n"
-                f"El perfil del siguiente cliente fue liberado por falta de pago.\n\n"
-                f"👤 <b>Cliente:</b> {client_name}\n"
-                f"📞 <b>Contacto:</b> {client_contact}\n"
-                f"📺 <b>Plataforma:</b> {platform_label}\n"
-                f"📆 <b>Venció:</b> {end_fmt}\n\n"
-                f"<i>El perfil ya está disponible para otro cliente. "
-                f"Si desea reactivar, usa /afiliar de nuevo.</i>"
-            )
-            return bool(await send_to_admin(message))
-
-        if not telegram_id:
-            return False
-
-        end_date_str = sub.get("end_date", "")
-        end_dt = None
-        if end_date_str:
-            try:
-                from datetime import datetime
-                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-            except Exception:
-                pass
-
-        from bot.keyboards import main_menu_keyboard
-        message = HARD_CUT_NOTIFICATION.format(
-            name=user.get("name", ""),
-            platform=f"{platform.get('icon_emoji','')} {platform.get('name','')}".strip(),
-            end_date=format_datetime_vzla(end_dt) if end_dt else "N/A",
-        )
-        return await send_to_user(telegram_id, message, main_menu_keyboard())
-    except Exception as e:
-        logger.error(f"Error in send_hard_cut_notification: {e}")
         return False
 
 
@@ -529,7 +480,8 @@ async def send_soft_cut_notification(subscription_id: str) -> bool:
         telegram_id = user.get("telegram_id")
         if not telegram_id:
             return False
-        _ed = (sub.get("end_date") or "")[:10]
+        from utils.dates import caracas_date
+        _ed = caracas_date(sub["end_date"]).isoformat() if sub.get("end_date") else ""
         end_fmt = f"{_ed[8:10]}/{_ed[5:7]}/{_ed[0:4]}" if len(_ed) == 10 else _ed
         message = SOFT_CUT_NOTIFICATION.format(
             name=user.get("name", ""),
@@ -568,3 +520,20 @@ async def send_profile_released_notification(subscription_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error in send_profile_released_notification: {e}")
         return False
+
+
+async def send_document_to_admin(document_bytes: bytes, filename: str, caption: str = "") -> bool:
+    """Envía un archivo (por ejemplo, un comprobante en PDF) a todos los admins.
+    Devuelve True si al menos un admin lo recibió (O02 Lote 4)."""
+    admin_ids = parse_telegram_ids(settings.ADMIN_TELEGRAM_IDS)
+    any_sent = False
+    for admin_id in admin_ids:
+        try:
+            await get_bot().send_document(
+                chat_id=admin_id, document=document_bytes, filename=filename, caption=caption or None,
+            )
+            any_sent = True
+        except Exception as e:
+            logger.warning(f"send_document_to_admin failed for {admin_id}: {e}")
+        await asyncio.sleep(0.1)
+    return any_sent

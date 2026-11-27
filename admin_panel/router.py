@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
+import uuid
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from typing import Optional
 
 from fastapi import APIRouter, Request, Response, Form, Depends
@@ -13,6 +17,10 @@ from fastapi.templating import Jinja2Templates
 from admin_panel.auth import (
     create_session, clear_session, verify_session, verify_password,
     _AuthRedirectException,
+)
+from admin_panel.security import (
+    LOGIN_CSRF_COOKIE, apply_global_delay, client_ip, cookie_secure, csrf_protect,
+    get_throttle, in_thread, login_csrf_ok, new_login_csrf,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,9 +55,11 @@ def _fmt_dt(val) -> str:
 
 templates.env.filters["fmt_date"] = _fmt_date
 templates.env.filters["fmt_dt"] = _fmt_dt
+from services.labels import subscription_label as _sub_label  # noqa: E402
+templates.env.filters["status_label"] = _sub_label
 
 # ── Router ────────────────────────────────────────────────────────────────────
-panel_router = APIRouter(prefix="/panel", tags=["admin_panel"])
+panel_router = APIRouter(prefix="/panel", tags=["admin_panel"], dependencies=[Depends(csrf_protect)])
 
 
 # ── Auth guard helper ─────────────────────────────────────────────────────────
@@ -60,33 +70,161 @@ def _auth_guard(request: Request) -> Optional[RedirectResponse]:
     return None
 
 
+# ── Errores sin detalle interno y validación de entradas ─────────────────────
+class InputError(Exception):
+    """Error de entrada del usuario: su mensaje es seguro de mostrar."""
+
+
+def _public_error(e: Exception) -> str:
+    """Registra el detalle en el log y devuelve un mensaje sin información interna."""
+    if isinstance(e, InputError):
+        return str(e)
+    eid = uuid.uuid4().hex[:8]
+    logger.error("Error en el panel [%s]: %s", eid, e, exc_info=True)
+    return (f"No se pudo completar la acción (código {eid}). "
+            "Intenta de nuevo; si se repite, avisa con ese código.")
+
+
+def _error_redirect(base_url: str, e: Exception) -> RedirectResponse:
+    sep = "&" if "?" in base_url else "?"
+    return RedirectResponse(url=f"{base_url}{sep}error={quote(_public_error(e))}", status_code=302)
+
+
+def _parse_amount(raw, label: str, default: float = 0.0, max_value: float = 100000.0,
+                  positive: bool = False) -> float:
+    """Importe decimal: vacío = valor por defecto; rechaza texto, negativos, NaN e infinito.
+    Con ``positive=True`` también rechaza el cero (tasas de cambio)."""
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        v = float(str(raw).strip().replace(",", "."))
+    except ValueError:
+        raise InputError(f"{label} no es un número válido")
+    if not math.isfinite(v) or v < 0 or v > max_value or (positive and v == 0):
+        raise InputError(f"{label} debe ser un número {'mayor que 0' if positive else 'de 0'} y menor o igual a {max_value:g}")
+    return round(v, 4)
+
+
+def _parse_positive_int(raw, label: str) -> int:
+    try:
+        v = int(str(raw).strip())
+    except ValueError:
+        raise InputError(f"{label} debe ser un número entero")
+    if v <= 0:
+        raise InputError(f"{label} debe ser un número positivo")
+    return v
+
+
+def _parse_page(request: Request) -> tuple[int, Optional[str]]:
+    """Número de página; si no es válido, vuelve a la primera y avisa."""
+    raw = request.query_params.get("page", "1")
+    try:
+        p = int(raw)
+    except ValueError:
+        return 1, "El número de página no es válido; se muestra la primera."
+    if p < 1 or p > 100000:
+        return 1, "El número de página no es válido; se muestra la primera."
+    return p, None
+
+
+_FILTER_CHARS = re.compile(r'[,()*%"\\]')
+
+
+_KEEP = object()
+
+
+def _secret_field(raw: str):
+    """Campo secreto que el formulario ya no muestra: vacío = conservar, «-» = borrar."""
+    v = (raw or "").strip()
+    if v == "":
+        return _KEEP
+    return None if v == "-" else v
+
+
+def _clean_search(raw: str) -> str:
+    """Quita los caracteres que rompen el filtro `or_` de PostgREST."""
+    return _FILTER_CHARS.sub(" ", raw or "").strip()[:80]
+
+
+async def _audit(request: Request, action: str, detail: dict) -> None:
+    """Registro de acciones sensibles del panel. Lote 0: tabla `admin_log` existente
+    (telegram_id 0 = panel). O01 Lote 1 lo reemplaza por `admin_audit_log`."""
+    info = {**detail, "ip": client_ip(request)}
+    logger.info("AUDIT panel %s %s", action, info)
+    try:
+        from database.users import log_admin_action
+        if not await log_admin_action(0, f"panel:{action}", info):
+            logger.error("AUDITORÍA NO REGISTRADA en admin_log: %s %s", action, info)
+    except Exception as e:  # el registro no rompe la acción (decisión del Orquestador pendiente)
+        logger.error("AUDITORÍA NO REGISTRADA (%s): %s %s", type(e).__name__, action, info)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTH ROUTES
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _login_page(request: Request, error: Optional[str], status_code: int = 200,
+                retry_after: int = 0):
+    """Página de login con un token CSRF nuevo (doble envío con cookie)."""
+    token = new_login_csrf()
+    response = templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": error, "login_csrf": token},
+        status_code=status_code,
+    )
+    response.set_cookie(
+        LOGIN_CSRF_COOKIE, token, max_age=3600, path="/panel/login",
+        httponly=True, samesite="lax", secure=cookie_secure(),
+    )
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
 
 @panel_router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request):
     if verify_session(request):
         return RedirectResponse(url="/panel/dashboard", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return _login_page(request, None)
+
+
+def _locked_message(seconds: int) -> str:
+    minutes = max(1, math.ceil(seconds / 60))
+    return (f"Demasiados intentos fallidos. Espera {minutes} minuto(s) e inténtalo de nuevo. "
+            "Si no recuerdas la clave, quien administra el servidor puede cambiarla.")
 
 
 @panel_router.post("/login", response_class=HTMLResponse)
-async def login_post(request: Request, password: str = Form(...)):
+async def login_post(request: Request, password: str = Form(...), csrf_token: str = Form(default="")):
+    if not login_csrf_ok(request, csrf_token):
+        return _login_page(request, "La página de acceso venció. Vuelve a escribir la contraseña.", status_code=400)
+
+    throttle = get_throttle()
+    ip = client_ip(request)
+
+    # El intento se cuenta ANTES de verificar la clave: una ráfaga concurrente no puede
+    # evaluar más de LOGIN_MAX_FAILS contraseñas.
+    allowed, wait = await in_thread(throttle.begin_attempt, ip)
+    if not allowed:
+        return _login_page(request, _locked_message(wait), status_code=429, retry_after=wait)
+
+    await apply_global_delay(throttle)
     if verify_password(password):
+        await in_thread(throttle.register_success, ip)
         response = RedirectResponse(url="/panel/dashboard", status_code=302)
         create_session(response)
+        response.delete_cookie(LOGIN_CSRF_COOKIE, path="/panel/login")
         return response
-    return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "error": "Contraseña incorrecta. Intenta de nuevo."},
-        status_code=401,
-    )
+
+    lock = await in_thread(throttle.register_failure, ip)
+    if lock:
+        return _login_page(request, _locked_message(lock), status_code=429, retry_after=lock)
+    return _login_page(request, "Contraseña incorrecta. Intenta de nuevo.", status_code=401)
 
 
-@panel_router.get("/logout")
+@panel_router.post("/logout")
 async def logout(request: Request):
-    response = RedirectResponse(url="/panel/login", status_code=302)
+    response = RedirectResponse(url="/panel/login", status_code=303)
     clear_session(response)
     return response
 
@@ -240,7 +378,7 @@ async def dashboard(request: Request):
             "expired_subs": [],
             "today_str": _ve_now().strftime("%Y-%m-%d"),
             "now_ve": _ve_now(),
-            "error": str(e),
+            "error": _public_error(e),
         }
     return templates.TemplateResponse("dashboard.html", context)
 
@@ -331,7 +469,7 @@ async def account_new_save(
         return RedirectResponse(url="/panel/accounts?success=Cuenta+creada+exitosamente", status_code=302)
     except Exception as e:
         logger.error(f"Account create error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.get("/accounts/{account_id}/edit", response_class=HTMLResponse)
@@ -347,7 +485,7 @@ async def account_edit_form(request: Request, account_id: str):
         if not account:
             return RedirectResponse(url="/panel/accounts?error=Cuenta+no+encontrada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
     return templates.TemplateResponse("account_form.html", {
         "request": request,
         "page": "accounts",
@@ -364,11 +502,11 @@ async def account_edit_save(
     account_id: str,
     platform_id: str = Form(...),
     email: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(default=""),
     billing_date: str = Form(default=""),
     notes: str = Form(default=""),
     status: str = Form(default="active"),
-    cost_usd_monthly: float = Form(default=0.0),
+    cost_usd_monthly: str = Form(default="0"),
 ):
     guard = _auth_guard(request)
     if guard:
@@ -379,10 +517,11 @@ async def account_edit_save(
         data = {
             "platform_id": platform_id,
             "email": email,
-            "password": password,
             "status": status,
-            "cost_usd_monthly": cost_usd_monthly,
+            "cost_usd_monthly": _parse_amount(cost_usd_monthly, "El costo mensual"),
         }
+        if password.strip():
+            data["password"] = password  # vacío = conservar la contraseña actual
         if billing_date:
             data["billing_date"] = billing_date
         if notes:
@@ -391,7 +530,7 @@ async def account_edit_save(
         return RedirectResponse(url="/panel/accounts?success=Cuenta+actualizada", status_code=302)
     except Exception as e:
         logger.error(f"Account edit error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.post("/accounts/{account_id}/delete")
@@ -406,7 +545,7 @@ async def account_delete(request: Request, account_id: str):
         return RedirectResponse(url="/panel/accounts?success=Cuenta+eliminada", status_code=302)
     except Exception as e:
         logger.error(f"Account delete error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 @panel_router.post("/accounts/{account_id}/set-status")
@@ -425,7 +564,7 @@ async def account_set_status(request: Request, account_id: str):
         return RedirectResponse(url=request.headers.get("referer", "/panel/accounts"), status_code=302)
     except Exception as e:
         logger.error(f"Account set-status error: {e}")
-        return RedirectResponse(url=f"/panel/accounts?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/accounts", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -542,7 +681,7 @@ async def profile_new_save(
         return RedirectResponse(url="/panel/profiles?success=Perfil+creado+exitosamente", status_code=302)
     except Exception as e:
         logger.error(f"Profile create error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 @panel_router.get("/profiles/{profile_id}/edit", response_class=HTMLResponse)
@@ -561,7 +700,7 @@ async def profile_edit_form(request: Request, profile_id: str):
         if not profile:
             return RedirectResponse(url="/panel/profiles?error=Perfil+no+encontrado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
     return templates.TemplateResponse("profile_form.html", {
         "request": request,
         "page": "profiles",
@@ -599,20 +738,22 @@ async def profile_edit_save(
         update_data = {
             "platform_id": platform_id,
             "profile_name": profile_name,
-            "pin": pin or None,
             "profile_type": profile_type,
             "status": status,
             "is_extra_member": extra,
             "extra_email": extra_email or None,
-            "extra_password": extra_password or None,
         }
+        for column, raw in (("pin", pin), ("extra_password", extra_password)):
+            value = _secret_field(raw)
+            if value is not _KEEP:
+                update_data[column] = value
         if account_id:
             update_data["account_id"] = account_id
         sb.table("profiles").update(update_data).eq("id", profile_id).execute()
         return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?success=1", status_code=302)
     except Exception as e:
         logger.error(f"Profile edit error: {e}")
-        return RedirectResponse(url=f"/panel/profiles/{profile_id}/edit?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles/{profile_id}/edit", e)
 
 
 @panel_router.post("/profiles/{profile_id}/set-status")
@@ -631,7 +772,7 @@ async def profile_set_status(request: Request, profile_id: str):
         return RedirectResponse(url=request.headers.get("referer", "/panel/profiles"), status_code=302)
     except Exception as e:
         logger.error(f"Profile set-status error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 @panel_router.post("/profiles/{profile_id}/delete")
@@ -646,7 +787,7 @@ async def profile_delete(request: Request, profile_id: str):
         return RedirectResponse(url="/panel/profiles?success=Perfil+eliminado", status_code=302)
     except Exception as e:
         logger.error(f"Profile delete error: {e}")
-        return RedirectResponse(url=f"/panel/profiles?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/profiles", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -661,8 +802,8 @@ async def users_list(request: Request):
     try:
         from database import get_supabase
         sb = get_supabase()
-        page = int(request.query_params.get("page", 1))
-        search = request.query_params.get("q", "").strip()
+        page, page_error = _parse_page(request)
+        search = _clean_search(request.query_params.get("q", ""))
         per_page = 20
         offset = (page - 1) * per_page
 
@@ -680,7 +821,7 @@ async def users_list(request: Request):
         users = result.data or []
         total_pages = (total + per_page - 1) // per_page
     except Exception as e:
-        logger.error(f"Users list error: {e}")
+        page_error = _public_error(e)
         users = []
         total = 0
         page = 1
@@ -697,7 +838,7 @@ async def users_list(request: Request):
         "total_pages": total_pages,
         "search": search,
         "success": request.query_params.get("success"),
-        "error": request.query_params.get("error"),
+        "error": page_error or request.query_params.get("error"),
     })
 
 
@@ -714,17 +855,15 @@ async def user_detail(request: Request, user_id: str):
         user = user_res.data[0] if user_res.data else None
         if not user:
             return RedirectResponse(url="/panel/users?error=Usuario+no+encontrado", status_code=302)
-        # Auto-expire any active subs past end_date for this user
-        from database.subscriptions import auto_expire_overdue_subscriptions
-        await auto_expire_overdue_subscriptions(user_id=user_id)
+        # O02 Lote 6: este GET ya no escribe (antes pasaba las vencidas a `expired`); la mora se deriva de la fecha.
         subs_res = sb.table("subscriptions").select(
-            "*, platforms(name, icon_emoji), profiles(profile_name, pin, accounts(email, password))"
+            "*, platforms(name, icon_emoji), profiles(profile_name, accounts(email))"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
         subscriptions = subs_res.data or []
         platforms = await get_active_platforms()
     except Exception as e:
         logger.error(f"User detail error: {e}")
-        return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users", e)
     from utils.helpers import venezuela_now
     return templates.TemplateResponse("user_detail.html", {
         "request": request,
@@ -756,7 +895,7 @@ async def user_add_subscription(request: Request, user_id: str):
         platform_id  = (form.get("platform_id") or "").strip()
         plan_type    = (form.get("plan_type") or "monthly").strip()
         end_date_str = (form.get("end_date") or "").strip()
-        price        = float(form.get("price_usd") or 0)
+        price        = _parse_amount(form.get("price_usd"), "El precio")
         reference    = (form.get("payment_reference") or "MIGRADO").strip()
         profile_mode = (form.get("profile_mode") or "existing").strip()
 
@@ -830,7 +969,7 @@ async def user_add_subscription(request: Request, user_id: str):
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Suscripcion+agregada+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"Add subscription error: {e}")
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/block")
@@ -844,7 +983,7 @@ async def user_block(request: Request, user_id: str):
         sb.table("users").update({"status": "blocked"}).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Usuario+bloqueado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/unblock")
@@ -858,7 +997,7 @@ async def user_unblock(request: Request, user_id: str):
         sb.table("users").update({"status": "active"}).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Usuario+desbloqueado", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/edit")
@@ -883,15 +1022,15 @@ async def user_edit(request: Request, user_id: str):
             upd["username"] = username
         if telegram_id_raw:
             try:
-                upd["telegram_id"] = int(telegram_id_raw)
-            except ValueError:
+                upd["telegram_id"] = _parse_positive_int(telegram_id_raw, "El Telegram ID")
+            except InputError:
                 return RedirectResponse(url=f"/panel/users/{user_id}?error=Telegram+ID+debe+ser+un+numero", status_code=302)
         if upd:
             sb.table("users").update(upd).eq("id", user_id).execute()
         return RedirectResponse(url=f"/panel/users/{user_id}?success=Cliente+actualizado+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"User edit error: {e}")
-        return RedirectResponse(url=f"/panel/users/{user_id}?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users/{user_id}", e)
 
 
 @panel_router.post("/users/{user_id}/delete")
@@ -900,11 +1039,16 @@ async def user_delete(request: Request, user_id: str):
     if guard:
         return guard
     try:
+        from database.orders import count_user_periods
         from database.users import delete_user
-        await delete_user(user_id)
+        if await count_user_periods(user_id) > 0:
+            raise InputError("Este cliente tiene suscripciones con historial de pagos y no se puede borrar. "
+                             "Anula sus suscripciones con motivo desde «Anomalías» para conservar el historial.")
+        if not await delete_user(user_id):
+            raise InputError("No se pudo eliminar el cliente. Revisa que no tenga datos asociados e inténtalo de nuevo.")
         return RedirectResponse(url="/panel/users?success=Cliente+eliminado+correctamente", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/users?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/users", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -921,21 +1065,23 @@ async def subscriptions_list(request: Request):
         from database.platforms import get_active_platforms
         sb = get_supabase()
 
-        # Auto-expire any active subs past end_date (global sweep)
-        from database.subscriptions import auto_expire_overdue_subscriptions
-        await auto_expire_overdue_subscriptions()
+        # O02 Lote 6: este GET ya no escribe (antes barría las vencidas a `expired`).
+        from utils.helpers import venezuela_now as _now_vz
 
         status_filter = request.query_params.get("status", "")
         platform_filter = request.query_params.get("platform", "")
         plan_filter = request.query_params.get("plan", "")
-        page = int(request.query_params.get("page", 1))
+        page, page_error = _parse_page(request)
         per_page = 25
         offset = (page - 1) * per_page
 
         query = sb.table("subscriptions").select(
-            "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, pin, accounts(email, password))"
+            "*, users(name, username), platforms(name, icon_emoji, slug), profiles(profile_name, accounts(email))"
         )
-        if status_filter:
+        overdue_filter = status_filter in ("overdue", "expired")   # «expired» se conserva como alias
+        if overdue_filter:
+            query = query.in_("status", ["active", "expired"]).lt("end_date", _now_vz().isoformat())
+        elif status_filter:
             query = query.eq("status", status_filter)
         if platform_filter:
             query = query.eq("platform_id", platform_filter)
@@ -946,7 +1092,9 @@ async def subscriptions_list(request: Request):
         subscriptions = result.data or []
 
         count_q = sb.table("subscriptions").select("id", count="exact")
-        if status_filter:
+        if overdue_filter:
+            count_q = count_q.in_("status", ["active", "expired"]).lt("end_date", _now_vz().isoformat())
+        elif status_filter:
             count_q = count_q.eq("status", status_filter)
         if platform_filter:
             count_q = count_q.eq("platform_id", platform_filter)
@@ -958,7 +1106,7 @@ async def subscriptions_list(request: Request):
 
         platforms = await get_active_platforms()
     except Exception as e:
-        logger.error(f"Subscriptions list error: {e}")
+        page_error = _public_error(e)
         subscriptions = []
         platforms = []
         total = 0
@@ -977,6 +1125,8 @@ async def subscriptions_list(request: Request):
         "current_page": page,
         "per_page": per_page,
         "total_pages": total_pages,
+        "error": page_error or request.query_params.get("error"),
+        "success": request.query_params.get("success"),
     })
 
 
@@ -1014,10 +1164,7 @@ async def subscription_edit(request: Request, sub_id: str):
         if plan_type:
             upd["plan_type"] = plan_type
         if price_usd:
-            try:
-                upd["price_usd"] = float(price_usd)
-            except ValueError:
-                pass
+            upd["price_usd"] = _parse_amount(price_usd, "El precio")
 
         # Handle profile assignment change
         if new_profile_id != old_profile_id:
@@ -1036,11 +1183,41 @@ async def subscription_edit(request: Request, sub_id: str):
         return RedirectResponse(url=redirect_url, status_code=302)
     except Exception as e:
         logger.error(f"Subscription edit error: {e}")
-        return RedirectResponse(url=f"/panel/subscriptions?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/subscriptions", e)
+
+
+async def _has_pending_payments(user_id) -> bool:
+    from database.orders import pending_for_user
+    p = await pending_for_user(str(user_id))
+    return bool(p["orders"] or p["legacy"])
+
+
+@panel_router.get("/subscriptions/{sub_id}/confirm-cut", response_class=HTMLResponse)
+async def subscription_confirm_cut(request: Request, sub_id: str, kind: str = "soft"):
+    """Advertencia previa a un corte manual cuando el cliente tiene un pago pendiente."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from database.orders import pending_for_user
+        res = get_supabase().table("subscriptions").select(
+            "id, user_id, users(name, username), platforms(name, icon_emoji)").eq("id", sub_id).limit(1).execute()
+        if not res.data:
+            return RedirectResponse(url="/panel/subscriptions?error=Suscripcion+no+encontrada", status_code=302)
+        sub = res.data[0]
+        pending = await pending_for_user(str(sub["user_id"]))
+        return templates.TemplateResponse("confirm_cut.html", {
+            "request": request, "page": "subscriptions", "sub": sub, "pending": pending,
+            "action": f"/panel/subscriptions/{sub_id}/{'release' if kind == 'release' else 'soft-cut'}",
+            "kind": "release" if kind == "release" else "soft", "user_id": sub["user_id"],
+        })
+    except Exception as e:
+        return _error_redirect("/panel/subscriptions", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/soft-cut")
-async def subscription_soft_cut(request: Request, sub_id: str):
+async def subscription_soft_cut(request: Request, sub_id: str, confirm_pending: str = Form(default="")):
     """Change profile PIN (soft cut) and mark subscription expired."""
     guard = _auth_guard(request)
     if guard:
@@ -1060,6 +1237,10 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         sub = sub_res.data[0]
         user_id = sub.get("user_id")
         profile_id = sub.get("profile_id")
+
+        # O02 Lote 6: si el cliente tiene una orden pendiente, se advierte y se pide confirmar.
+        if not confirm_pending and await _has_pending_payments(user_id):
+            return RedirectResponse(url=f"/panel/subscriptions/{sub_id}/confirm-cut?kind=soft", status_code=302)
 
         if not profile_id:
             return RedirectResponse(url=f"/panel/users/{user_id}?error=Esta+suscripcion+no+tiene+perfil+asignado", status_code=302)
@@ -1116,11 +1297,11 @@ async def subscription_soft_cut(request: Request, sub_id: str):
         return RedirectResponse(url=f"{redirect_base}?success=Corte+suave+aplicado+y+PIN+cambiado", status_code=302)
     except Exception as e:
         logger.error(f"Soft cut error: {e}")
-        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/release")
-async def subscription_release(request: Request, sub_id: str):
+async def subscription_release(request: Request, sub_id: str, confirm_pending: str = Form(default="")):
     """Release profile (mark available) and mark subscription expired."""
     guard = _auth_guard(request)
     if guard:
@@ -1137,6 +1318,10 @@ async def subscription_release(request: Request, sub_id: str):
         sub = sub_res.data[0]
         user_id = sub.get("user_id")
         profile_id = sub.get("profile_id")
+
+        # O02 Lote 6: si el cliente tiene una orden pendiente, se advierte y se pide confirmar.
+        if not confirm_pending and await _has_pending_payments(user_id):
+            return RedirectResponse(url=f"/panel/subscriptions/{sub_id}/confirm-cut?kind=release", status_code=302)
 
         # Capturar datos del perfil ANTES de modificarlo
         old_pin = "—"
@@ -1200,7 +1385,7 @@ async def subscription_release(request: Request, sub_id: str):
         return RedirectResponse(url=f"{redirect_base}?success=Perfil+liberado+correctamente", status_code=302)
     except Exception as e:
         logger.error(f"Release subscription error: {e}")
-        return RedirectResponse(url=f"/panel/?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/", e)
 
 
 @panel_router.post("/subscriptions/{sub_id}/delete")
@@ -1217,13 +1402,92 @@ async def subscription_delete(request: Request, sub_id: str):
         sub_res = sb.table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute()
         if sub_res.data:
             user_id = sub_res.data[0].get("user_id")
+        # O02 Lote 5: una suscripción con pagos registrados no se borra, se anula con motivo.
+        from database.orders import count_subscription_periods
+        if await count_subscription_periods(sub_id) > 0:
+            raise InputError("Esta suscripción tiene historial de pagos y no se puede borrar. "
+                             "Anúlala con motivo desde «Anomalías» para conservar el historial.")
         await delete_subscription(sub_id)
         redirect_ok = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
         return RedirectResponse(url=f"{redirect_ok}?success=Suscripcion+eliminada", status_code=302)
     except Exception as e:
         logger.error(f"subscription_delete error for sub_id={sub_id}: {e}")
         redirect_err = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
-        return RedirectResponse(url=f"{redirect_err}?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"{redirect_err}", e)
+
+
+@panel_router.post("/profiles/{profile_id}/credentials")
+async def profile_credentials(request: Request, profile_id: str):
+    """PIN y datos del cupo adicional de un perfil, solo bajo demanda y con auditoría."""
+    if not verify_session(request):
+        return JSONResponse({"ok": False, "error": "Sesión vencida. Vuelve a iniciar sesión."}, status_code=401)
+    try:
+        uuid.UUID(profile_id)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Identificador no válido."}, status_code=404)
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+        res = (
+            sb.table("profiles")
+            .select("id, pin, is_extra_member, extra_email, extra_password")
+            .eq("id", profile_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return JSONResponse({"ok": False, "error": "Perfil no encontrado."}, status_code=404)
+        row = res.data[0]
+        await _audit(request, "reveal_profile_credentials", {"profile_id": profile_id})
+        return JSONResponse(
+            {"ok": True, "pin": row.get("pin") or "—", "is_extra_member": bool(row.get("is_extra_member")),
+             "extra_email": row.get("extra_email") or "—", "extra_password": row.get("extra_password") or "—"},
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": _public_error(e)}, status_code=500)
+
+
+@panel_router.post("/subscriptions/{sub_id}/credentials")
+async def subscription_credentials(request: Request, sub_id: str):
+    """Entrega las credenciales de la cuenta de una suscripción SOLO bajo demanda.
+    Las listas y fichas ya no las incrustan en el HTML. Cada consulta queda registrada."""
+    if not verify_session(request):
+        return JSONResponse({"ok": False, "error": "Sesión vencida. Vuelve a iniciar sesión."}, status_code=401)
+    try:
+        uuid.UUID(sub_id)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Identificador no válido."}, status_code=404)
+    try:
+        from database import get_supabase
+        sb = get_supabase()
+        res = (
+            sb.table("subscriptions")
+            .select("id, platforms(name, icon_emoji), profiles(profile_name, pin, accounts(email, password))")
+            .eq("id", sub_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return JSONResponse({"ok": False, "error": "Suscripción no encontrada."}, status_code=404)
+        row = res.data[0]
+        plat = row.get("platforms") or {}
+        prof = row.get("profiles") or {}
+        acc = prof.get("accounts") or {}
+        await _audit(request, "reveal_credentials", {"sub_id": sub_id})
+        return JSONResponse(
+            {
+                "ok": True,
+                "platform": f"{plat.get('icon_emoji') or ''} {plat.get('name') or '—'}".strip(),
+                "email": acc.get("email") or "—",
+                "password": acc.get("password") or "—",
+                "profile": prof.get("profile_name") or "—",
+                "pin": prof.get("pin") or "—",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": _public_error(e)}, status_code=500)
 
 
 @panel_router.post("/subscriptions/{sub_id}/notify-reminder")
@@ -1237,7 +1501,7 @@ async def subscription_notify_reminder(request: Request, sub_id: str):
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.error(f"notify-reminder error: {e}")
-        return JSONResponse({"ok": False, "error": str(e)})
+        return JSONResponse({"ok": False, "error": _public_error(e)})
 
 
 @panel_router.post("/subscriptions/{sub_id}/notify-expiry")
@@ -1251,7 +1515,7 @@ async def subscription_notify_expiry(request: Request, sub_id: str):
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.error(f"notify-expiry error: {e}")
-        return JSONResponse({"ok": False, "error": str(e)})
+        return JSONResponse({"ok": False, "error": _public_error(e)})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1283,7 +1547,7 @@ async def payments_list(request: Request):
         expired_res = (
             sb.table("subscriptions")
             .select("*, users(id, name, username, telegram_id), platforms(name, icon_emoji)")
-            .eq("status", "active")
+            .in_("status", ["active", "expired"])
             .lt("end_date", now.isoformat())
             .order("end_date", desc=False)
             .limit(50)
@@ -1341,6 +1605,14 @@ async def payment_approve(
         sub = await get_subscription_by_id(sub_id)
         if not sub:
             return RedirectResponse(url="/panel/payments?error=Suscripcion+no+encontrada", status_code=302)
+        from services.payment_guards import can_decide_payment, status_label
+        if not can_decide_payment(sub.get("status")):
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    f"El pedido ya no está pendiente (estado: {status_label(sub.get('status'))}). No se hizo ningún cambio."
+                ),
+                status_code=302,
+            )
 
         user_id = str(sub.get("user_id", ""))
         platform_id = str(sub.get("platform_id", ""))
@@ -1416,6 +1688,13 @@ async def payment_approve(
 
         image_url = sub.get("payment_image_url") or ""
         ok = await confirm_subscription(sub_id, profile_id, payment_reference, image_url)
+        if not ok:
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    "No se pudo confirmar el pago (otra aprobación se adelantó o hubo un error). No se asignó ningún perfil."
+                ),
+                status_code=302,
+            )
         if ok:
             await assign_profile(profile_id)
             if telegram_id:
@@ -1457,7 +1736,7 @@ async def payment_approve(
         return RedirectResponse(url="/panel/payments?error=Error+al+confirmar+pago", status_code=302)
     except Exception as e:
         logger.error(f"Payment approve error: {e}")
-        return RedirectResponse(url=f"/panel/payments?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/payments", e)
 
 
 @panel_router.post("/payments/{sub_id}/reject")
@@ -1472,6 +1751,16 @@ async def payment_reject(
     try:
         from database.subscriptions import get_subscription_by_id, delete_subscription, get_user_active_subscriptions
         sub = await get_subscription_by_id(sub_id)
+        if not sub:
+            return RedirectResponse(url="/panel/payments?error=Suscripcion+no+encontrada", status_code=302)
+        from services.payment_guards import can_decide_payment, status_label
+        if not can_decide_payment(sub.get("status")):
+            return RedirectResponse(
+                url="/panel/payments?error=" + quote(
+                    f"El pedido ya no está pendiente (estado: {status_label(sub.get('status'))}). No se rechazó ni se borró nada."
+                ),
+                status_code=302,
+            )
         await delete_subscription(sub_id)
 
         if sub:
@@ -1518,7 +1807,7 @@ async def payment_reject(
         return RedirectResponse(url="/panel/payments?success=Pago+rechazado", status_code=302)
     except Exception as e:
         logger.error(f"Payment reject error: {e}")
-        return RedirectResponse(url=f"/panel/payments?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/payments", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1558,7 +1847,7 @@ async def platform_edit_form(request: Request, platform_id: str):
         if not platform:
             return RedirectResponse(url="/panel/platforms?error=Plataforma+no+encontrada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/platforms?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/platforms", e)
     return templates.TemplateResponse("platform_form.html", {
         "request": request,
         "page": "platforms",
@@ -1573,8 +1862,8 @@ async def platform_edit_save(
     name: str = Form(...),
     slug: str = Form(...),
     icon_emoji: str = Form(default=""),
-    monthly_price_usd: float = Form(default=0.0),
-    express_price_usd: float = Form(default=0.0),
+    monthly_price_usd: str = Form(default="0"),
+    express_price_usd: str = Form(default="0"),
     is_active: str = Form(default="off"),
     instructions_monthly: str = Form(default=""),
     instructions_express: str = Form(default=""),
@@ -1589,8 +1878,8 @@ async def platform_edit_save(
             "name": name,
             "slug": slug,
             "icon_emoji": icon_emoji,
-            "monthly_price_usd": monthly_price_usd,
-            "express_price_usd": express_price_usd,
+            "monthly_price_usd": _parse_amount(monthly_price_usd, "El precio mensual", max_value=1000),
+            "express_price_usd": _parse_amount(express_price_usd, "El precio express", max_value=1000),
             "is_active": is_active == "on",
             "instructions_monthly": instructions_monthly or None,
             "instructions_express": instructions_express or None,
@@ -1598,7 +1887,7 @@ async def platform_edit_save(
         return RedirectResponse(url="/panel/platforms?success=Plataforma+actualizada", status_code=302)
     except Exception as e:
         logger.error(f"Platform edit error: {e}")
-        return RedirectResponse(url=f"/panel/platforms?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/platforms", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1634,36 +1923,38 @@ async def settings_page(request: Request):
 @panel_router.post("/settings/rate")
 async def settings_update_rate(
     request: Request,
-    usd_binance: float = Form(...),
+    usd_binance: str = Form(...),
 ):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
         from services.exchange_service import update_rate
-        await update_rate(usd_binance, 0)
+        await update_rate(_parse_amount(usd_binance, "La tasa", positive=True), 0)
         return RedirectResponse(url="/panel/settings?success=Tasa+Binance+actualizada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 @panel_router.post("/settings/bcv")
 async def settings_update_bcv(
     request: Request,
-    usd_bcv: float = Form(...),
-    eur_bcv: float = Form(default=0.0),
+    usd_bcv: str = Form(...),
+    eur_bcv: str = Form(default=""),
 ):
     guard = _auth_guard(request)
     if guard:
         return guard
     try:
         from services.exchange_service import get_current_rate, update_rate
+        usd_bcv = _parse_amount(usd_bcv, "La tasa BCV en dólares", positive=True)
+        eur_bcv = _parse_amount(eur_bcv, "La tasa BCV en euros")
         current = await get_current_rate()
         current_binance = float(current.get("usd_binance", 0)) if current else 0.0
         await update_rate(current_binance or usd_bcv, 0, usd_bcv=usd_bcv, eur_bcv=eur_bcv if eur_bcv > 0 else None)
         return RedirectResponse(url="/panel/settings?success=Tasas+BCV+actualizadas", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 @panel_router.post("/settings/payment")
@@ -1688,7 +1979,7 @@ async def settings_update_payment(
             sb.table("payment_config").insert(data).execute()
         return RedirectResponse(url="/panel/settings?success=Configuracion+de+pago+actualizada", status_code=302)
     except Exception as e:
-        return RedirectResponse(url=f"/panel/settings?error={str(e)[:100]}", status_code=302)
+        return _error_redirect(f"/panel/settings", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1732,7 +2023,7 @@ async def migrate_post(request: Request):
         tz_ve = pytz.timezone("America/Caracas")
 
         telegram_id_raw = form.get("telegram_id", "").strip()
-        telegram_id   = int(telegram_id_raw) if telegram_id_raw else None
+        telegram_id   = _parse_positive_int(telegram_id_raw, "El Telegram ID") if telegram_id_raw else None
         client_name   = form.get("client_name", "").strip()
         username      = form.get("username", "").strip().lstrip("@")
         phone         = form.get("phone", "").strip()
@@ -1796,7 +2087,7 @@ async def migrate_post(request: Request):
             mode     = profile_modes[i] if i < len(profile_modes) else "existing"
             plan     = plan_types[i]  if i < len(plan_types)  else "monthly"
             ed_str   = end_dates[i]   if i < len(end_dates)   else ""
-            price    = float(prices[i]) if i < len(prices) and prices[i] else 0.0
+            price    = _parse_amount(prices[i] if i < len(prices) else None, "El precio")
             ref      = references[i]  if i < len(references)  else "MIGRADO"
 
             if not pid or not ed_str:
@@ -1878,7 +2169,7 @@ async def migrate_post(request: Request):
         )
     except Exception as e:
         logger.error(f"Migrate error: {e}")
-        return RedirectResponse(url=f"/panel/migrate?error={str(e)[:120]}", status_code=302)
+        return _error_redirect(f"/panel/migrate", e)
 
 
 @panel_router.get("/api/profiles/available/{platform_id}")
@@ -1895,7 +2186,7 @@ async def api_profiles_by_platform(request: Request, platform_id: str):
         ).eq("platform_id", platform_id).order("status").order("profile_type").execute()
         return JSONResponse({"profiles": res.data or []})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/accounts/by-platform/{platform_id}")
@@ -1911,7 +2202,7 @@ async def api_accounts_by_platform(request: Request, platform_id: str):
         ).eq("platform_id", platform_id).eq("status", "active").order("email").execute()
         return JSONResponse({"accounts": res.data or []})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1927,10 +2218,10 @@ async def api_stats(request: Request):
         stats = await get_dashboard_stats()
         return JSONResponse(stats)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
-@panel_router.get("/api/rate/fetch")
+@panel_router.post("/api/rate/fetch")
 async def api_fetch_rate(request: Request):
     if not verify_session(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -1942,7 +2233,7 @@ async def api_fetch_rate(request: Request):
             return JSONResponse({"success": True, "rate": rate, "message": f"Tasa actualizada: Bs {rate:.2f}/USD"})
         return JSONResponse({"success": False, "message": "No se pudo obtener la tasa de Binance P2P"})
     except Exception as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "message": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/payments/pending")
@@ -1952,9 +2243,14 @@ async def api_payments_pending(request: Request):
     try:
         from database.subscriptions import get_pending_subscriptions
         pending = await get_pending_subscriptions()
-        return JSONResponse({"count": len(pending), "payments": pending})
+        count = len(pending)
+        from config import settings as _settings
+        if _settings.CHECKOUT_V2_ENABLED:
+            from database.orders import list_orders
+            count += len(await list_orders(["pending"], limit=100))
+        return JSONResponse({"count": count, "payments": pending})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
 
 
 @panel_router.get("/api/debug/availability")
@@ -1996,4 +2292,293 @@ async def api_debug_availability(request: Request):
             })
         return JSONResponse({"platforms": result})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": _public_error(e)}, status_code=500)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ÓRDENES DE PAGO (O02 Lote 5): aprobar y rechazar por orden con el mismo motor que Telegram
+# ─────────────────────────────────────────────────────────────────────────────
+import html as _html  # noqa: E402
+
+_PANEL_ACTOR = "panel:admin"
+
+
+def _plain(text: str) -> str:
+    """Texto de Telegram (HTML) → texto plano para un aviso del panel."""
+    return _html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
+
+
+async def _order_names(order: dict) -> dict:
+    from services import order_admin
+    return await order_admin._names(order)
+
+
+@panel_router.get("/orders", response_class=HTMLResponse)
+async def orders_list(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database import orders
+    from services.order_notifications import order_view
+    pending = await orders.list_orders(["pending"], limit=50)
+    recent = await orders.list_orders(["approved", "rejected", "expired", "cancelled", "voided"], limit=30)
+    expired_waiting = [o for o in recent if o.get("status") == "expired"]
+    views = {}
+    for key, rows in (("pending", pending), ("recent", recent)):
+        views[key] = [order_view(o, await _order_names(o)) for o in rows]
+    return templates.TemplateResponse("orders.html", {
+        "request": request, "page": "orders", "pending": views["pending"], "recent": views["recent"],
+        "expired_count": len(expired_waiting),
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.get("/orders/{order_id}", response_class=HTMLResponse)
+async def order_detail(request: Request, order_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database import orders
+    from services.checkout_service import CheckoutError, _clean_order_id
+    from services.order_notifications import REJECT_REASONS, order_view
+    try:
+        oid = _clean_order_id(order_id)
+    except CheckoutError:
+        return RedirectResponse(url="/panel/orders?error=Orden+no+valida", status_code=302)
+    order = await orders.get_order(oid)
+    if not order:
+        return RedirectResponse(url="/panel/orders?error=Orden+no+encontrada", status_code=302)
+    return templates.TemplateResponse("order_detail.html", {
+        "request": request, "page": "orders", "o": order_view(order, await _order_names(order)),
+        "reject_reasons": REJECT_REASONS,
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.post("/orders/{order_id}/approve")
+async def order_approve(request: Request, order_id: str, reason: str = Form(default=""),
+                        payment_reference: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        # `reason` solo es obligatorio para una orden caducada (comprobante tardío); la función SQL lo exige.
+        out = await order_admin.approve_and_notify(order_id, _PANEL_ACTOR, reason.strip() or None,
+                                                   payment_reference.strip() or None)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "approve_order", {"order_id": order_id, "reason": reason.strip() or None})
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+@panel_router.post("/orders/{order_id}/reject")
+async def order_reject(request: Request, order_id: str, reason_code: str = Form(default=""),
+                       detail: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        out = await order_admin.reject_and_notify(order_id, _PANEL_ACTOR, reason_code, detail[:300])
+        if not out["ok"]:
+            return RedirectResponse(url=f"{back}?error={quote('La orden ya fue decidida por otra persona.')}", status_code=302)
+        await _audit(request, "reject_order", {"order_id": order_id, "reason": reason_code})
+        msg = "Orden rechazada" + ("; el cliente fue avisado." if out["client_notified"]
+                                   else ". No se pudo avisar al cliente por Telegram: avísale por otro medio.")
+        return RedirectResponse(url=f"/panel/orders?success={quote(msg)}", status_code=302)
+    except (CheckoutError, ValueError) as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+@panel_router.post("/orders/{order_id}/approve-partial")
+async def order_approve_partial(request: Request, order_id: str, items: list[int] = Form(default=[]),
+                                reason: str = Form(default=""), payment_reference: str = Form(default="")):
+    """Aprueba solo los ítems marcados; el resto queda en una orden nueva pendiente (se divide la orden)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        out = await order_admin.approve_partial_and_notify(order_id, _PANEL_ACTOR, items, reason.strip() or None,
+                                                           payment_reference.strip() or None)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "approve_order_partial", {"order_id": order_id, "items": sorted(items),
+                                                            "remainder_order_id": out.get("remainder_order_id")})
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+@panel_router.post("/orders/{order_id}/void")
+async def order_void(request: Request, order_id: str, reason: str = Form(default="")):
+    """Anula una orden APROBADA con asiento contrario (motivo obligatorio, auditado)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        why = _need_reason(reason)
+        out = await order_admin.void_and_notify(order_id, _PANEL_ACTOR, why)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "void_order", {"order_id": order_id, "reason": why})
+        released = [it.get("released_profile") for it in out["result"].get("items", []) if it.get("released_profile")]
+        for rel in released:
+            await _notify_release(rel, "orden anulada")
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REVISIÓN DE ANOMALÍAS (O02 Lote 5): lista y acciones auditadas (anular, liberar perfil, fusionar)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _need_reason(raw: str) -> str:
+    reason = (raw or "").strip()
+    if len(reason) < 5:
+        raise InputError("Escribe el motivo (mínimo 5 caracteres): queda en el registro de auditoría")
+    return reason[:300]
+
+
+async def _notify_release(info: Optional[dict], where: str) -> None:
+    """Avisa a los admins por Telegram de los PIN anterior y nuevo (deben cambiarlo en la plataforma)."""
+    if not info or not info.get("released"):
+        return
+    try:
+        from services.notification_service import send_to_admin
+        await send_to_admin(
+            f"🔓 <b>Perfil liberado desde el panel ({_html.escape(where)})</b>\n\n"
+            f"👤 Perfil: <b>{_html.escape(str(info.get('profile_name')))}</b>\n"
+            f"📧 Cuenta: <code>{_html.escape(str(info.get('account_email')))}</code>\n"
+            f"🔢 PIN anterior: <code>{_html.escape(str(info.get('old_pin')))}</code>\n"
+            f"🔄 PIN nuevo: <code>{_html.escape(str(info.get('new_pin')))}</code>\n\n"
+            "⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma.")
+    except Exception as e:
+        logger.warning("No se pudo avisar la liberación de perfil: %s", e)
+
+
+@panel_router.get("/anomalies", response_class=HTMLResponse)
+async def anomalies_page(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database.anomalies import fetch_anomaly_data
+    from services import anomalies
+    ok, data, load_error = True, {"counts": {}, "total": 0}, None
+    try:
+        subs, profiles = await fetch_anomaly_data()
+        data = anomalies.detect(subs, profiles)
+    except Exception as e:
+        ok, load_error = False, _public_error(e)
+    return templates.TemplateResponse("anomalies.html", {
+        "request": request, "page": "anomalies", "ok": ok, "data": data, "categories": anomalies.CATEGORIES,
+        "load_error": load_error,
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.post("/anomalies/void")
+async def anomaly_void(request: Request, sub_id: str = Form(default=""), reason: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.subscriptions import void_subscription
+        why = _need_reason(reason)
+        out = await void_subscription(sub_id, "panel", why)
+        if not out.get("voided"):
+            raise InputError("No se pudo anular: la suscripción no existe o cambió de estado. Recarga la página.")
+        await _audit(request, "void_subscription", {"sub_id": sub_id, "reason": why, "already": out.get("already")})
+        await _notify_release(out.get("release"), "suscripción anulada")
+        note = ""
+        rel = out.get("release") or {}
+        if rel and not rel.get("released") and rel.get("reason") == "otra_suscripcion_activa":
+            note = " El perfil NO se liberó: lo usa otra suscripción activa."
+        return RedirectResponse(url=f"/panel/anomalies?success={quote('Suscripción anulada.' + note)}", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)
+
+
+@panel_router.post("/anomalies/release-profile")
+async def anomaly_release_profile(request: Request, profile_id: str = Form(default=""), reason: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.profiles import release_profile_for_cut
+        why = _need_reason(reason)
+        info = await release_profile_for_cut(profile_id, None)
+        if info is None:
+            raise InputError("No se pudo leer el perfil. Recarga la página.")
+        if not info["released"]:
+            motivo = ("lo usa una suscripción activa: anúlala primero" if info["reason"] == "otra_suscripcion_activa"
+                      else "ya no está ocupado")
+            raise InputError(f"El perfil no se liberó: {motivo}.")
+        await _audit(request, "release_profile", {"profile_id": profile_id, "reason": why})
+        await _notify_release(info, "anomalías")
+        return RedirectResponse(url="/panel/anomalies?success=Perfil+liberado+y+PIN+rotado.+Revisa+Telegram+para+cambiarlo+en+la+plataforma", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)
+
+
+@panel_router.post("/anomalies/merge")
+async def anomaly_merge(request: Request, keep_id: str = Form(default=""), void_id: str = Form(default=""),
+                        reason: str = Form(default="")):
+    """Fusionar duplicados: se conserva UNA suscripción tal cual está y se anula la otra con motivo.
+    No suma ni mueve fechas (si hay que ajustar el fin de la que se queda, se edita aparte)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from database.subscriptions import void_subscription
+        why = _need_reason(reason)
+        if not keep_id or not void_id or keep_id == void_id:
+            raise InputError("Elige dos suscripciones distintas.")
+        rows = get_supabase().table("subscriptions").select("id, user_id, platform_id, status").in_("id", [keep_id, void_id]).execute().data or []
+        by_id = {str(r["id"]): r for r in rows}
+        a, b = by_id.get(keep_id), by_id.get(void_id)
+        if not a or not b or a["user_id"] != b["user_id"] or a["platform_id"] != b["platform_id"]:
+            raise InputError("Solo se fusionan suscripciones del mismo cliente y la misma plataforma.")
+        if a["status"] not in ("active", "expired"):
+            raise InputError("La suscripción que se conserva debe estar activa o vencida.")
+        out = await void_subscription(void_id, "panel", f"fusionada con {keep_id[:8]}: {why}")
+        if not out.get("voided"):
+            raise InputError("No se pudo anular la duplicada. Recarga la página.")
+        await _audit(request, "merge_subscriptions", {"keep_id": keep_id, "void_id": void_id, "reason": why})
+        await _notify_release(out.get("release"), "fusión de duplicados")
+        return RedirectResponse(url="/panel/anomalies?success=Suscripciones+fusionadas:+la+duplicada+quedo+anulada", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)

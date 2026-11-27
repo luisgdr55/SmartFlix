@@ -59,7 +59,7 @@ async def get_dashboard_stats() -> dict:
             ).gt("total_purchases", 0).execute()),
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
                 "id", count="exact"
-            ).eq("status", "active").execute()),
+            ).eq("status", "active").gte("end_date", now.isoformat()).execute()),   # vigentes: la mora ya no cambia el estado
             asyncio.to_thread(lambda: sb.table("subscriptions").select(
                 "id", count="exact"
             ).eq("status", "pending_payment").execute()),
