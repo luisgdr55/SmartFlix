@@ -10,7 +10,7 @@ Tres módulos nuevos de **lógica pura** (sin base de datos, Redis real ni Teleg
 - `services/locks.py`: candado Redis `SET NX EX` con token y liberación atómica (Lua) solo por su dueño; **falla cerrada** si Redis no responde (devuelve `None`; el llamador no debe proceder). Es defensa adicional: la idempotencia de la aprobación la dará la función SQL del Lote 3.
 
 ## Verificación (ejecutada)
-- `python -m unittest discover -s tests -t .`: **169 pruebas OK** (115 de antes + 54 nuevas: `test_dates` 11, `test_locks` 7, `test_checkout_service` 36 — incluyen un caso con 300 repartos aleatorios de Bs, fin de mes y bisiesto, medianoche UTC/Caracas, el ejemplo de Ray de la Fase 8, dos servicios de la misma plataforma y manipulación de manifiestos).
+- `python -m unittest discover -s tests -t .`: **169 pruebas OK** (115 de antes + 54 nuevas: `test_dates` 12, `test_locks` 7, `test_checkout_service` 35 — incluyen un caso con 300 repartos aleatorios de Bs, fin de mes y bisiesto, medianoche UTC/Caracas, el ejemplo de Ray de la Fase 8, dos servicios de la misma plataforma y manipulación de manifiestos).
 - Comprobé que las pruebas detectan defectos: cambiar `ROUND_HALF_UP` por `ROUND_HALF_EVEN` o fijar el último día del mes en 28 hace fallar la suite.
 - `python -m compileall` e importación de `main` y de los tres módulos (variables ficticias): OK. Sin dependencia nueva (`pytz` y `redis` ya estaban en `requirements.txt`).
 - **No verificado** (lo prueba el Orquestador o llega en lotes siguientes): el candado contra Redis (Upstash) real — las pruebas usan un Redis falso y `client.eval` con el Lua nunca corrió contra Redis de verdad; la integración con la base (Lote 2/3).
