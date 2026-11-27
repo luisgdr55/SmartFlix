@@ -1,12 +1,17 @@
 """
 Admin natural-language handler.
 Handles free-text admin commands with keyword + LLM intent detection.
-Destructive actions (cancel_sub, block) require inline confirmation.
+Toda acción con efecto exige confirmación con botón: cancelar suscripción, bloquear y
+desbloquear, y el cambio de tasa (orden explícita + número plausible + borrador de un
+solo uso que vence). El texto libre o la IA nunca cambian la tasa por sí solos.
 """
 from __future__ import annotations
 
 import logging
+import math
 import re
+import secrets
+import time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -19,6 +24,95 @@ logger = logging.getLogger(__name__)
 
 def _is_admin(tid: int) -> bool:
     return is_admin(tid, settings.ADMIN_TELEGRAM_IDS)
+
+
+# ─────────────────────────────────────────────────────────────────
+# CAMBIO DE TASA: orden explícita, valor plausible, confirmación
+# ─────────────────────────────────────────────────────────────────
+
+_RATE_SET_VERBS = (
+    "actualiza", "actualizar", "cambia", "cambiar", "pon", "poner", "fija", "fijar",
+    "establece", "establecer", "ajusta", "ajustar", "setea",
+)
+_QUESTION_RE = re.compile(r"[?¿]|\b(cu[aá]nto|cu[aá]l|qu[eé]|c[oó]mo)\b")
+_NUM_RE = re.compile(r"\d[\d.,]*\d|\d")
+RATE_MAX = 100000.0          # tope absoluto (Bs por USD)
+RATE_BAND = 0.5              # se rechaza lo que se aleje más de ±50 % de la tasa vigente
+RATE_DRAFT_TTL_S = 300       # la confirmación vence a los 5 minutos
+
+
+def parse_rate_number(raw: str) -> float | None:
+    """Número de una tasa: acepta 1050, 105.5, 105,5, 1.050 y 1.050,50.
+    Un separador seguido de exactamente 3 dígitos es de miles; si no, decimal."""
+    s = raw.strip().strip(".,")
+    if not re.fullmatch(r"\d[\d.,]*", s):
+        return None
+    if "." in s and "," in s:
+        dec = "." if s.rfind(".") > s.rfind(",") else ","
+        thou = "," if dec == "." else "."
+        s = s.replace(thou, "").replace(dec, ".")
+    elif "." in s or "," in s:
+        sep = "." if "." in s else ","
+        parts = s.split(sep)
+        if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3):
+            s = "".join(parts)                  # separador de miles
+        else:
+            s = parts[0] + "." + parts[1]       # decimal
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    return v if math.isfinite(v) else None
+
+
+def extract_rate_command(text: str) -> tuple[str, float | None]:
+    """Interpreta el texto del admin.
+
+    ('set', valor)   orden explícita («actualiza la tasa a 1050») con un único número.
+    ('ambiguous', None)  hay verbo de cambio pero ningún número o varios.
+    ('none', None)   no es una orden (pregunta, comentario, solo «tasa 1050»...).
+    """
+    t = text.lower().strip()
+    if _QUESTION_RE.search(t):
+        return "none", None
+    if not any(re.search(rf"\b{v}\b", t) for v in _RATE_SET_VERBS):
+        return "none", None
+    kw = re.search(r"tasa|binance|d[oó]lar|cambio", t)
+    nums = [parse_rate_number(n) for n in _NUM_RE.findall(t[kw.start():] if kw else t)]
+    nums = [n for n in nums if n is not None]
+    if len(nums) == 1:
+        return "set", nums[0]
+    return "ambiguous", None
+
+
+def rate_is_plausible(new: float, current: float | None) -> tuple[bool, str]:
+    """Rechaza valores no finitos, <= 0, mayores al tope o muy lejanos a la tasa vigente."""
+    if not isinstance(new, (int, float)) or not math.isfinite(new) or new <= 0:
+        return False, "el valor no es un número válido."
+    if new > RATE_MAX:
+        return False, f"el valor supera el máximo permitido (Bs {RATE_MAX:,.0f})."
+    if current and current > 0:
+        lo, hi = current * (1 - RATE_BAND), current * (1 + RATE_BAND)
+        if not (lo <= new <= hi):
+            return False, (f"Bs {new:,.2f} se aleja demasiado de la tasa actual (Bs {current:,.2f}); "
+                           "parece un error de escritura.")
+    elif new <= 1:
+        return False, "el valor es demasiado bajo para una tasa."
+    return True, ""
+
+
+def _back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú admin", callback_data="admin:back")]])
+
+
+async def _current_rate_value() -> float | None:
+    from services.exchange_service import get_current_rate
+    row = await get_current_rate()
+    try:
+        v = float((row or {}).get("usd_binance") or 0)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -53,15 +147,11 @@ def _detect_intent(text: str) -> dict | None:
     # ── exchange rate ─────────────────────────────────────────────
     rate_kws = ["tasa", "cambio", "binance", "dólar", "dolar"]
     if any(k in t for k in rate_kws):
-        # Try to extract a number from the text
-        nums = re.findall(r"\d+(?:[.,]\d+)?", t)
-        if nums:
-            try:
-                rate_val = float(nums[0].replace(",", "."))
-                if rate_val > 1:  # plausible exchange rate
-                    return {"action": "rate_update", "rate": rate_val}
-            except ValueError:
-                pass
+        # Solo una ORDEN explícita propone un cambio; una pregunta o un comentario con
+        # un número («¿cuánto cambió la tasa en 2 días?») solo muestra la tasa.
+        kind, _ = extract_rate_command(t)
+        if kind != "none":
+            return {"action": "rate_update"}
         return {"action": "show_rate"}
 
     # ── block user ────────────────────────────────────────────────
@@ -313,18 +403,88 @@ async def _handle_show_rate(message) -> None:
     from services.exchange_service import get_current_rate
     rate = await get_current_rate()
     val = (rate or {}).get("usd_binance", "N/A")
-    await message.reply_text(f"💱 <b>Tasa actual:</b> Bs {val} / USD", parse_mode="HTML")
+    await message.reply_text(
+        f"💱 <b>Tasa actual:</b> Bs {val} / USD\n\n"
+        "Para cambiarla escribe, por ejemplo: <i>«actualiza la tasa a 1050»</i>. "
+        "Te pediré confirmación antes de aplicarla.",
+        parse_mode="HTML",
+        reply_markup=_back_keyboard(),
+    )
 
 
-async def _handle_rate_update(message, rate_val: float, admin_id: int) -> None:
+async def _propose_rate_change(message, context, text: str, admin_id: int) -> None:
+    """Valida la orden del admin y muestra una tarjeta de confirmación. NO cambia la tasa."""
+    kind, value = extract_rate_command(text)   # el número sale del texto, nunca de la IA
+    if kind != "set" or value is None:
+        await message.reply_text(
+            "No pude identificar el valor de la tasa. Escríbelo con un solo número, por ejemplo: "
+            "<i>«actualiza la tasa a 1050»</i>.",
+            parse_mode="HTML",
+            reply_markup=_back_keyboard(),
+        )
+        return
+    current = await _current_rate_value()
+    ok, reason = rate_is_plausible(value, current)
+    if not ok:
+        await message.reply_text(
+            f"⚠️ No cambié la tasa: {reason}\n\n"
+            "Revisa el número y vuelve a escribirlo. Si de verdad es ese valor, usa el comando /tasa.",
+            reply_markup=_back_keyboard(),
+        )
+        return
+    nonce = secrets.token_hex(4)
+    context.user_data["rate_draft"] = {
+        "nonce": nonce, "value": value, "expires": time.time() + RATE_DRAFT_TTL_S,
+    }
+    delta = f" ({(value / current - 1) * 100:+.1f} %)" if current else ""
+    actual = f"Bs {current:,.2f}" if current else "sin dato"
+    await message.reply_text(
+        "💱 <b>Cambiar la tasa de cambio</b>\n\n"
+        f"Actual: {actual}\n"
+        f"Nueva: <b>Bs {value:,.2f}</b>{delta}\n\n"
+        "Esto cambia los precios en bolívares que ven todos los clientes. ¿Confirmas?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Confirmar", callback_data=f"admin_nl:rate_ok:{nonce}"),
+            InlineKeyboardButton("❌ Cancelar", callback_data=f"admin_nl:rate_no:{nonce}"),
+        ]]),
+    )
+
+
+async def _handle_rate_confirmation(query, context, admin_id: int, action: str, nonce: str) -> None:
+    """Botón de la tarjeta: aplica o descarta el borrador (un solo uso, vence a los 5 min)."""
+    draft = context.user_data.get("rate_draft")
+    if not draft or draft.get("nonce") != nonce or time.time() > draft.get("expires", 0):
+        if draft and time.time() > draft.get("expires", 0):
+            context.user_data.pop("rate_draft", None)
+        await query.edit_message_text(
+            "Esta confirmación venció o ya se usó. Escríbeme de nuevo el cambio de tasa.",
+            reply_markup=_back_keyboard(),
+        )
+        return
+    context.user_data.pop("rate_draft", None)          # un solo uso
+    if action == "rate_no":
+        await query.edit_message_text("Cancelado. La tasa no cambió.", reply_markup=_back_keyboard())
+        return
+
+    value = float(draft["value"])
+    ok, reason = rate_is_plausible(value, await _current_rate_value())   # la tasa pudo cambiar mientras tanto
+    if not ok:
+        await query.edit_message_text(f"⚠️ No cambié la tasa: {reason}", reply_markup=_back_keyboard())
+        return
     from services.exchange_service import update_rate
     from database.users import log_admin_action
-    success = await update_rate(rate_val, admin_id)
-    if success:
-        await log_admin_action(admin_id, "update_rate_nl", {"rate": rate_val})
-        await message.reply_text(f"✅ Tasa actualizada: <b>Bs {rate_val:.2f} / USD</b>", parse_mode="HTML")
+    if await update_rate(value, admin_id):
+        await log_admin_action(admin_id, "update_rate_nl", {"rate": value})
+        await query.edit_message_text(
+            f"✅ Tasa actualizada: <b>Bs {value:,.2f} / USD</b>", parse_mode="HTML",
+            reply_markup=_back_keyboard(),
+        )
     else:
-        await message.reply_text("❌ Error al actualizar la tasa.")
+        await query.edit_message_text(
+            "❌ No se pudo actualizar la tasa. Intenta de nuevo o usa el comando /tasa.",
+            reply_markup=_back_keyboard(),
+        )
 
 
 async def _handle_list_clients(message) -> None:
@@ -655,6 +815,10 @@ async def handle_admin_nl_callback(update: Update, context: ContextTypes.DEFAULT
         return
     action = parts[1]
 
+    if action in ("rate_ok", "rate_no"):
+        await _handle_rate_confirmation(query, context, update.effective_user.id, action, parts[2])
+        return
+
     if action == "cancel_sub":
         sub_id = parts[2]
         try:
@@ -721,7 +885,6 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
     action = intent.get("action", "other")
     name = intent.get("name") or ""
     period = intent.get("period") or "month"
-    rate_val = intent.get("rate") or 0
 
     logger.info(f"Admin NL intent [{admin_id}]: {action} | name={name} | period={period}")
 
@@ -744,8 +907,8 @@ async def handle_admin_free_text(update: Update, context: ContextTypes.DEFAULT_T
         elif action == "show_rate":
             await _handle_show_rate(update.message)
 
-        elif action == "rate_update" and rate_val > 0:
-            await _handle_rate_update(update.message, float(rate_val), admin_id)
+        elif action == "rate_update":
+            await _propose_rate_change(update.message, context, text, admin_id)
 
         elif action == "expired_clients":
             await _handle_expired_clients(update.message)
