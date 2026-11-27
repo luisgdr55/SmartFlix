@@ -141,6 +141,12 @@ Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto 
 3. Deuda del cambio de plataforma = precio de la plataforma que se abandona × `periods_to_be_current`.
 4. Días de mora = días calendario de Caracas (D+1 empieza a las 00:00 del día siguiente al vencimiento).
 
+## Veredicto del Orquestador sobre el Lote 2 (27/11/2026): APROBADO — se aplican las recomendaciones de `docs/subfases/o02-lote2-migracion.md`
+- El `CHECK` sobre `subscriptions.status` queda **fuera** de la migración hasta ver el Bloque 0b del script de diagnóstico.
+- Reactivar una `cancelled`: **sigue abierta** (sin recomendación en el informe); el motor y la función SQL la rechazan. Se decide antes de poder reactivar clientes cortados.
+- La migración **la ejecuta el Orquestador** antes de desplegar código que use las órdenes; aún no se ha confirmado su ejecución.
+- Lote 3 (motor) construido sin cablear a handlers: no se usa el candado Redis al aprobar (la fila bloqueada en SQL es la garantía) y `cancel_subscription`/`delete_subscription` no se tocan hasta el Lote 5. Detalle en `docs/subfases/o02-lote3-motor.md`.
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
