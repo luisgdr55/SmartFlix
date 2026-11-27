@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # Proxies de confianza delante de la app (Railway = 1): decide qué entrada de
     # X-Forwarded-For es la IP real del cliente para el límite de intentos de login.
     TRUSTED_PROXY_HOPS: int = 1
+    # O02 Lote 4: con `false` (por defecto) el bot sigue con los carritos actuales (una suscripción
+    # pendiente por servicio); con `true` crea una orden de pago por pedido. NO encender antes de que
+    # el Orquestador ejecute la migración del Lote 2 y exista la aprobación por orden (Lote 5).
+    CHECKOUT_V2_ENABLED: bool = False
 
     @field_validator(*_REQUIRED_SECRETS)
     @classmethod

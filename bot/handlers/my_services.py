@@ -25,6 +25,14 @@ async def show_my_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     telegram_id = effective_user.id
 
+    # O02 Lote 4: con el flag encendido, también muestra las vencidas con botón Renovar y el pedido en curso.
+    try:
+        from bot.handlers import checkout_v2
+        if checkout_v2.v2_enabled() and await checkout_v2.show_my_services(update, context):
+            return
+    except Exception as e:
+        logger.error(f"show_my_services (checkout v2) falló, se usa la pantalla de siempre: {e}")
+
     try:
         user = await get_user_by_telegram_id(telegram_id)
         if not user:

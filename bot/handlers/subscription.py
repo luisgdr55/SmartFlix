@@ -181,6 +181,9 @@ async def handle_platform_selected(update: Update, context: ContextTypes.DEFAULT
 
 async def handle_order_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle order confirmation and show payment instructions."""
+    from bot.handlers import checkout_v2  # O02 Lote 4: con el flag encendido se crea una orden, no suscripciones
+    if checkout_v2.v2_enabled():
+        return await checkout_v2.confirm_single_order(update, context)
     query = update.callback_query
     if not query or not update.effective_user:
         return
@@ -547,6 +550,9 @@ async def handle_cart_add(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Create pending_payment subscriptions for all cart items and show payment instructions."""
+    from bot.handlers import checkout_v2  # O02 Lote 4: con el flag encendido se crea una orden, no suscripciones
+    if checkout_v2.v2_enabled():
+        return await checkout_v2.confirm_purchase_cart(update, context)
     query = update.callback_query
     if not query or not update.effective_user:
         return
@@ -898,6 +904,9 @@ async def handle_renewal_cart_toggle(update: Update, context: ContextTypes.DEFAU
 
 async def handle_renewal_cart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Create pending_payment subscriptions for selected renewal items."""
+    from bot.handlers import checkout_v2  # O02 Lote 4: con el flag encendido se crea una orden, no suscripciones
+    if checkout_v2.v2_enabled():
+        return await checkout_v2.confirm_renewal_cart(update, context)
     query = update.callback_query
     if not query or not update.effective_user:
         return

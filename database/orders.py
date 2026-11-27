@@ -233,3 +233,22 @@ async def approve_order(
             raise parse_approval_error(message, getattr(e, "details", None)) from e
         logger.error(f"approve_order: error de conexión o inesperado para {order_id}: {e}")
         raise ApprovalError("unavailable", raw=str(e)[:200]) from e
+
+
+async def payment_reference_used(reference: str, exclude_order_id: Optional[str] = None) -> bool:
+    """¿Esta referencia ya figura en un pago aprobado (órdenes o suscripciones anteriores)?
+    Alimenta la señal «referencia repetida» del comprobante (solo marca; decide el admin)."""
+    ref = (reference or "").strip()
+    if not ref:
+        return False
+    try:
+        sb = get_supabase()
+        q = sb.table(TABLE).select("id").eq("payment_reference", ref).eq("status", "approved")
+        if exclude_order_id:
+            q = q.neq("id", exclude_order_id)
+        if q.limit(1).execute().data:
+            return True
+        return bool(sb.table("subscriptions").select("id").eq("payment_reference", ref).limit(1).execute().data)
+    except Exception as e:
+        logger.error(f"Error in payment_reference_used: {e}")
+        return False

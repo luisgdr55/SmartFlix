@@ -274,11 +274,25 @@ def build_telegram_app() -> Application:
 
     # Photos - hogar flow takes priority, then payment comprobantes
     async def _photo_router(update, context):
-        handled = await handle_hogar_photo(update, context)
-        if not handled:
-            await handle_payment_image(update, context)
+        # O02 Lote 4: con el flag encendido, un cliente con una orden pendiente tiene prioridad
+        # sobre el flujo de Hogar (el comprobante se asocia a su orden).
+        from bot.handlers.checkout_v2 import route_photo
+        await route_photo(update, context, handle_hogar_photo, handle_payment_image)
 
     app.add_handler(MessageHandler(filters.PHOTO, _photo_router))
+
+    # Comprobante enviado como archivo (imagen o PDF). Sin orden pendiente o con el flag apagado no hace nada,
+    # igual que antes (los documentos no tenían handler).
+    async def _document_router(update, context):
+        from bot.handlers.checkout_v2 import handle_order_receipt
+        await handle_order_receipt(update, context)
+
+    app.add_handler(MessageHandler(filters.Document.ALL, _document_router))
+
+    # Reenviar comprobante y cancelar pedido (órdenes de pago, Lote 4)
+    from bot.handlers.checkout_v2 import handle_order_cancel, handle_payment_resend
+    app.add_handler(CallbackQueryHandler(handle_payment_resend, pattern="^payment:resend$"))
+    app.add_handler(CallbackQueryHandler(handle_order_cancel, pattern="^order:cancel:"))
 
     # Text messages - for name capture and admin flows
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _text_message_router))

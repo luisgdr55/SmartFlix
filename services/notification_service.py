@@ -568,3 +568,20 @@ async def send_profile_released_notification(subscription_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error in send_profile_released_notification: {e}")
         return False
+
+
+async def send_document_to_admin(document_bytes: bytes, filename: str, caption: str = "") -> bool:
+    """Envía un archivo (por ejemplo, un comprobante en PDF) a todos los admins.
+    Devuelve True si al menos un admin lo recibió (O02 Lote 4)."""
+    admin_ids = parse_telegram_ids(settings.ADMIN_TELEGRAM_IDS)
+    any_sent = False
+    for admin_id in admin_ids:
+        try:
+            await get_bot().send_document(
+                chat_id=admin_id, document=document_bytes, filename=filename, caption=caption or None,
+            )
+            any_sent = True
+        except Exception as e:
+            logger.warning(f"send_document_to_admin failed for {admin_id}: {e}")
+        await asyncio.sleep(0.1)
+    return any_sent
