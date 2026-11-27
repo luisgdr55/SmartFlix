@@ -152,6 +152,12 @@ Estado: decisiones cerradas; **no se ha construido nada**. Siguiente: veredicto 
 - Reactivar una `cancelled`: **sigue abierta**.
 - Lote 4 construido detrás de `CHECKOUT_V2_ENABLED=false` (por defecto). El flag **no se enciende** hasta ejecutar la migración del Lote 2 y construir el Lote 5. Detalle y preguntas abiertas (selector de periodos, prioridad sobre Hogar): `docs/subfases/o02-lote4-cliente-bot.md`.
 
+## Veredicto del Orquestador sobre el Lote 4 (27/11/2026): APROBADO — se aplican las recomendaciones de `docs/subfases/o02-lote4-cliente-bot.md`
+- Excepción de Hogar: **aplicada** (la foto de un cliente que está en el flujo de soporte de Hogar es de Hogar aunque tenga una orden pendiente).
+- Selector de periodos de renovación: **orden aparte** (no entra en el Lote 5).
+- Imagen repetida: sin recomendación; se mantiene «solo marca».
+- Lote 5 construido: aprobación por orden, anomalías y borrado seguro. **Pendientes de decisión:** aprobación parcial por ítem (recomendado: dividir la orden), anular una orden aprobada con asiento contrario (recomendado: función SQL que revierta renovaciones y nuevas) y `/renovar` por el motor. Detalle: `docs/subfases/o02-lote5-admin.md`.
+
 ## Decisiones que el Orquestador debe tomar
 1. ~~A o B sobre el corte D+7~~ **Resuelta: B.** Pendiente solo confirmar el resumen diario de mora al admin (Lote 6).
 2. **`expired` en datos existentes:** tratarlo como mora (recomendado) o migrar a `active`.
