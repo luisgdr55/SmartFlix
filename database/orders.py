@@ -336,3 +336,28 @@ async def count_user_periods(user_id: str) -> int:
             return 0
         logger.error(f"Error in count_user_periods: {e}")
         return 1
+
+
+async def pending_for_user(user_id: str) -> dict:
+    """Órdenes (y pedidos del flujo anterior) pendientes de un cliente, para avisar al admin antes de
+    un corte manual (O02 Lote 6). {"orders": [ids cortos], "legacy": [ids cortos]}. Un error de lectura
+    se registra y devuelve vacío (no bloquea el corte; el aviso es una ayuda, no una guarda dura)."""
+    out: dict = {"orders": [], "legacy": []}
+    sb = get_supabase()
+    try:
+        out["orders"] = [str(r["id"])[:8].upper() for r in (
+            sb.table(TABLE).select("id").eq("user_id", user_id).eq("status", "pending").execute().data or [])]
+    except Exception as e:
+        if not _table_missing_orders(e):
+            logger.error(f"Error in pending_for_user (órdenes): {e}")
+    try:
+        out["legacy"] = [str(r["id"])[:8].upper() for r in (
+            sb.table("subscriptions").select("id").eq("user_id", user_id).eq("status", "pending_payment").execute().data or [])]
+    except Exception as e:
+        logger.error(f"Error in pending_for_user (pedidos): {e}")
+    return out
+
+
+def _table_missing_orders(e: Exception) -> bool:
+    text = f"{getattr(e, 'message', '')} {e}".lower()
+    return "checkout_orders" in text and any(k in text for k in ("does not exist", "schema cache", "could not find"))

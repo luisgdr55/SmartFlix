@@ -281,6 +281,7 @@ class TestExpressJob(unittest.IsolatedAsyncioTestCase):
             mock.patch("services.notification_service.notify_express_queue", new=mock.AsyncMock()),
             mock.patch("services.notification_service.send_to_admin", new=mock.AsyncMock()),
             mock.patch("asyncio.sleep", new=mock.AsyncMock()),
+            *support.patch_locks(),
         ]
 
     async def run_job(self, rows, rel):
@@ -292,7 +293,7 @@ class TestExpressJob(unittest.IsolatedAsyncioTestCase):
         finally:
             for p in ps:
                 p.stop()
-        return ms  # expired_rows, expire, release, notify_client, queue, admin, sleep
+        return ms[:7]  # expired_rows, expire, release, notify_client, queue, admin, sleep
 
     async def test_expired_express_is_released_once_with_notices(self):
         rel = {"released": True, "reason": None, "profile_name": "Perfil 1", "old_pin": "1111", "new_pin": "2222",

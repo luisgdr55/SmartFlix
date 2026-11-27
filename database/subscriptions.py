@@ -134,6 +134,10 @@ async def confirm_renewal_subscription(
             "payment_reference": payment_reference,
             "payment_confirmed_at": venezuela_now().isoformat(),
             "end_date": new_end_date.isoformat(),
+            # O02 Lote 6: una renovación empieza un ciclo nuevo de avisos (antes quedaban «gastados»).
+            "reminder_sent": False,
+            "expiry_notified": False,
+            "debt_reminder_count": 0,
         }).eq("id", sub_id).execute()
         return True
     except Exception as e:
@@ -159,15 +163,17 @@ async def get_user_attention_subscriptions(user_id: str) -> dict:
         )
         subs = result.data or []
         pending = [s for s in subs if s.get("status") in ("pending_payment", "expired_payment")]
-        expired = [
-            s for s in subs
-            if s.get("status") == "expired"
-        ]
+        # O02 Lote 6: la mora se deriva de la fecha (active o expired con end_date vencida); ya no hay
+        # un job que pase las vencidas a `expired`.
+        from services.checkout_service import is_overdue
+        from utils.dates import caracas_date
+        expired = [s for s in subs if is_overdue(s, now)]
         expiring_soon = [
             s for s in subs
             if s.get("status") == "active"
             and s.get("end_date")
-            and s["end_date"][:10] <= three_days_later
+            and not is_overdue(s, now)
+            and caracas_date(s["end_date"]).isoformat() <= three_days_later
         ]
         return {"pending": pending, "expired": expired, "expiring_soon": expiring_soon}
     except Exception as e:
@@ -349,16 +355,18 @@ async def get_pending_subscriptions() -> list[dict]:
 
 
 async def get_expired_subscriptions_to_notify() -> list[dict]:
-    """Get active subscriptions that have passed end_date but not yet notified."""
+    """Suscripciones vencidas que aún no recibieron el aviso D+0: estado `active` o `expired` (legado),
+    `end_date` pasada pero **dentro de las últimas 48 h** (así no se avisa de golpe a vencimientos viejos)."""
     try:
         sb = get_supabase()
         now = venezuela_now()
         result = (
             sb.table("subscriptions")
             .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id)")
-            .eq("status", "active")
+            .in_("status", ["active", "expired"])
             .eq("expiry_notified", False)
             .lte("end_date", now.isoformat())
+            .gte("end_date", (now - timedelta(hours=48)).isoformat())
             .execute()
         )
         return result.data or []
@@ -432,56 +440,83 @@ async def mark_expiry_notified(sub_id: str) -> bool:
         return False
 
 
-async def get_subscriptions_in_grace_period() -> list[dict]:
-    """Monthly subs that are expired (status=active, end_date < now) and still within
-    the 6-day grace period (debt_reminder_count < 6). Used for daily debt reminders."""
+async def get_subscriptions_for_debt_reminders() -> list[dict]:
+    """Mensuales en mora (`active` o `expired` heredado) con 1 a 6 días de mora (días calendario de
+    Caracas) a los que todavía NO se les envió el recordatorio de ese día. Cada fila trae `days_overdue`.
+    Después del día 6 no hay más recordatorios (opción B: sin corte automático)."""
     try:
+        from services.checkout_service import days_overdue
         sb = get_supabase()
         now = venezuela_now()
         result = (
             sb.table("subscriptions")
-            .select("*, users(telegram_id, name), platforms(name, slug, icon_emoji), profiles(id, profile_name)")
-            .eq("status", "active")
+            .select("*, users(telegram_id, name, phone, notes), platforms(name, slug, icon_emoji), profiles(id, profile_name)")
+            .in_("status", ["active", "expired"])
             .eq("plan_type", "monthly")
             .lt("end_date", now.isoformat())
-            .lt("debt_reminder_count", 6)
+            .gte("end_date", (now - timedelta(days=8)).isoformat())
             .execute()
         )
-        return result.data or []
+        out = []
+        for row in (result.data or []):
+            n = days_overdue(row, now)
+            if 1 <= n <= 6 and (row.get("debt_reminder_count") or 0) < n:
+                row["days_overdue"] = n
+                out.append(row)
+        return out
     except Exception as e:
-        logger.error(f"Error in get_subscriptions_in_grace_period: {e}")
+        logger.error(f"Error in get_subscriptions_for_debt_reminders: {e}")
         return []
 
 
-async def get_subscriptions_past_grace_period() -> list[dict]:
-    """Monthly subs that exhausted all 6 debt reminders without renewing — ready to cut."""
+async def claim_debt_reminder(sub_id: str, day: int) -> bool:
+    """Reclama de forma atómica el recordatorio del día `day`: solo uno de dos procesos simultáneos lo
+    consigue (UPDATE condicional `debt_reminder_count < day`). True si lo reclamó."""
     try:
         sb = get_supabase()
-        now = venezuela_now()
-        result = (
+        res = (
             sb.table("subscriptions")
-            .select("*, users(telegram_id, name, username), platforms(name, slug, icon_emoji), profiles(id, profile_name, pin, account_id, accounts(email, password))")
-            .eq("status", "active")
-            .eq("plan_type", "monthly")
-            .lt("end_date", now.isoformat())
-            .gte("debt_reminder_count", 6)
+            .update({"debt_reminder_count": day})
+            .eq("id", sub_id)
+            .lt("debt_reminder_count", day)
             .execute()
         )
-        return result.data or []
+        return bool(res.data)
     except Exception as e:
-        logger.error(f"Error in get_subscriptions_past_grace_period: {e}")
-        return []
-
-
-async def increment_debt_reminder(sub_id: str, current_count: int) -> bool:
-    """Increment the debt_reminder_count by 1."""
-    try:
-        sb = get_supabase()
-        sb.table("subscriptions").update({"debt_reminder_count": current_count + 1}).eq("id", sub_id).execute()
-        return True
-    except Exception as e:
-        logger.error(f"Error in increment_debt_reminder: {e}")
+        logger.error(f"Error in claim_debt_reminder: {e}")
         return False
+
+
+async def release_debt_reminder(sub_id: str, day: int) -> None:
+    """Devuelve el reclamo si el envío falló (para reintentar en la siguiente pasada)."""
+    try:
+        get_supabase().table("subscriptions").update({"debt_reminder_count": day - 1}).eq("id", sub_id).eq("debt_reminder_count", day).execute()
+    except Exception as e:
+        logger.error(f"Error in release_debt_reminder: {e}")
+
+
+async def claim_flag(sub_id: str, field: str) -> bool:
+    """Reclama de forma atómica `reminder_sent` o `expiry_notified` (UPDATE condicional a que siga en
+    False). True si lo reclamó: así dos pasadas simultáneas no envían el mismo aviso dos veces."""
+    if field not in ("reminder_sent", "expiry_notified"):
+        raise ValueError("campo no permitido")
+    try:
+        sb = get_supabase()
+        res = sb.table("subscriptions").update({field: True}).eq("id", sub_id).eq(field, False).execute()
+        return bool(res.data)
+    except Exception as e:
+        logger.error(f"Error in claim_flag({field}): {e}")
+        return False
+
+
+async def release_flag(sub_id: str, field: str) -> None:
+    """Devuelve el reclamo si el envío falló."""
+    if field not in ("reminder_sent", "expiry_notified"):
+        raise ValueError("campo no permitido")
+    try:
+        get_supabase().table("subscriptions").update({field: False}).eq("id", sub_id).execute()
+    except Exception as e:
+        logger.error(f"Error in release_flag({field}): {e}")
 
 
 async def get_subscription_by_id(sub_id: str) -> Optional[dict]:
@@ -610,33 +645,6 @@ async def get_expired_subscriptions(limit: int = 50) -> list[dict]:
         return []
 
 
-async def auto_expire_overdue_subscriptions(user_id: str | None = None) -> int:
-    """
-    Mark as 'expired' all subscriptions that are status='active' but end_date is in the past.
-    Optionally scoped to a single user_id. Returns the count of rows updated.
-    """
-    try:
-        sb = get_supabase()
-        now = venezuela_now()
-        query = (
-            sb.table("subscriptions")
-            .select("id")
-            .eq("status", "active")
-            .lt("end_date", now.isoformat())
-        )
-        if user_id:
-            query = query.eq("user_id", user_id)
-        result = query.execute()
-        ids = [r["id"] for r in (result.data or [])]
-        if ids:
-            for sub_id in ids:
-                sb.table("subscriptions").update({"status": "expired"}).eq("id", sub_id).execute()
-        return len(ids)
-    except Exception as e:
-        logger.error(f"Error in auto_expire_overdue_subscriptions: {e}")
-        return 0
-
-
 async def cancel_expired_pending_subscriptions() -> int:
     """Cancel pending subscriptions older than 45 minutes. Returns count of cancelled."""
     try:
@@ -705,3 +713,24 @@ async def void_subscription(sub_id: str, actor: str, reason: str) -> dict:
     except Exception as e:
         logger.error(f"Error in void_subscription: {e}")
         return {"voided": False, "already": False, "release": None, "error": "db_error"}
+
+
+async def get_overdue_subscriptions(min_days: int = 7, limit: int = 2000) -> list[dict]:
+    """Mensuales en mora (`active` o `expired` heredado) con `min_days` días o más, con cliente y plataforma.
+    Alimenta el resumen diario de mora al admin (O02 Lote 6)."""
+    try:
+        sb = get_supabase()
+        cutoff = (venezuela_now() - timedelta(days=min_days)).isoformat()
+        result = (
+            sb.table("subscriptions")
+            .select("id, user_id, profile_id, status, plan_type, price_usd, end_date, users(name, username, telegram_id), platforms(name, icon_emoji)")
+            .in_("status", ["active", "expired"])
+            .eq("plan_type", "monthly")
+            .lt("end_date", cutoff)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error in get_overdue_subscriptions: {e}")
+        return []

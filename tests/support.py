@@ -96,3 +96,12 @@ def attribute_names(html: str) -> set[str]:
 
     P(convert_charrefs=False).feed(html)
     return names
+
+
+def patch_locks(obtained: bool = True):
+    """Parches del candado Redis de los jobs (`services.locks`): sin Redis real, `acquire_lock` devuelve un
+    token (o None si `obtained=False`, para probar «otra pasada lo tiene»)."""
+    return [
+        mock.patch("services.locks.acquire_lock", side_effect=lambda *a, **k: "token-prueba" if obtained else None),
+        mock.patch("services.locks.release_lock", return_value=True),
+    ]

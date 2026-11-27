@@ -129,7 +129,7 @@ async def get_monthly_closing_report() -> dict:
         # 5. No-renovaciones — expiraron el mes pasado y NO pagaron ese mes
         expired_prev = sb.table("subscriptions").select(
             "user_id"
-        ).eq("status", "expired").eq("plan_type", "monthly").gte(
+        ).in_("status", ["active", "expired"]).eq("plan_type", "monthly").gte(
             "end_date", month_start.isoformat()
         ).lte(
             "end_date", month_end.isoformat()
