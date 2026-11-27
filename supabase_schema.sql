@@ -223,6 +223,64 @@ CREATE INDEX IF NOT EXISTS idx_announced_content_platform_id ON announced_conten
 CREATE INDEX IF NOT EXISTS idx_announced_content_do_not_repeat ON announced_content(do_not_repeat_until);
 
 -- ============================================================
+-- O02 LOTE 2 — ÓRDENES DE PAGO E HISTORIAL DE PERIODOS (referencia)
+-- La migración ejecutable, con los triggers de inmutabilidad, RLS, permisos y las funciones
+-- approve_checkout_order / checkout_pick_profile / checkout_release_profile, es
+-- docs/migraciones/o02-lote2-checkout.sql (la ejecuta el Orquestador en Supabase ANTES de
+-- desplegar el código que la use). Aquí solo queda el esquema de las tablas nuevas.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS checkout_orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CONSTRAINT checkout_orders_status_chk
+        CHECK (status IN ('pending','approved','rejected','expired','cancelled','voided')),
+    manifest JSONB NOT NULL,
+    total_usd NUMERIC(10,2) NOT NULL CONSTRAINT checkout_orders_total_usd_chk CHECK (total_usd > 0),
+    total_bs NUMERIC(14,2),
+    rate_used NUMERIC(12,4),
+    payment_reference VARCHAR(255),
+    receipt_text TEXT,
+    ocr_flags JSONB,
+    expires_at TIMESTAMPTZ,
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    decision_reason TEXT,
+    result JSONB,
+    version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_checkout_orders_user_status ON checkout_orders (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_checkout_orders_status_expires ON checkout_orders (status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_checkout_orders_approved_reference
+    ON checkout_orders (payment_reference) WHERE status = 'approved' AND payment_reference IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS subscription_periods (
+    id BIGSERIAL PRIMARY KEY,
+    subscription_id UUID NOT NULL REFERENCES subscriptions(id),
+    order_id UUID REFERENCES checkout_orders(id),
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    amount_usd NUMERIC(10,2) NOT NULL,
+    rate_used NUMERIC(12,4),
+    amount_bs NUMERIC(14,2),
+    kind VARCHAR(12) NOT NULL
+        CONSTRAINT subscription_periods_kind_chk CHECK (kind IN ('renovacion','nueva','cambio')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT subscription_periods_range_chk CHECK (period_end >= period_start)
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_periods_sub ON subscription_periods (subscription_id, period_end);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_periods_order_sub
+    ON subscription_periods (order_id, subscription_id) WHERE order_id IS NOT NULL;
+
+ALTER TABLE subscriptions
+    ADD COLUMN IF NOT EXISTS void_reason TEXT,
+    ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_platform_status ON subscriptions (user_id, platform_id, status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status_end_date ON subscriptions (status, end_date);
+
+-- ============================================================
 -- SEED DATA - Default payment config
 -- ============================================================
 INSERT INTO payment_config (banco, telefono, cedula, titular, is_active)
