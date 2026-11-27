@@ -55,6 +55,8 @@ def _fmt_dt(val) -> str:
 
 templates.env.filters["fmt_date"] = _fmt_date
 templates.env.filters["fmt_dt"] = _fmt_dt
+from services.labels import subscription_label as _sub_label  # noqa: E402
+templates.env.filters["status_label"] = _sub_label
 
 # ── Router ────────────────────────────────────────────────────────────────────
 panel_router = APIRouter(prefix="/panel", tags=["admin_panel"], dependencies=[Depends(csrf_protect)])
@@ -1039,8 +1041,13 @@ async def user_delete(request: Request, user_id: str):
     if guard:
         return guard
     try:
+        from database.orders import count_user_periods
         from database.users import delete_user
-        await delete_user(user_id)
+        if await count_user_periods(user_id) > 0:
+            raise InputError("Este cliente tiene suscripciones con historial de pagos y no se puede borrar. "
+                             "Anula sus suscripciones con motivo desde «Anomalías» para conservar el historial.")
+        if not await delete_user(user_id):
+            raise InputError("No se pudo eliminar el cliente. Revisa que no tenga datos asociados e inténtalo de nuevo.")
         return RedirectResponse(url="/panel/users?success=Cliente+eliminado+correctamente", status_code=302)
     except Exception as e:
         return _error_redirect(f"/panel/users", e)
@@ -1355,6 +1362,11 @@ async def subscription_delete(request: Request, sub_id: str):
         sub_res = sb.table("subscriptions").select("user_id").eq("id", sub_id).limit(1).execute()
         if sub_res.data:
             user_id = sub_res.data[0].get("user_id")
+        # O02 Lote 5: una suscripción con pagos registrados no se borra, se anula con motivo.
+        from database.orders import count_subscription_periods
+        if await count_subscription_periods(sub_id) > 0:
+            raise InputError("Esta suscripción tiene historial de pagos y no se puede borrar. "
+                             "Anúlala con motivo desde «Anomalías» para conservar el historial.")
         await delete_subscription(sub_id)
         redirect_ok = f"/panel/users/{user_id}" if user_id else "/panel/subscriptions"
         return RedirectResponse(url=f"{redirect_ok}?success=Suscripcion+eliminada", status_code=302)
@@ -2191,7 +2203,12 @@ async def api_payments_pending(request: Request):
     try:
         from database.subscriptions import get_pending_subscriptions
         pending = await get_pending_subscriptions()
-        return JSONResponse({"count": len(pending), "payments": pending})
+        count = len(pending)
+        from config import settings as _settings
+        if _settings.CHECKOUT_V2_ENABLED:
+            from database.orders import list_orders
+            count += len(await list_orders(["pending"], limit=100))
+        return JSONResponse({"count": count, "payments": pending})
     except Exception as e:
         return JSONResponse({"error": _public_error(e)}, status_code=500)
 
@@ -2236,3 +2253,239 @@ async def api_debug_availability(request: Request):
         return JSONResponse({"platforms": result})
     except Exception as e:
         return JSONResponse({"error": _public_error(e)}, status_code=500)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ÓRDENES DE PAGO (O02 Lote 5): aprobar y rechazar por orden con el mismo motor que Telegram
+# ─────────────────────────────────────────────────────────────────────────────
+import html as _html  # noqa: E402
+
+_PANEL_ACTOR = "panel:admin"
+
+
+def _plain(text: str) -> str:
+    """Texto de Telegram (HTML) → texto plano para un aviso del panel."""
+    return _html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
+
+
+async def _order_names(order: dict) -> dict:
+    from services import order_admin
+    return await order_admin._names(order)
+
+
+@panel_router.get("/orders", response_class=HTMLResponse)
+async def orders_list(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database import orders
+    from services.order_notifications import order_view
+    pending = await orders.list_orders(["pending"], limit=50)
+    recent = await orders.list_orders(["approved", "rejected", "expired", "cancelled", "voided"], limit=30)
+    expired_waiting = [o for o in recent if o.get("status") == "expired"]
+    views = {}
+    for key, rows in (("pending", pending), ("recent", recent)):
+        views[key] = [order_view(o, await _order_names(o)) for o in rows]
+    return templates.TemplateResponse("orders.html", {
+        "request": request, "page": "orders", "pending": views["pending"], "recent": views["recent"],
+        "expired_count": len(expired_waiting),
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.get("/orders/{order_id}", response_class=HTMLResponse)
+async def order_detail(request: Request, order_id: str):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database import orders
+    from services.checkout_service import CheckoutError, _clean_order_id
+    from services.order_notifications import REJECT_REASONS, order_view
+    try:
+        oid = _clean_order_id(order_id)
+    except CheckoutError:
+        return RedirectResponse(url="/panel/orders?error=Orden+no+valida", status_code=302)
+    order = await orders.get_order(oid)
+    if not order:
+        return RedirectResponse(url="/panel/orders?error=Orden+no+encontrada", status_code=302)
+    return templates.TemplateResponse("order_detail.html", {
+        "request": request, "page": "orders", "o": order_view(order, await _order_names(order)),
+        "reject_reasons": REJECT_REASONS,
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.post("/orders/{order_id}/approve")
+async def order_approve(request: Request, order_id: str, reason: str = Form(default=""),
+                        payment_reference: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import ApprovalError, CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        # `reason` solo es obligatorio para una orden caducada (comprobante tardío); la función SQL lo exige.
+        out = await order_admin.approve_and_notify(order_id, _PANEL_ACTOR, reason.strip() or None,
+                                                   payment_reference.strip() or None)
+        if not out["result"].get("already_applied"):
+            await _audit(request, "approve_order", {"order_id": order_id, "reason": reason.strip() or None})
+        return RedirectResponse(url=f"/panel/orders?success={quote(_plain(out['summary']))}", status_code=302)
+    except ApprovalError as e:
+        return RedirectResponse(url=f"{back}?error={quote(e.user_message)}", status_code=302)
+    except CheckoutError as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+@panel_router.post("/orders/{order_id}/reject")
+async def order_reject(request: Request, order_id: str, reason_code: str = Form(default=""),
+                       detail: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from services import order_admin
+    from services.checkout_service import CheckoutError
+    back = f"/panel/orders/{order_id}"
+    try:
+        out = await order_admin.reject_and_notify(order_id, _PANEL_ACTOR, reason_code, detail[:300])
+        if not out["ok"]:
+            return RedirectResponse(url=f"{back}?error={quote('La orden ya fue decidida por otra persona.')}", status_code=302)
+        await _audit(request, "reject_order", {"order_id": order_id, "reason": reason_code})
+        msg = "Orden rechazada" + ("; el cliente fue avisado." if out["client_notified"]
+                                   else ". No se pudo avisar al cliente por Telegram: avísale por otro medio.")
+        return RedirectResponse(url=f"/panel/orders?success={quote(msg)}", status_code=302)
+    except (CheckoutError, ValueError) as e:
+        return RedirectResponse(url=f"{back}?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect(back, e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REVISIÓN DE ANOMALÍAS (O02 Lote 5): lista y acciones auditadas (anular, liberar perfil, fusionar)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _need_reason(raw: str) -> str:
+    reason = (raw or "").strip()
+    if len(reason) < 5:
+        raise InputError("Escribe el motivo (mínimo 5 caracteres): queda en el registro de auditoría")
+    return reason[:300]
+
+
+async def _notify_release(info: Optional[dict], where: str) -> None:
+    """Avisa a los admins por Telegram de los PIN anterior y nuevo (deben cambiarlo en la plataforma)."""
+    if not info or not info.get("released"):
+        return
+    try:
+        from services.notification_service import send_to_admin
+        await send_to_admin(
+            f"🔓 <b>Perfil liberado desde el panel ({_html.escape(where)})</b>\n\n"
+            f"👤 Perfil: <b>{_html.escape(str(info.get('profile_name')))}</b>\n"
+            f"📧 Cuenta: <code>{_html.escape(str(info.get('account_email')))}</code>\n"
+            f"🔢 PIN anterior: <code>{_html.escape(str(info.get('old_pin')))}</code>\n"
+            f"🔄 PIN nuevo: <code>{_html.escape(str(info.get('new_pin')))}</code>\n\n"
+            "⚠️ Entra con el PIN anterior y cámbialo al nuevo en la plataforma.")
+    except Exception as e:
+        logger.warning("No se pudo avisar la liberación de perfil: %s", e)
+
+
+@panel_router.get("/anomalies", response_class=HTMLResponse)
+async def anomalies_page(request: Request):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    from database.anomalies import fetch_anomaly_data
+    from services import anomalies
+    ok, data, load_error = True, {"counts": {}, "total": 0}, None
+    try:
+        subs, profiles = await fetch_anomaly_data()
+        data = anomalies.detect(subs, profiles)
+    except Exception as e:
+        ok, load_error = False, _public_error(e)
+    return templates.TemplateResponse("anomalies.html", {
+        "request": request, "page": "anomalies", "ok": ok, "data": data, "categories": anomalies.CATEGORIES,
+        "load_error": load_error,
+        "success": request.query_params.get("success"), "error": request.query_params.get("error"),
+    })
+
+
+@panel_router.post("/anomalies/void")
+async def anomaly_void(request: Request, sub_id: str = Form(default=""), reason: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.subscriptions import void_subscription
+        why = _need_reason(reason)
+        out = await void_subscription(sub_id, "panel", why)
+        if not out.get("voided"):
+            raise InputError("No se pudo anular: la suscripción no existe o cambió de estado. Recarga la página.")
+        await _audit(request, "void_subscription", {"sub_id": sub_id, "reason": why, "already": out.get("already")})
+        await _notify_release(out.get("release"), "suscripción anulada")
+        note = ""
+        rel = out.get("release") or {}
+        if rel and not rel.get("released") and rel.get("reason") == "otra_suscripcion_activa":
+            note = " El perfil NO se liberó: lo usa otra suscripción activa."
+        return RedirectResponse(url=f"/panel/anomalies?success={quote('Suscripción anulada.' + note)}", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)
+
+
+@panel_router.post("/anomalies/release-profile")
+async def anomaly_release_profile(request: Request, profile_id: str = Form(default=""), reason: str = Form(default="")):
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database.profiles import release_profile_for_cut
+        why = _need_reason(reason)
+        info = await release_profile_for_cut(profile_id, None)
+        if info is None:
+            raise InputError("No se pudo leer el perfil. Recarga la página.")
+        if not info["released"]:
+            motivo = ("lo usa una suscripción activa: anúlala primero" if info["reason"] == "otra_suscripcion_activa"
+                      else "ya no está ocupado")
+            raise InputError(f"El perfil no se liberó: {motivo}.")
+        await _audit(request, "release_profile", {"profile_id": profile_id, "reason": why})
+        await _notify_release(info, "anomalías")
+        return RedirectResponse(url="/panel/anomalies?success=Perfil+liberado+y+PIN+rotado.+Revisa+Telegram+para+cambiarlo+en+la+plataforma", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)
+
+
+@panel_router.post("/anomalies/merge")
+async def anomaly_merge(request: Request, keep_id: str = Form(default=""), void_id: str = Form(default=""),
+                        reason: str = Form(default="")):
+    """Fusionar duplicados: se conserva UNA suscripción tal cual está y se anula la otra con motivo.
+    No suma ni mueve fechas (si hay que ajustar el fin de la que se queda, se edita aparte)."""
+    guard = _auth_guard(request)
+    if guard:
+        return guard
+    try:
+        from database import get_supabase
+        from database.subscriptions import void_subscription
+        why = _need_reason(reason)
+        if not keep_id or not void_id or keep_id == void_id:
+            raise InputError("Elige dos suscripciones distintas.")
+        rows = get_supabase().table("subscriptions").select("id, user_id, platform_id, status").in_("id", [keep_id, void_id]).execute().data or []
+        by_id = {str(r["id"]): r for r in rows}
+        a, b = by_id.get(keep_id), by_id.get(void_id)
+        if not a or not b or a["user_id"] != b["user_id"] or a["platform_id"] != b["platform_id"]:
+            raise InputError("Solo se fusionan suscripciones del mismo cliente y la misma plataforma.")
+        if a["status"] not in ("active", "expired"):
+            raise InputError("La suscripción que se conserva debe estar activa o vencida.")
+        out = await void_subscription(void_id, "panel", f"fusionada con {keep_id[:8]}: {why}")
+        if not out.get("voided"):
+            raise InputError("No se pudo anular la duplicada. Recarga la página.")
+        await _audit(request, "merge_subscriptions", {"keep_id": keep_id, "void_id": void_id, "reason": why})
+        await _notify_release(out.get("release"), "fusión de duplicados")
+        return RedirectResponse(url="/panel/anomalies?success=Suscripciones+fusionadas:+la+duplicada+quedo+anulada", status_code=302)
+    except InputError as e:
+        return RedirectResponse(url=f"/panel/anomalies?error={quote(str(e))}", status_code=302)
+    except Exception as e:
+        return _error_redirect("/panel/anomalies", e)

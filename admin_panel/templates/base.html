@@ -247,6 +247,13 @@
         <span id="payments-badge" class="hidden ml-auto bg-rose-500 text-white text-xs rounded-full px-1.5 py-0.5 font-bold leading-none"></span>
       </a>
 
+      <a href="/panel/orders" class="sidebar-link {% if page == 'orders' %}active{% endif %}">
+        <span class="text-base">🧾</span> Órdenes de pago
+      </a>
+      <a href="/panel/anomalies" class="sidebar-link {% if page == 'anomalies' %}active{% endif %}">
+        <span class="text-base">🔎</span> Anomalías
+      </a>
+
       <p class="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wider mt-4 mb-1">Sistema</p>
       <a href="/panel/migrate" class="sidebar-link {% if page == 'migrate' %}active{% endif %}">
         <span class="text-base">📥</span> Migrar Cliente

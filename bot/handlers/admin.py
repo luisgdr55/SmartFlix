@@ -340,19 +340,28 @@ async def cmd_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show and review pending payments."""
-    if not update.message or not update.effective_user:
+    """Show and review pending payments (comando y botón «Pendientes»)."""
+    message = update.effective_message  # `update.message` es None cuando llega desde un botón
+    if not message or not update.effective_user:
         return
     telegram_id = update.effective_user.id
 
     if not _check_admin(telegram_id):
-        await update.message.reply_text("❌ Sin permisos.")
+        await message.reply_text("❌ Sin permisos.")
         return
+
+    # O02 Lote 5: con el flag encendido, primero las órdenes de pago pendientes.
+    orders_shown = 0
+    from bot.handlers import checkout_v2
+    if checkout_v2.v2_enabled():
+        from bot.handlers.admin_orders import send_pending_orders
+        orders_shown = await send_pending_orders(message)
 
     subs = await get_pending_subscriptions()
 
     if not subs:
-        await update.message.reply_text("✅ No hay pagos pendientes.")
+        if not orders_shown:
+            await message.reply_text("✅ No hay pagos pendientes.", reply_markup=admin_dashboard_keyboard())
         return
 
     for sub in subs[:5]:
@@ -372,7 +381,7 @@ async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"📸 Comprobante: {sub.get('payment_image_url') or 'No enviado'}"
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             text,
             parse_mode="HTML",
             reply_markup=pending_payment_keyboard(sub_id),

@@ -351,7 +351,7 @@
                 {% elif s == 'pending_payment' %}<span class="badge-pending">Pendiente</span>
                 {% elif s == 'expired' %}<span class="badge-expired">Expirada</span>
                 {% elif s == 'cancelled' %}<span class="badge-cancelled">Cancelada</span>
-                {% else %}<span class="badge-expired">{{ s }}</span>{% endif %}
+                {% else %}<span class="badge-expired">{{ s|status_label }}</span>{% endif %}
               </td>
             </tr>
             {% else %}

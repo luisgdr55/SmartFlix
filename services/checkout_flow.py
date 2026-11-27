@@ -112,9 +112,11 @@ def _fmt_date(iso: str) -> str:
         return str(iso)
 
 
-def item_label(item: dict, names: dict[str, str]) -> str:
-    """Una línea por ítem, con HTML escapado. `names` mapea platform_id → «🎬 Netflix»."""
-    name = html.escape(names.get(item.get("platform_id"), "Servicio"))
+def item_label(item: dict, names: dict[str, str], escape: bool = True) -> str:
+    """Una línea por ítem (HTML escapado salvo `escape=False`, para plantillas que ya escapan).
+    `names` mapea platform_id → «🎬 Netflix»."""
+    name = names.get(item.get("platform_id"), "Servicio")
+    name = html.escape(name) if escape else name
     if item.get("tipo") == ITEM_RENEWAL:
         return f"🔄 Renovación {name} (hasta el {_fmt_date(item.get('cobertura_hasta'))})"
     if item.get("tipo") == ITEM_NEW:

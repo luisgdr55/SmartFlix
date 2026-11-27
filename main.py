@@ -209,6 +209,9 @@ def build_telegram_app() -> Application:
     app.add_handler(CallbackQueryHandler(handle_queue_join, pattern="^queue:join:"))
 
     # Admin callbacks
+    # Aprobación por orden de pago (O02 Lote 5): antes del manejador general de `admin:`
+    from bot.handlers.admin_orders import handle_order_admin_callback
+    app.add_handler(CallbackQueryHandler(handle_order_admin_callback, pattern=r"^admin:o(view|approve|reject|reason):"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^admin:"))
     app.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^campaign:"))
 

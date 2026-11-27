@@ -420,11 +420,23 @@ async def handle_order_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     return True
 
 
+def _in_hogar_photo_flow(telegram_id: int) -> bool:
+    """¿El cliente está esperando justo ahora que le pidan la foto del soporte de Hogar? En ese caso su
+    foto es de Hogar aunque tenga una orden pendiente (excepción a la prioridad de la orden)."""
+    try:
+        from bot.handlers.hogar import STATE_WAITING_PHOTO, get_state
+        return get_state(telegram_id) == STATE_WAITING_PHOTO
+    except Exception as e:
+        logger.warning(f"checkout_v2: no se pudo leer el estado de Hogar: {e}")
+        return False
+
+
 async def route_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, hogar_photo, payment_image) -> None:
     """Enrutador de fotos: una orden pendiente (con el flag encendido) se atiende ANTES que el flujo
     de Hogar; si no aplica, todo sigue como siempre (Hogar y luego el flujo de comprobante anterior)."""
-    if await handle_order_receipt(update, context):
-        return
+    if not _in_hogar_photo_flow(update.effective_user.id if update.effective_user else 0):
+        if await handle_order_receipt(update, context):
+            return
     if not await hogar_photo(update, context):
         await payment_image(update, context)
 

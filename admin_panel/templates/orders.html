@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Órdenes de pago — SmartFlixVE Admin{% endblock %}
+{% block header_title %}Órdenes de pago{% endblock %}
+
+{% block content %}
+<div>
+  {% if success %}<div class="mb-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl px-4 py-3 text-sm">✅ {{ success }}</div>{% endif %}
+  {% if error %}<div class="mb-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">❌ {{ error }}</div>{% endif %}
+
+  <div class="mb-6">
+    <h2 class="text-xl font-bold text-slate-800">🧾 Órdenes pendientes</h2>
+    <p class="text-sm text-slate-400 mt-0.5">{{ pending|length }} orden(es) esperando revisión. Un pago cubre varios servicios: apruebas UNA orden.</p>
+  </div>
+
+  {% if pending %}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-10">
+    {% for o in pending %}
+    <a href="/panel/orders/{{ o.id }}" class="block bg-white border border-slate-300 rounded-2xl p-5 hover:border-indigo-500/40 transition-colors">
+      <div class="flex items-center justify-between mb-3">
+        <p class="font-semibold text-slate-800">{{ o.client }} <span class="text-xs text-slate-400">#{{ o.short }}</span></p>
+        <span class="{{ o.badge }} text-xs">{{ o.status_label }}</span>
+      </div>
+      <ul class="text-sm text-slate-600 space-y-1 mb-3">
+        {% for it in o['items'] %}<li>{{ it.label }} — ${{ it.usd }}</li>{% endfor %}
+      </ul>
+      <p class="text-sm font-bold text-slate-800">Total: ${{ o.total_usd }} / Bs {{ o.total_bs }}</p>
+      <p class="text-xs mt-2 {% if o.alerts %}text-amber-600{% else %}text-slate-400{% endif %}">
+        {% if not o.has_receipt %}Sin comprobante todavía{% elif o.alerts %}⚠️ {{ o.alerts|length }} señal(es) a revisar{% else %}✅ Señales sin alertas{% endif %}
+      </p>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-sm mb-10">✅ No hay órdenes pendientes.</p>
+  {% endif %}
+
+  {% if expired_count %}<p class="mb-3 text-sm text-amber-600">⏰ {{ expired_count }} orden(es) caducada(s) en el listado de abajo: si el cliente pagó tarde, ábrela y apruébala con motivo.</p>{% endif %}
+  <h3 class="text-lg font-bold text-slate-800 mb-3">Recientes</h3>
+  <div class="bg-white border border-slate-300 rounded-2xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead><tr class="table-header"><th class="table-cell text-left">Orden</th><th class="table-cell text-left">Cliente</th><th class="table-cell text-left">Total</th><th class="table-cell text-left">Estado</th><th class="table-cell"></th></tr></thead>
+      <tbody>
+      {% for o in recent %}
+        <tr class="border-t border-slate-200">
+          <td class="table-cell">#{{ o.short }}</td><td class="table-cell">{{ o.client }}</td>
+          <td class="table-cell">${{ o.total_usd }}</td>
+          <td class="table-cell"><span class="{{ o.badge }} text-xs">{{ o.status_label }}</span></td>
+          <td class="table-cell"><a class="text-indigo-500 underline" href="/panel/orders/{{ o.id }}">Ver</a></td>
+        </tr>
+      {% else %}
+        <tr><td class="table-cell text-slate-400" colspan="5">Sin órdenes recientes.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

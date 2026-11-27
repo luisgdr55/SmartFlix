@@ -252,3 +252,72 @@ async def payment_reference_used(reference: str, exclude_order_id: Optional[str]
     except Exception as e:
         logger.error(f"Error in payment_reference_used: {e}")
         return False
+
+
+async def list_orders(statuses: Optional[list[str]] = None, limit: int = 30) -> list[dict]:
+    """Órdenes recientes (con el cliente), por defecto todas las del estado dado; más nuevas primero
+    salvo las pendientes, que van de la más antigua a la más nueva (las que llevan más tiempo esperando)."""
+    try:
+        sb = get_supabase()
+        q = sb.table(TABLE).select("*, users(telegram_id, name, username)")
+        if statuses:
+            q = q.in_("status", statuses)
+        oldest_first = statuses == ["pending"]
+        return q.order("created_at", desc=not oldest_first).limit(limit).execute().data or []
+    except Exception as e:
+        logger.error(f"Error in list_orders: {e}")
+        return []
+
+
+async def get_subscriptions_with_access(sub_ids: list[str]) -> dict[str, dict]:
+    """Suscripciones con plataforma, perfil y cuenta (para entregar el acceso tras aprobar)."""
+    ids = [str(i) for i in sub_ids if i]
+    if not ids:
+        return {}
+    try:
+        sb = get_supabase()
+        res = (
+            sb.table("subscriptions")
+            .select("*, platforms(name, slug, icon_emoji), profiles(profile_name, pin, accounts(email, password))")
+            .in_("id", ids)
+            .execute()
+        )
+        return {str(r["id"]): r for r in (res.data or [])}
+    except Exception as e:
+        logger.error(f"Error in get_subscriptions_with_access: {e}")
+        return {}
+
+
+async def count_subscription_periods(sub_id: str) -> int:
+    """Cuántos periodos pagados tiene una suscripción (el borrado solo se permite con 0)."""
+    try:
+        sb = get_supabase()
+        res = sb.table("subscription_periods").select("id", count="exact").eq("subscription_id", sub_id).limit(1).execute()
+        return int(res.count or 0)
+    except Exception as e:
+        if _table_missing(e):
+            return 0   # migración del Lote 2 aún sin ejecutar: no hay historial que proteger
+        # Ante la duda se trata como «con historial»: nunca se borra por un error de lectura.
+        logger.error(f"Error in count_subscription_periods: {e}")
+        return 1
+
+
+def _table_missing(e: Exception) -> bool:
+    text = f"{getattr(e, 'message', '')} {e}".lower()
+    return "subscription_periods" in text and any(k in text for k in ("does not exist", "schema cache", "could not find"))
+
+
+async def count_user_periods(user_id: str) -> int:
+    """Periodos pagados de todas las suscripciones del cliente (borrar al cliente solo si es 0)."""
+    try:
+        sb = get_supabase()
+        ids = [r["id"] for r in (sb.table("subscriptions").select("id").eq("user_id", user_id).execute().data or [])]
+        if not ids:
+            return 0
+        res = sb.table("subscription_periods").select("id", count="exact").in_("subscription_id", ids).limit(1).execute()
+        return int(res.count or 0)
+    except Exception as e:
+        if _table_missing(e):
+            return 0
+        logger.error(f"Error in count_user_periods: {e}")
+        return 1
