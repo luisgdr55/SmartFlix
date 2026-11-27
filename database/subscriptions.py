@@ -657,3 +657,51 @@ async def cancel_expired_pending_subscriptions() -> int:
     except Exception as e:
         logger.error(f"Error in cancel_expired_pending_subscriptions: {e}")
         return 0
+
+
+async def void_subscription(sub_id: str, actor: str, reason: str) -> dict:
+    """Anula una suscripción con motivo (O02 Lote 3): estado `voided`, motivo y hora, y libera su
+    perfil con la regla del corte (PIN nuevo) **solo si** ningún otra suscripción activa lo usa.
+    Nunca borra la fila (el historial de pagos depende de ella). No se usa aún en producción: el
+    Lote 5 la conecta a la pantalla de anomalías del admin, que registra la acción en `admin_log`.
+
+    Devuelve {"voided": bool, "already": bool, "release": dict|None}; `release` es el resultado de
+    `release_profile_for_cut` (con el PIN anterior y el nuevo para avisar al admin). Lanza
+    `ValueError` si falta actor o motivo.
+    """
+    if not actor or not str(actor).strip():
+        raise ValueError("Falta quién anula la suscripción")
+    if not reason or not str(reason).strip():
+        raise ValueError("Anular una suscripción exige un motivo")
+    try:
+        sb = get_supabase()
+        res = sb.table("subscriptions").select("id, status, profile_id").eq("id", sub_id).limit(1).execute()
+        if not res.data:
+            return {"voided": False, "already": False, "release": None, "error": "not_found"}
+        sub = res.data[0]
+        if sub.get("status") == "voided":
+            return {"voided": True, "already": True, "release": None}
+
+        upd = (
+            sb.table("subscriptions")
+            .update({
+                "status": "voided",
+                "void_reason": f"[{str(actor).strip()}] {str(reason).strip()}",
+                "voided_at": venezuela_now().isoformat(),
+            })
+            .eq("id", sub_id)
+            .eq("status", sub["status"])
+            .execute()
+        )
+        if not upd.data:
+            # Cambió de estado entre la lectura y la escritura: no se toca el perfil.
+            return {"voided": False, "already": False, "release": None, "error": "state_changed"}
+
+        release = None
+        if sub.get("profile_id"):
+            from database.profiles import release_profile_for_cut
+            release = await release_profile_for_cut(str(sub["profile_id"]), exclude_sub_id=sub_id)
+        return {"voided": True, "already": False, "release": release}
+    except Exception as e:
+        logger.error(f"Error in void_subscription: {e}")
+        return {"voided": False, "already": False, "release": None, "error": "db_error"}

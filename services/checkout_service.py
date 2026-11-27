@@ -16,6 +16,9 @@ Decisiones del Orquestador (27/11/2026) que implementa:
 """
 from __future__ import annotations
 
+import json
+import logging
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Iterable, Optional
@@ -27,6 +30,8 @@ from utils.dates import (
     parse_db_datetime,
     whole_months_between,
 )
+
+logger = logging.getLogger(__name__)
 
 MONEY = Decimal("0.01")
 RATE_Q = Decimal("0.0001")
@@ -387,3 +392,123 @@ def check_order_transition(current: str, target: str, actor: str, reason: Option
     if (current, target) in REASON_REQUIRED and not reason:
         raise InvalidTransition("Esta acción exige un motivo")
     return {"from": current, "to": target, "actor": str(actor).strip(), "reason": reason or None}
+
+
+# ── Motor de aprobación (O02 Lote 3) ────────────────────────────────────────
+# La aprobación real ocurre en la función SQL `approve_checkout_order` (una transacción: todo o
+# nada, idempotente). Aquí solo se valida la entrada, se llama al repositorio, se traducen los
+# errores a mensajes para el admin y se resume qué debe atender. Telegram, panel y /renovar usan
+# este único punto de entrada (el cableado a los handlers llega con los Lotes 4 y 5).
+#
+# No se usa `services/locks.py` en la aprobación (decisión de diseño): el candado de fila de la
+# función SQL es la garantía real, y un candado Redis que falla cerrado dejaría al admin sin poder
+# aprobar pagos cuando Redis cae.
+
+# Mensajes (todos terminan indicando qué hacer; la aprobación es atómica, así que un error no deja nada a medias).
+APPROVAL_MESSAGES = {
+    "order_not_found": "La orden no existe. Ábrela de nuevo desde la lista de pendientes.",
+    "actor_required": "No se pudo identificar quién aprueba. Vuelve a iniciar sesión e inténtalo de nuevo.",
+    "reason_required": "Esta orden ya caducó: escribe el motivo para aprobarla con el comprobante tardío.",
+    "invalid_state": "La orden ya no está pendiente, no se cambió nada. Revisa su estado en la lista de pendientes.",
+    "invalid_manifest": "Los importes de la orden no cuadran, no se aprobó nada. Revisa la orden o pide al cliente que la rehaga.",
+    "subscription_not_found": "Una suscripción de la orden ya no existe, no se aprobó nada. Pide al cliente que rehaga el pedido.",
+    "subscription_not_owned": "Una suscripción de la orden no pertenece a este cliente, no se aprobó nada. Revísalo antes de reintentar.",
+    "subscription_not_renewable": "Una suscripción de la orden ya no se puede renovar (por ejemplo, está cancelada), no se aprobó nada. Revísala en la ficha del cliente.",
+    "subscription_not_overdue": "El cambio de plataforma solo aplica a una suscripción vencida; esta no lo está. No se aprobó nada.",
+    "profile_unavailable": "No hay un perfil libre para uno de los servicios. La orden sigue pendiente: agrega un perfil y vuelve a aprobar.",
+    "duplicate_reference": "Esa referencia de pago ya se aprobó en otra orden, no se aprobó nada. Verifica el comprobante.",
+    "unavailable": "No se pudo confirmar el resultado (falla de conexión). Vuelve a pulsar Aprobar: es seguro, no se duplica nada.",
+    "unknown": "No se pudo aprobar por un error técnico. La orden no cambió; inténtalo de nuevo o revisa los registros.",
+}
+
+
+class ApprovalError(CheckoutError):
+    """Fallo al aprobar una orden. `code` es el código estable; `user_message` es apto para el admin."""
+
+    def __init__(self, code: str, detail: Optional[dict] = None, raw: Optional[str] = None):
+        self.code = code
+        self.detail = detail or {}
+        self.raw = raw
+        self.user_message = APPROVAL_MESSAGES.get(code, APPROVAL_MESSAGES["unknown"])
+        super().__init__(self.user_message)
+
+
+def parse_approval_error(message: Optional[str], details: Optional[str] = None) -> ApprovalError:
+    """Traduce el error de `approve_checkout_order` (MESSAGE y DETAIL de la excepción SQL)."""
+    code = (message or "").strip()
+    detail: dict = {}
+    if details:
+        try:
+            parsed = json.loads(details)
+            detail = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            detail = {}
+    if code not in APPROVAL_MESSAGES or code in ("unavailable", "unknown"):
+        logger.error(f"approve_checkout_order devolvió un error no reconocido: {message!r} / {details!r}")
+        return ApprovalError("unknown", detail, raw=message)
+    return ApprovalError(code, detail, raw=message)
+
+
+def _clean_order_id(order_id) -> str:
+    try:
+        return str(uuid.UUID(str(order_id)))
+    except (ValueError, AttributeError, TypeError):
+        raise CheckoutError("El identificador de la orden no es válido")
+
+
+async def approve(
+    order_id,
+    actor: str,
+    reason: Optional[str] = None,
+    payment_reference: Optional[str] = None,
+    *,
+    repo=None,
+) -> dict:
+    """Aprueba una orden con la función SQL atómica. Devuelve el resultado aplicado:
+    {"ok", "already_applied", "order_id", "approved_by", "items": [...]}. Una segunda llamada
+    sobre una orden ya aprobada devuelve `already_applied: True` sin efectos nuevos.
+
+    Lanza `ApprovalError` (con `code` y `user_message`) si algo falla; en ese caso no se cambió nada.
+    `payment_reference` debe ser una referencia real o None (nunca una marca fija como
+    «PANEL-MANUAL»: el índice único de referencias aprobadas rechazaría la segunda orden).
+    """
+    oid = _clean_order_id(order_id)
+    if not actor or not str(actor).strip():
+        raise ApprovalError("actor_required")
+    if repo is None:
+        from database import orders as repo  # import tardío: este módulo sigue siendo puro
+    result = await repo.approve_order(oid, str(actor).strip(), reason, payment_reference)
+    if not isinstance(result, dict) or not (result.get("ok") or result.get("already_applied")):
+        raise ApprovalError("unknown", raw=str(result)[:200])
+    return result
+
+
+def approval_notices(result: dict) -> list[dict]:
+    """Lo que el admin debe atender tras aprobar (para armar los avisos en los Lotes 4 y 5):
+    - `profile_changed`: se dio otro perfil a una renovación (el cliente recibe credenciales nuevas).
+    - `pin_rotated`: se liberó el perfil de la plataforma de origen en un cambio; el admin debe
+      entrar con el PIN anterior y ponerlo al nuevo en la plataforma.
+    - `profile_not_released`: no se liberó el perfil de origen (otra suscripción activa lo usa).
+    """
+    notices: list[dict] = []
+    for item in (result or {}).get("items") or []:
+        idx = item.get("index")
+        if item.get("profile_changed") and item.get("tipo") == "renovacion":
+            notices.append({
+                "kind": "profile_changed", "index": idx, "subscription_id": item.get("subscription_id"),
+                "profile_id": item.get("profile_id"), "previous_profile_id": item.get("previous_profile_id"),
+            })
+        rel = item.get("released_profile")
+        if isinstance(rel, dict):
+            if rel.get("released"):
+                notices.append({
+                    "kind": "pin_rotated", "index": idx, "profile_name": rel.get("profile_name"),
+                    "account_email": rel.get("account_email"), "old_pin": rel.get("old_pin"),
+                    "new_pin": rel.get("new_pin"),
+                })
+            elif rel.get("reason") == "otra_suscripcion_activa":
+                notices.append({
+                    "kind": "profile_not_released", "index": idx, "profile_name": rel.get("profile_name"),
+                    "previous_profile_id": item.get("previous_profile_id"),
+                })
+    return notices
