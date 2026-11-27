@@ -10,6 +10,7 @@
 
 **O01 Lote 0** (endurecimiento del panel) y **O05 Lote 5** (confirmaciones de la IA del admin): construidos en la rama `claude/keen-mendel-vn6j7b`, **pendientes de revisión del PR y de veredicto**; no están en `master`. Detalle: `docs/subfases/o01-lote0-seguridad-panel.md` y `docs/subfases/o05-lote5-ia-admin-confirmaciones.md`. **Precondiciones antes de fusionar:** variables `SECRET_KEY`, `ADMIN_PANEL_PASSWORD` y `WEBHOOK_SECRET` presentes y propias en Railway (si no, el servicio no arranca) y rotación de claves (R01-1, S-001).
 **O02 Lote 0 entregado (27/11/2026): decisiones y diagnóstico, sin cambios de código.** Mapa de estados verificado, informe de decisiones para el Orquestador y script SQL de solo lectura que ejecuta él mismo: `docs/subfases/o02-lote0-mapa-de-estados.md`, `o02-lote0-decisiones.md`, `o02-lote0-consultas-anomalias.sql`. **Decisiones 1 a 6 y N-A a N-F APROBADAS (27/11/2026) con las recomendaciones del informe** (registradas en la orden O02). Sin construir aún: falta el veredicto de arranque del Lote 1 y de la mini-orden O02-H, y el resultado del script SQL; no ejecutar nada contra producción sin autorización.
+**O02 Lote 1 construido (27/11/2026), en la rama `claude/keen-mendel-vn6j7b`, sin fusionar:** `utils/dates.py`, `services/checkout_service.py` y `services/locks.py`, lógica pura sin llamadores en producción (no cambia el bot ni el panel); 169 pruebas `unittest` OK. Detalle y 4 preguntas abiertas: `docs/subfases/o02-lote1-servicios-base.md`.
 **O02-H construida (27/11/2026), en la rama `claude/keen-mendel-vn6j7b`, pendiente de revisión del PR y veredicto; no está en `master`.** Guardas de aprobar/rechazar (solo `pending_payment`), `cancel_and_buy` libera perfil y express procesa las `expired` de <24 h. Sin migración ni variable nueva; 115 pruebas `unittest` OK. Detalle: `docs/subfases/o02h-guardas-pagos-y-perfiles.md`.
 Órdenes redactadas (borradores, sin iniciar): `docs/arquitecto/ordenes/` — O01 (Lote 1), O02 pagos y estados, O03 rendimiento y rediseño del panel, O04 API y PWA, O05 (Lotes 0 a 4 y 6).
 Decisiones del Orquestador (27/11/2026): corte de mora **opción B** (sin corte automático; corte manual; recordatorios D+1 a D+6; `CLAUDE.md` y la tabla de §2 se actualizan al cerrar O02), agente de IA **solo texto** y Impeccable como auditor de diseño. Hasta entonces el código y la tabla de §2 siguen describiendo el corte D+7.
@@ -50,6 +51,7 @@ Antes: sesión 17 (migración hogar, OTP Disney+, tickets WhatsApp), sesión 21 
 
 | Fecha | Sesión |
 |---|---|
+| 2026-11-27 | O02 Lote 1 (servicios base: fechas, checkout, candado) — **en rama, sin fusionar** |
 | 2026-11-27 | O02-H (guardas de pagos y fuga de perfiles) — **en rama, sin fusionar** |
 | 2026-11-27 | O02 Lote 0 (decisiones y diagnóstico de estados, solo documentación y SQL de lectura) — **en rama, sin fusionar** |
 | 2026-11-27 | O01 Lote 0 (seguridad del panel) y O05 Lote 5 (confirmaciones de la IA del admin) — **en rama, sin fusionar** |
