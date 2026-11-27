@@ -24,8 +24,10 @@ _RELEASE_SCRIPT = (
 
 
 def _default_client():
-    from bot.middleware import _redis_client
-    return _redis_client
+    # `_get_redis()` crea el cliente la primera vez; leer `_redis_client` directo da None si el scheduler
+    # corre antes de que el bot haya tenido tráfico (los jobs se omitían todos: falla cerrada).
+    from bot.middleware import _get_redis
+    return _get_redis()
 
 
 def _key(name: str) -> str:

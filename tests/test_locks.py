@@ -85,5 +85,17 @@ class TestLocks(unittest.TestCase):
             locks.acquire_lock("x", 0, r)
 
 
+class TestDefaultClient(unittest.TestCase):
+    def test_default_client_creates_redis_lazily_instead_of_reading_a_none_global(self):
+        """Regresión: el scheduler pide el candado antes de que el bot haya creado el cliente Redis."""
+        from unittest import mock
+        import bot.middleware as mw
+        fake = FakeRedis()
+        with mock.patch.object(mw, "_redis_client", None), mock.patch.object(mw, "_get_redis", return_value=fake) as g:
+            token = locks.acquire_lock("job:x", 60)
+        self.assertTrue(token)
+        g.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
