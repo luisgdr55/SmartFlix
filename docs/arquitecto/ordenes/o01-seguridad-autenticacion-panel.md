@@ -1,6 +1,6 @@
 # O01 — Seguridad y autenticación del panel · 🔴 · rama `s22-seguridad-auth`
 
-**Estado:** BORRADOR para veredicto del Orquestador (27/11/2026) · **Depende de:** decisión sobre S-001 (rotar claves) · **Precede a:** O02, O03, O04
+**Estado:** **Lote 0 construido** en la rama `claude/keen-mendel-vn6j7b`, pendiente de revisión del PR y de las precondiciones (detalle en `docs/subfases/o01-lote0-seguridad-panel.md`); Lote 1 sin iniciar. Borrador original del Orquestador (27/11/2026) · **Depende de:** decisión sobre S-001 (rotar claves) · **Precede a:** O02, O03, O04
 **Evidencia:** informe privado del Arquitecto (no versionado: describe fallos aún sin corregir en un repo público).
 
 ## Objetivo

@@ -129,12 +129,25 @@ GMAIL_CLIENT_SECRET=your_gmail_client_secret
 GMAIL_REDIRECT_URI=https://your-app.railway.app/oauth/callback
 APP_URL=https://your-app.railway.app
 WEBHOOK_SECRET=generate_a_random_string_here
+SECRET_KEY=generate_a_random_string_here
+ADMIN_PANEL_PASSWORD=choose_a_long_password_here
 DEBUG=false
 ```
 
-**Generate WEBHOOK_SECRET**: Use any random string, e.g.:
+**`WEBHOOK_SECRET`, `SECRET_KEY` y `ADMIN_PANEL_PASSWORD` son obligatorias y no tienen valor por defecto**
+(desde O01 Lote 0): si falta alguna, está vacía o es uno de los valores por defecto antiguos (públicos),
+el servicio **no arranca** y el log nombra la variable. `SECRET_KEY` firma la cookie del panel y deriva el
+token CSRF; `ADMIN_PANEL_PASSWORD` es la clave del panel. Usa valores distintos entre sí.
+Con `DEBUG=false` (producción) `/docs`, `/redoc` y `/openapi.json` no existen.
+
+**Generate the random values**: Use any random string, e.g.:
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+**Pruebas** (sin dependencias nuevas, con valores y base falsos; no tocan Supabase, Redis ni Telegram):
+```bash
+python -m unittest discover -s tests -t .
 ```
 
 ---
@@ -274,7 +287,7 @@ FastAPI (main.py)
 ## Security Notes
 
 - Never commit `.env` files to version control
-- Use strong random `WEBHOOK_SECRET`
+- Use strong random `WEBHOOK_SECRET`, `SECRET_KEY` and `ADMIN_PANEL_PASSWORD` (the service refuses to start without them)
 - The `SUPABASE_KEY` is your service_role key - keep it secret
 - Admin IDs are validated on every admin command
 - Payment images are hash-checked to prevent duplicate submissions

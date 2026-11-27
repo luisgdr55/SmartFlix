@@ -1,6 +1,6 @@
 # ESTADO.md — SmartFlixVE
 
-Última actualización: 15/11/2026 — rescate r00 al entorno nube (solo documentación; el código de `master` no cambió desde `5a25457`, sesión 18, 26/06/2026).
+Última actualización: 27/11/2026 — auditoría general del sistema, órdenes O01 a O05 redactadas y primeros lotes construidos en rama (sin fusionar). El código de `master` no cambió desde `5a25457` (sesión 18).
 
 > Bot de Telegram para alquiler de perfiles de streaming en Venezuela (Netflix, Disney+, Paramount+, HBO Max, Prime Video). **En producción.** Lectura al iniciar una orden: **§0 y §1**. Lo demás se consulta si la orden lo cita:
 > reglas → `CLAUDE.md` · roadmap → `features.md` (raíz) · instalación → `SETUP.md` · pendientes y hallazgos → `docs/RECORDATORIOS.md` · deuda con disparador → `docs/DEUDA.md` ·
@@ -8,9 +8,10 @@
 
 ## 0. En curso
 
-**Ninguna orden abierta.** No hay bugs conocidos pendientes (cierre de la sesión 18). Estudios fuera del repo, sin orden de construcción: factibilidad de migrar el bot a una PWA tipo tienda (02/11/2026) y flyers/video de promoción (14/11/2026); ver `docs/RECORDATORIOS.md` R00-6.
-Verificado en Railway el 15/11/2026: proyecto con servicio del bot (`SmartFlix`, rama `master`), Postgres y Redis; **no hay `watchPatterns`**: cualquier fusión a `master`, incluso solo de docs, redespliega y reinicia el bot.
-Hallazgos del rescate que requieren decisión del Orquestador: repositorio **público** (R00-1) y TCP Proxy público activo en el Postgres de Railway (R00-2).
+**O01 Lote 0** (endurecimiento del panel) y **O05 Lote 5** (confirmaciones de la IA del admin): construidos en la rama `claude/keen-mendel-vn6j7b`, **pendientes de revisión del PR y de veredicto**; no están en `master`. Detalle: `docs/subfases/o01-lote0-seguridad-panel.md` y `docs/subfases/o05-lote5-ia-admin-confirmaciones.md`. **Precondiciones antes de fusionar:** variables `SECRET_KEY`, `ADMIN_PANEL_PASSWORD` y `WEBHOOK_SECRET` presentes y propias en Railway (si no, el servicio no arranca) y rotación de claves (R01-1, S-001).
+Órdenes redactadas (borradores, sin iniciar): `docs/arquitecto/ordenes/` — O01 (Lote 1), O02 pagos y estados, O03 rendimiento y rediseño del panel, O04 API y PWA, O05 (Lotes 0 a 4 y 6).
+Decisiones del Orquestador (27/11/2026): corte de mora **opción B** (sin corte automático; corte manual; recordatorios D+1 a D+6; `CLAUDE.md` y la tabla de §2 se actualizan al cerrar O02), agente de IA **solo texto** y Impeccable como auditor de diseño. Hasta entonces el código y la tabla de §2 siguen describiendo el corte D+7.
+Hallazgos del rescate y de la auditoría que requieren decisión: repositorio público (R00-1), TCP Proxy del Postgres (R00-2), rotar claves (R01-1). Verificado en Railway el 15/11/2026: sin `watchPatterns` (cualquier fusión redespliega y reinicia el bot).
 
 ## 1. Última orden cerrada
 
@@ -47,6 +48,7 @@ Antes: sesión 17 (migración hogar, OTP Disney+, tickets WhatsApp), sesión 21 
 
 | Fecha | Sesión |
 |---|---|
+| 2026-11-27 | O01 Lote 0 (seguridad del panel) y O05 Lote 5 (confirmaciones de la IA del admin) — **en rama, sin fusionar** |
 | 2026-06-26 | Sesión 18 — Fix doble-toque / "Message is not modified" en pickers de plataforma |
 | 2026-06-20 | Sesión 17 — Fix migración hogar: cuentas restricted visibles para admin |
 | 2026-06-19 | Sesión 17 — Lote 0: Bs en tickets WhatsApp + fix send_to_admin bool |

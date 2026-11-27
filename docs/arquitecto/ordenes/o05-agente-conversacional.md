@@ -1,6 +1,6 @@
 # O05 — Agente conversacional del bot (solo texto) · 🔴 · rama `s26-agente-ia`
 
-**Estado:** BORRADOR para veredicto del Orquestador (27/11/2026) · **Alcance decidido:** solo texto; la voz queda para una orden posterior
+**Estado:** **Lote 5 construido** en la rama `claude/keen-mendel-vn6j7b`, pendiente de revisión del PR (detalle en `docs/subfases/o05-lote5-ia-admin-confirmaciones.md`); Lotes 0 a 4 y 6 sin iniciar. Borrador original (27/11/2026) · **Alcance decidido:** solo texto; la voz queda para una orden posterior
 **Depende de:** O02 Lotes 1 a 4 (`checkout_service`, órdenes de pago, enrutado de comprobantes) y O01 Lote 0 (auditoría) · **No depende de** O03 ni de O04
 **Evidencia:** informe privado del Arquitecto (hallazgos del bot y de la IA actual).
 
